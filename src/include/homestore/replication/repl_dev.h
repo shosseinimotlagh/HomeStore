@@ -25,7 +25,7 @@ public:
     /// @param pbas - List of pbas where data is written to the storage engine.
     /// @param ctx - User contenxt passed as part of the replica_set::write() api
     ///
-    virtual void on_commit(int64_t lsn, const sisl::blob& header, const sisl::blob& key, const blkid_list_t& blkids,
+    virtual void on_commit(int64_t lsn, sisl::blob const& header, sisl::blob const& key, blkid_list_t const& blkids,
                            void* ctx) = 0;
 
     /// @brief Called when the log entry has been received by the replica dev.
@@ -46,7 +46,7 @@ public:
     /// @param header - Header originally passed with replica_set::write() api
     /// @param key - Key originally passed with replica_set::write() api
     /// @param ctx - User contenxt passed as part of the replica_set::write() api
-    virtual void on_pre_commit(int64_t lsn, const sisl::blob& header, const sisl::blob& key, void* ctx) = 0;
+    virtual void on_pre_commit(int64_t lsn, sisl::blob const& header, sisl::blob const& key, void* ctx) = 0;
 
     /// @brief Called when the log entry has been rolled back by the replica set.
     ///
@@ -61,7 +61,17 @@ public:
     /// @param header - Header originally passed with replica_set::write() api
     /// @param key - Key originally passed with replica_set::write() api
     /// @param ctx - User contenxt passed as part of the replica_set::write() api
-    virtual void on_rollback(int64_t lsn, const sisl::blob& header, const sisl::blob& key, void* ctx) = 0;
+    virtual void on_rollback(int64_t lsn, sisl::blob const& header, sisl::blob const& key, void* ctx) = 0;
+
+    /// @brief Called when replication module is trying to allocate a block to write the value
+    ///
+    /// This function can be called both on leader and follower when it is trying to allocate a block to write the
+    /// value. Callee is expected to provide hints for allocation based on the header supplied as part of original
+    /// write. In cases where callee don't care about the hints can return default blk_alloc_hints.
+    ///
+    /// @param header Header originally passed with repl_dev::write() api on the leader
+    /// @return Expected to return blk_alloc_hints for this write
+    virtual blk_alloc_hints get_blk_alloc_hints(sisl::blob const& header) = 0;
 
     /// @brief Called when the replica set is being stopped
     virtual void on_replica_stop() = 0;
@@ -89,7 +99,7 @@ public:
     /// list size is 0, then only key is written to replicadev without data.
     /// @param user_ctx - User supplied opaque context which will be passed to listener
     /// callbacks
-    virtual void async_alloc_write(const sisl::blob& header, const sisl::blob& key, const sisl::sg_list& value,
+    virtual void async_alloc_write(sisl::blob const& header, sisl::blob const& key, sisl::sg_list const& value,
                                    void* user_ctx) = 0;
 
     /// @brief Reads the data and returns a future to continue on
