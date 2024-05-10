@@ -253,7 +253,7 @@ public:
             set_min_chunk_size(svc_params[HS_SERVICE::LOG].min_chunk_size);
         }
 
-        if (need_format) {
+        if (need_format || init_device) {
             hsi->format_and_start({{HS_SERVICE::META, {.size_pct = svc_params[HS_SERVICE::META].size_pct}},
                                    {HS_SERVICE::LOG,
                                     {.size_pct = svc_params[HS_SERVICE::LOG].size_pct,
