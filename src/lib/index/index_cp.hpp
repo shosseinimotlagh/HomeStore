@@ -21,12 +21,14 @@
 #include <homestore/index_service.hpp>
 #include <homestore/checkpoint/cp_mgr.hpp>
 #include <homestore/checkpoint/cp.hpp>
+#include <homestore/btree/detail/btree_node.hpp>
 
 #include "device/virtual_dev.hpp"
 
 SISL_LOGGING_DECL(wbcache)
 
 namespace homestore {
+class BtreeNode;
 struct IndexCPContext : public VDevCPContext {
 public:
     std::atomic< uint64_t > m_num_nodes_added{0};
@@ -83,6 +85,36 @@ public:
             fmt::format_to(std::back_inserter(str), "\n");
         });
         return str;
+    }
+
+    void to_string_dot(const std::string& filename) {
+        std::ofstream file(filename);
+        if (!file.is_open()) {
+            throw std::runtime_error("Failed to open file: " + filename);
+        }
+
+        file << "digraph G {\n";
+
+        // Mapping from a node to all its parents in the graph.
+        std::unordered_map< IndexBuffer*, std::vector< IndexBuffer* > > parents;
+
+        m_dirty_buf_list.foreach_entry([&parents](IndexBufferPtr buf) {
+            // Add this buf to his children.
+            parents[buf->m_next_buffer.lock().get()].emplace_back(buf.get());
+        });
+        m_dirty_buf_list.foreach_entry([&file, &parents](IndexBufferPtr buf) {
+            std::vector<std::string> colors={"lightgreen", "lightcoral", "lightyellow"};
+            auto sbuf =  BtreeNode::to_string_buf(buf->raw_buffer());
+            auto pos = sbuf.find("LEAF");
+            if (pos != std::string::npos) {sbuf.insert(pos+4, "<br/>");}else {pos = sbuf.find("INTERIOR"); if (pos != std::string::npos) { sbuf.insert(pos + 8, "<br/>"); }}
+            file << fmt::format("\"{}\" [label=< <b>{}</b><br/>{} >, fillcolor=\"{}\", style=\"filled\", fontname=\"bold\"];\n", r_cast< void* >(buf.get()), buf->to_string_dot(),sbuf, colors[s_cast< int >(buf->state())]);
+            for (const auto& p : parents[buf.get()]) {
+                file << fmt::format("\"{}\" -> \"{}\";\n", r_cast< void* >(p), r_cast< void* >(buf.get()));
+            }
+        });
+        file << "}\n";
+
+        file.close();
     }
 
     void check_cycle() {

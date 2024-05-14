@@ -284,6 +284,93 @@ public:
         return {};
     }
 
+    std::string to_dot_keys() const override {
+        std::string str;
+        std::string snext = this->next_bnode() == empty_bnodeid? "": fmt::format("next_node={}", this->next_bnode());
+        str += fmt::format(R"("{}" [
+                shape = none,
+                labelloc="c",
+                fontsize=25,
+                label = <<table border="1" cellborder="0" cellspacing="0">
+                <tr>)",
+                           this->node_id());
+        if (this->total_entries() == 0) {
+            return str + fmt::format(R"(
+                <td port="connector0"></td><td port="key0">E</td>
+                <td port="connector1"></td></tr></table>>])");
+        }
+
+        if (!this->is_leaf()) {
+            //            str += " <tr>";
+            for (uint32_t i{0}; i < this->total_entries(); ++i) {
+                uint32_t cur_key = get_nth_key< K >(i, false).key();
+                BtreeLinkInfo child_info;
+                get_nth_value(i, &child_info, false /* copy */);
+                str += fmt::format(R"(
+                <td port="connector{}"></td><td port="key{}">{}.{}</td>)",
+                                   i, i, cur_key, child_info.link_version());
+            }
+            std::string sedge = this->has_valid_edge() ? "edge:" + std::to_string( this->edge_info().m_bnodeid) + "." + std::to_string( this->edge_info().m_link_version):"";
+            str += fmt::format(R"(
+                <td port="connector{}"></td>
+                <td>{}.{}<br/> gen={}<br/>{} {} </td></tr></table>>];)",this->total_entries(),this->node_id(), this->link_version(), this->node_gen(), snext, sedge );
+
+
+        } else {
+            std::string keys_buf = "";
+            uint32_t prev_key = get_nth_key< K >(0, false).key();
+            uint32_t cur_key = prev_key;
+            uint32_t last_key = get_nth_key< K >(this->total_entries() - 1, false).key();
+            if (last_key - prev_key == this->total_entries() - 1) {
+                if (this->total_entries() == 1) {
+                    keys_buf += fmt::format(R"(
+                       <td port="connector{}"></td><td port="key{}">{}</td>)",
+                                            0, 0, cur_key);
+                } else {
+                    keys_buf += fmt::format(R"(
+                        <td port="connector{}"></td><td port="key{}">{}-{}</td>)",
+                                            0, 0, prev_key, last_key);
+                }
+                keys_buf += fmt::format(R"(
+                        <td port="connector{}"></td>
+                        <td>{}.{}<br/>gen={}<br/> {}</td>
+                        </tr></table>>];)",
+                                        1, this->node_id(), this->link_version(), this->node_gen(), snext);
+                return str + keys_buf;
+            }
+
+            keys_buf += fmt::format(R"(
+                        "<td port="connector{}"></td><td port="key{}">{})",
+                                    0, 0, prev_key);
+            uint32_t start_interval_key = prev_key;
+            for (uint32_t i{1}; i < this->total_entries(); ++i) {
+                cur_key = get_nth_key< K >(i, false).key();
+                if (cur_key != prev_key + 1) {
+                    if (start_interval_key == prev_key) {
+                        keys_buf += fmt::format(" {}", cur_key);
+                    } else {
+                        keys_buf += fmt::format("-{} {}", prev_key, cur_key);
+                    }
+                    start_interval_key = cur_key;
+                }
+                prev_key = cur_key;
+            }
+
+            if (start_interval_key == prev_key) {
+                keys_buf += fmt::format("</td>");
+            } else {
+                keys_buf += fmt::format(" {}</td>", cur_key);
+            }
+            keys_buf += fmt::format(R"(
+                        <td port="connector{}"></td>
+                        <td>{}.{}<br/>gen={} <br/>{}</td></tr></table>>];)",
+                                    1, this->node_id(), this->link_version(), this->node_gen(), snext);
+            return str + keys_buf;
+        }
+        return str;
+    }
+
+
     uint8_t* get_node_context() override { return uintptr_cast(this) + sizeof(SimpleNode< K, V >); }
 
 #ifndef NDEBUG

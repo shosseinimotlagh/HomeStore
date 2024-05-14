@@ -127,6 +127,18 @@ struct IndexBuffer {
                        m_wait_for_leaders.get());
         return str;
     }
+
+    std::string to_string_dot() const {
+        auto str = fmt::format("IndexBuffer {} ", reinterpret_cast< void* >(const_cast< IndexBuffer* >(this)));
+        if (m_node_buf == nullptr) {
+            fmt::format_to(std::back_inserter(str), " node_buf=nullptr ");
+        } else {
+            fmt::format_to(std::back_inserter(str), " node_buf={}", static_cast< void* >(m_node_buf->m_bytes));
+        }
+        //        fmt::format_to(std::back_inserter(str), " <br/> next_buffer={}",
+        //                       m_next_buffer.lock() ? reinterpret_cast< void* >(m_next_buffer.lock().get()) : 0);
+        return str;
+    }
 };
 
 class BtreeNode;

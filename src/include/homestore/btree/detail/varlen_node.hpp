@@ -567,6 +567,7 @@ public:
 #endif
         return {};
     }
+    std::string to_dot_keys() const override { return "NOT Supported"; }
 
     uint8_t* get_node_context() override { return uintptr_cast(this) + sizeof(VariableNode< K, V >); }
 

@@ -104,6 +104,7 @@ public:
 
     // Identify if a node is a leaf node or not, from raw buffer, by just reading persistent_hdr_t
     static bool identify_leaf_node(uint8_t* buf) { return (r_cast< persistent_hdr_t* >(buf))->leaf; }
+    static  std::string  to_string_buf(uint8_t* buf) { return (r_cast< persistent_hdr_t* >(buf))->to_string(); }
 
     /// @brief Finds the index of the entry with the specified key in the node.
     ///
@@ -352,6 +353,7 @@ public:
 
     virtual std::string to_string(bool print_friendly = false) const = 0;
     virtual std::string to_string_keys(bool print_friendly = false) const = 0;
+    virtual std::string to_dot_keys() const = 0;
 
 protected:
     node_find_result_t bsearch_node(const BtreeKey& key) const {

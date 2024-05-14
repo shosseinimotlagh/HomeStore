@@ -407,6 +407,7 @@ TYPED_TEST(BtreeTest, ThreadedCpFlush) {
     LOGINFO("Query {} entries and validate with pagination of 1000 entries", num_entries);
     this->do_query(0, num_entries - 1, 1000);
     LOGINFO("ThreadedCpFlush test end");
+    this->visualize_keys("tree3.dot");
 }
 
 template < typename TestType >

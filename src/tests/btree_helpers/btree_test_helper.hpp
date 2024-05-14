@@ -333,6 +333,7 @@ public:
 
     void print(const std::string& file = "") const { m_bt->print_tree(file); }
     void print_keys() const { m_bt->print_tree_keys(); }
+    void visualize_keys(const std::string &file) const { m_bt->visualize_tree_keys( file ); }
 
     void compare_files(const std::string& before, const std::string& after) {
         std::ifstream b(before, std::ifstream::ate);

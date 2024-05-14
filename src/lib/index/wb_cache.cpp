@@ -240,6 +240,7 @@ folly::Future< bool > IndexWBCache::async_cp_flush(IndexCPContext* cp_ctx) {
 
 void IndexWBCache::do_flush_one_buf(IndexCPContext* cp_ctx, IndexBufferPtr buf, bool part_of_batch) {
     LOGTRACEMOD(wbcache, "cp {} buf {}", cp_ctx->id(), buf->to_string());
+    //cp_ctx->to_string_dot("crash_buf"+std::to_string(cp_ctx->id())+".dot");
     buf->set_state(index_buf_state_t::FLUSHING);
     m_vdev->async_write(r_cast< const char* >(buf->raw_buffer()), m_node_size, buf->m_blkid, part_of_batch)
         .thenValue([buf, cp_ctx](auto) {
