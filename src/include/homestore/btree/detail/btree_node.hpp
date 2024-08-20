@@ -521,6 +521,7 @@ public:
 
     virtual uint32_t occupied_size() const { return (node_data_size() - available_size()); }
     bool is_merge_needed(const BtreeConfig& cfg) const {
+        return total_entries() <= 1; // TEST ONLY: for smaller nodes
 #if 0
 #ifdef _PRERELEASE
        if (iomgr_flip::instance()->test_flip("btree_merge_node") && occupied_size() < node_data_size) {

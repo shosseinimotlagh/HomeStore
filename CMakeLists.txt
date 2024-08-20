@@ -99,7 +99,7 @@ else()
     message(STATUS "Release build")
     if((${CMAKE_CXX_COMPILER_ID} STREQUAL "GNU") OR (${CMAKE_CXX_COMPILER_ID} STREQUAL "Clang")) 
         remove_flag("-O[0-4]")
-        add_flags("-O2")
+        add_flags("-O0")
     endif()
 endif()
 

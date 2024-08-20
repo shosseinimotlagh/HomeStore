@@ -202,7 +202,7 @@ public:
 
     bool has_room_for_put(btree_put_type put_type, uint32_t key_size, uint32_t value_size) const override {
 #ifdef _PRERELEASE
-        // return (this->total_entries() <= 3);
+        return (this->total_entries() <= 3);
 #endif
         return ((put_type == btree_put_type::UPSERT) || (put_type == btree_put_type::INSERT))
             ? (get_available_entries() > 0)
@@ -227,15 +227,9 @@ public:
         }
         return str;
     }
+
     std::string to_dot_keys() const override {
-        return to_dot_keys_impl(std::is_same<K, uint64_t>{});
-    }
-
-    std::string to_dot_keys_impl(std::false_type) const {
-        return "";
-    }
-
-    std::string to_dot_keys_impl(std::true_type) const {
+        // TEST ONLY: remove type judgement for FixedBtreeKey
         std::string str;
         std::string snext = this->next_bnode() == empty_bnodeid ? "" : fmt::format("next_node={}", this->next_bnode());
         str += fmt::format(R"("{}" [
