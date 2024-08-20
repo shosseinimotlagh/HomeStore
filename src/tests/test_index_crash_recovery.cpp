@@ -154,7 +154,12 @@ struct IndexCrashTest : public test_common::HSTestHelper, BtreeTestHelper< TestT
         for (const auto& [k, addition] : diff) {
             // this->print_keys(fmt::format("reapply: before inserting key {}", k.key()));
             //  this->visualize_keys(recovered_tree_filename);
-            if (addition) { this->force_upsert(k.key()); }
+//            if (addition) { this->force_upsert(k.key()); }
+            if (addition) {
+                this->force_upsert(k.key());
+            } else {
+                this->remove_one(k.key(), false);
+            }
         }
         test_common::HSTestHelper::trigger_cp(true);
         this->m_shadow_map.save(m_shadow_filename);
@@ -258,13 +263,79 @@ TYPED_TEST(IndexCrashTest, SplitOnLeftEdge) {
     LOGINFO("Step 7: Fill the 1st quarter of the tree, to make sure left child is split and we crash on flush of the "
             "parent node");
     this->set_basic_flip("crash_flush_on_split_at_parent");
-    for (auto k = 0u; k <= num_entries / 4; ++k) {
+    for (auto k = 0u; k < num_entries / 4; ++k) {
         this->put(k, btree_put_type::INSERT, true /* expect_success */);
     }
     LOGINFO("Step 8: Post crash we reapply the missing entries to tree");
     this->crash_and_recover(0, num_entries);
     LOGINFO("Step 9: Query all entries and validate with pagination of 80 entries");
     this->query_all_paginate(80);
+}
+TYPED_TEST(IndexCrashTest, MergeCrash) {
+    auto flip_points = {
+        "crash_flush_on_merge_at_parent",
+        "crash_flush_on_merge_at_left_child",
+        // "crash_flush_on_merge_at_right_child", // will not crash
+    };
+
+    for (auto flip_point : flip_points) {
+        LOGINFO("=== Testing flip point: {} ===", flip_point);
+
+        // Populate some keys [1,num_entries) and trigger cp to persist
+        LOGINFO("Step 1: Populate some keys and flush");
+        auto const num_entries = SISL_OPTIONS["num_entries"].as< uint32_t >();
+        for (auto k = 0u; k < num_entries; ++k) {
+            this->put(k, btree_put_type::INSERT, true /* expect_success */);
+        }
+        test_common::HSTestHelper::trigger_cp(true);
+        this->m_shadow_map.save(this->m_shadow_filename);
+
+        // Split keys into batches and remove the last one in reverse order
+        LOGINFO("Step 2: Set crash flag, remove some keys in reverse order");
+        int batch_num = 4;
+        {
+            int i = batch_num;
+            auto r = num_entries * i / batch_num - 1;
+            auto l = num_entries * (i - 1) / batch_num;
+            LOGINFO("Step 2.1: Remove keys in batch {}/{} ({} to {})", i, batch_num, r, l);
+
+            this->set_basic_flip(flip_point);
+            for (auto k = r; k >= l; --k) {
+                LOGINFO("Removing entry {}", k);
+                this->remove_one(k);
+            }
+            this->visualize_keys("");
+
+            LOGINFO("Step 2.2: Trigger cp to crash");
+            this->crash_and_recover(0, l - 1);
+        }
+
+        // Remove the next batch of keys in forward order
+        LOGINFO("Step 3: Remove another batch in ascending order")
+        {
+            int i = batch_num - 1;
+            auto r = num_entries * i / batch_num - 1;
+            auto l = num_entries * (i - 1) / batch_num;
+            LOGINFO("Step 3.1: Remove keys in batch {}/{} ({} to {})", i, batch_num, l, r);
+
+            this->set_basic_flip(flip_point);
+            for (auto k = l; k <= r; ++k) {
+                LOGINFO("Removing entry {}", k);
+                this->remove_one(k);
+            }
+            this->visualize_keys("");
+
+            LOGINFO("Step 3.2: Trigger cp to crash");
+            this->crash_and_recover(0, l - 1);
+        }
+
+        LOGINFO("Step 4: Cleanup the tree");
+        for (auto k = 0u; k < num_entries; ++k) {
+            this->remove_one(k, false);
+        }
+        test_common::HSTestHelper::trigger_cp(true);
+        this->get_all();
+    }
 }
 #endif
 

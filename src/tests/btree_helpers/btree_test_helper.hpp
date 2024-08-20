@@ -217,7 +217,7 @@ public:
     }
 
     ////////////////////// All remove operation variants ///////////////////////////////
-    void remove_one(uint32_t k) {
+    void remove_one(uint32_t k, bool need_assert = true) {
         auto existing_v = std::make_unique< V >();
         auto pk = std::make_unique< K >(k);
 
@@ -225,10 +225,14 @@ public:
         rreq.enable_route_tracing();
         bool removed = (m_bt->remove(rreq) == btree_status_t::success);
 
-        ASSERT_EQ(removed, m_shadow_map.exists(*pk))
-            << "Removal of key " << pk->key() << " status doesn't match with shadow";
-
-        if (removed) { m_shadow_map.remove_and_check(*pk, *existing_v); }
+        if (need_assert) {
+            ASSERT_EQ(removed, m_shadow_map.exists(*pk))
+                << "Removal of key " << pk->key() << " status doesn't match with shadow";
+            if (removed) { m_shadow_map.remove_and_check(*pk, *existing_v); }
+        }else
+        {
+            m_shadow_map.erase(*pk);
+        }
     }
 
     void remove_random() {
