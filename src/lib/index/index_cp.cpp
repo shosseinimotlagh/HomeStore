@@ -267,6 +267,9 @@ void IndexCPContext::process_txn_record(txn_record const* rec, std::map< BlkId, 
 #endif
 
             if (buf->m_up_buffer != real_up_buf) {
+                if (buf->m_up_buffer) {
+                    buf->m_up_buffer->m_wait_for_down_buffers.decrement(1);
+                }
                 real_up_buf->m_wait_for_down_buffers.increment(1);
                 buf->m_up_buffer = real_up_buf;
             }

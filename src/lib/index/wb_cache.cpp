@@ -280,10 +280,9 @@ void IndexWBCache::transact_bufs(uint32_t index_ordinal, IndexBufferPtr const& p
     } else {
         icp_ctx->add_to_txn_journal(index_ordinal,          // Ordinal
                                     child_buf->m_up_buffer, // real up buffer
-                                    new_node_bufs.empty() ? freed_node_bufs[0]->m_up_buffer
-                                                          : new_node_bufs[0]->m_up_buffer, // real in place child
-                                    new_node_bufs,                                         // new node bufs
-                                    freed_node_bufs                                        // free_node_bufs
+                                    child_buf, // real in place child
+                                    new_node_bufs, // new node bufs
+                                    freed_node_bufs // free_node_bufs
         );
     }
 #if 0
@@ -365,6 +364,10 @@ void IndexWBCache::link_buf(IndexBufferPtr const& up_buf, IndexBufferPtr const& 
     }
 
     // Now we link the down_buffer to the real up_buffer
+    if (down_buf->m_up_buffer) {
+        // release existing up_buffer's wait count
+        down_buf->m_up_buffer->m_wait_for_down_buffers.decrement();
+    }
     real_up_buf->m_wait_for_down_buffers.increment(1);
     down_buf->m_up_buffer = real_up_buf;
 #ifndef NDEBUG
@@ -378,6 +381,7 @@ void IndexWBCache::free_buf(const IndexBufferPtr& buf, CPContext* cp_ctx) {
         bool done = m_cache.remove(buf->m_blkid, node);
         HS_REL_ASSERT_EQ(done, true, "Race on cache removal of btree blkid?");
     }
+    buf->m_node_freed = true;
 
     resource_mgr().inc_free_blk(m_node_size);
     m_vdev->free_blk(buf->m_blkid, s_cast< VDevCPContext* >(cp_ctx));
@@ -428,6 +432,8 @@ void IndexWBCache::recover(sisl::byte_view sb) {
                 } else {
                     buf->m_up_buffer->m_wait_for_down_buffers.decrement();
                 }
+            } else {
+                buf->m_up_buffer->m_wait_for_down_buffers.decrement();
             }
         }
     }
