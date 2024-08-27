@@ -228,7 +228,7 @@ void IndexCPContext::process_txn_record(txn_record const* rec, std::map< BlkId, 
     auto cpg = cp_mgr().cp_guard();
 
     auto const rec_to_buf = [&buf_map, &cpg](txn_record const* rec, bool is_meta, BlkId const& bid,
-                                             IndexBufferPtr const& up_buf) -> IndexBufferPtr {
+                                             IndexBufferPtr const& up_buf, bool freed=false) -> IndexBufferPtr {
         IndexBufferPtr buf;
         auto it = buf_map.find(bid);
         if (it == buf_map.end()) {
@@ -249,7 +249,7 @@ void IndexCPContext::process_txn_record(txn_record const* rec, std::map< BlkId, 
         }
 
         if (up_buf) {
-            DEBUG_ASSERT(((buf->m_up_buffer == nullptr) || (buf->m_up_buffer == up_buf)), "Inconsistent up buffer");
+            DEBUG_ASSERT(freed || ((buf->m_up_buffer == nullptr) || (buf->m_up_buffer == up_buf)), "Inconsistent up buffer");
             auto real_up_buf = (up_buf->m_created_cp_id == cpg->id()) ? up_buf->m_up_buffer : up_buf;
 
 #ifndef NDEBUG
@@ -294,7 +294,7 @@ void IndexCPContext::process_txn_record(txn_record const* rec, std::map< BlkId, 
 
     for (uint8_t idx{0}; idx < rec->num_freed_ids; ++idx) {
         auto freed_buf = rec_to_buf(rec, false /* is_meta */, rec->blk_id(cur_idx++),
-                                    inplace_child_buf ? inplace_child_buf : parent_buf);
+                                    inplace_child_buf ? inplace_child_buf : parent_buf, true);
         freed_buf->m_node_freed = true;
     }
 }

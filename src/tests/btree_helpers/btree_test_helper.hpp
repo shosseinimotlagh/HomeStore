@@ -380,7 +380,8 @@ public:
     }
 
     void dump_to_file(const std::string& file = "") const { m_bt->dump_tree_to_file(file); }
-    void print_keys(const std::string& preamble = "") const {
+    void print_keys() const { print_keys(""); }
+    void print_keys(const std::string& preamble) const {
         auto print_key_range = [](std::vector< std::pair< K, V > > const& kvs) -> std::string {
             uint32_t start = 0;
             std::string str;

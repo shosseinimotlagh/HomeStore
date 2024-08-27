@@ -127,6 +127,7 @@ void IndexWBCache::write_buf(const BtreeNodePtr& node, const IndexBufferPtr& buf
         if (node != nullptr) { m_cache.upsert(node); }
         LOGTRACEMOD(wbcache, "add to dirty list cp {} {}", cp_ctx->id(), buf->to_string());
         r_cast< IndexCPContext* >(cp_ctx)->add_to_dirty_list(buf);
+        LOGTRACEMOD(wbcache, " cp fo far\n{}", r_cast< IndexCPContext* >(cp_ctx)->to_string_with_dags());
         resource_mgr().inc_dirty_buf_size(m_node_size);
     }
 }
@@ -231,6 +232,10 @@ static void set_crash_flips(IndexBufferPtr const& parent_buf, IndexBufferPtr con
             child_buf->set_crash_flag();
         } else if (iomgr_flip::instance()->test_flip("crash_flush_on_merge_at_right_child")) {
             if (!new_node_bufs.empty()) { new_node_bufs[0]->set_crash_flag(); }
+        }else if (iomgr_flip::instance()->test_flip("crash_flush_on_freed_child")){
+            if (new_node_bufs.empty()){
+                freed_node_bufs[0]->set_crash_flag();
+            }
         }
     } else if (!freed_node_bufs.empty() && (new_node_bufs.size() == freed_node_bufs.size())) {
         // Its a rebalance node situation
@@ -241,7 +246,11 @@ static void set_crash_flips(IndexBufferPtr const& parent_buf, IndexBufferPtr con
         } else if (iomgr_flip::instance()->test_flip("crash_flush_on_rebalance_at_right_child")) {
             if (!new_node_bufs.empty()) { new_node_bufs[0]->set_crash_flag(); }
         }
-    }
+    } /*else if (!freed_node_bufs.empty() && new_node_bufs.empty()){
+        if (iomgr_flip::instance()->test_flip("crash_flush_on_freed_child")) {
+            freed_node_bufs[0]->set_crash_flag();
+        }
+    }*/
 }
 #endif
 
@@ -260,14 +269,33 @@ void IndexWBCache::transact_bufs(uint32_t index_ordinal, IndexBufferPtr const& p
     }
 
     for (auto const& buf : freed_node_bufs) {
-        if (!buf->m_wait_for_down_buffers.testz()) {
+        //Mehdi : no matter what, we should link the freed node to the child buffer
+//        if (!buf->m_wait_for_down_buffers.testz()) {
             // This buffer has some down bufs depending on it. It can happen for an upper level interior node, where
             // lower level node (say leaf) has split causing it to write entries in this node, but this node is now
             // merging with other node, causing it to free. In these rare instances, we link this node to the new
             // node resulting in waiting for all the down bufs to be flushed before up buf can flush (this buf is
             // not written anyways)
+            if(buf->m_up_buffer!=nullptr){
+                // first delete the link between the freed node and its up buffer
+                buf->m_up_buffer->m_wait_for_down_buffers.decrement();
+#ifndef NDEBUG
+                bool found{false};
+                for (auto it = buf->m_up_buffer->m_down_buffers.begin(); it != buf->m_up_buffer->m_down_buffers.end(); ++it) {
+                    if (it->lock() == buf) {
+                        buf->m_up_buffer->m_down_buffers.erase(it);
+                        found = true;
+                        break;
+                    }
+                }
+                HS_DBG_ASSERT(found, "Down buffer is linked to Up buf, but up_buf doesn't have down_buf in its list");
+#endif
+                LOGINFO("unlinking freed node {} from its up buffer {}", buf->to_string(), buf->m_up_buffer->to_string());
+            }
+
+
             link_buf(child_buf, buf, true /* is_sibling_link */, cp_ctx);
-        }
+//        }
     }
 
     if (new_node_bufs.empty() && freed_node_bufs.empty()) {
@@ -280,17 +308,20 @@ void IndexWBCache::transact_bufs(uint32_t index_ordinal, IndexBufferPtr const& p
     } else {
         icp_ctx->add_to_txn_journal(index_ordinal,          // Ordinal
                                     child_buf->m_up_buffer, // real up buffer
-                                    child_buf, // real in place child
-                                    new_node_bufs, // new node bufs
+                                    new_node_bufs.empty() ? freed_node_bufs[0]->m_up_buffer
+                                                          : new_node_bufs[0]->m_up_buffer, // real in place child
+                                    //                                    child_buf, // real in place child
+                                    new_node_bufs,  // new node bufs
                                     freed_node_bufs // free_node_bufs
         );
     }
-#if 0
+    // #if 0
     static int id = 0;
-    auto filename = "transact_bufs_"+std::to_string(id++)+ "_" +std::to_string(rand()%100)+".dot";
+    auto filename = "transact_bufs_" + std::to_string(id++) + "___" + std::to_string(rand() % 100) + ".dot";
     LOGINFO("Transact cp is in cp\n{} and storing in {}\n\n\n", icp_ctx->to_string(), filename);
     icp_ctx->to_string_dot(filename);
-#endif
+    icp_ctx->to_string_with_dags();
+    // #endif
 }
 
 void IndexWBCache::link_buf(IndexBufferPtr const& up_buf, IndexBufferPtr const& down_buf, bool is_sibling_link,
@@ -308,6 +339,15 @@ void IndexWBCache::link_buf(IndexBufferPtr const& up_buf, IndexBufferPtr const& 
         HS_DBG_ASSERT(real_up_buf,
                       "Up buffer is newly created in this cp, but it doesn't have its own up_buffer, its not expected");
     }
+//    // Condition 1-a If the up buffer is going to deleted, we should link the down buffer to the up buffer's up buffer
+//        // because the up buffer is going to be freed.
+//        if (up_buf->m_node_freed) {
+//            real_up_buf = up_buf->m_up_buffer;
+////            if(real_up_buf!=nullptr){
+////                real_up_buf
+////            }
+//            HS_DBG_ASSERT(real_up_buf,"Up buffer is recently deleted in this cp, but it doesn't have its own up_buffer, its not expected");
+//        }
 
     // Condition 2: If down_buf already has an up_buf, we can override it newly passed up_buf it only in case of
     // sibling link. Say there is a parent node P1 and child C0, C1 (all 3 created in previous cps). Consider the
@@ -363,11 +403,11 @@ void IndexWBCache::link_buf(IndexBufferPtr const& up_buf, IndexBufferPtr const& 
         }
     }
 
-    // Now we link the down_buffer to the real up_buffer
-    if (down_buf->m_up_buffer) {
-        // release existing up_buffer's wait count
-        down_buf->m_up_buffer->m_wait_for_down_buffers.decrement();
-    }
+    //    // Now we link the down_buffer to the real up_buffer
+    //    if (down_buf->m_up_buffer) {
+    //        // release existing up_buffer's wait count
+    //        down_buf->m_up_buffer->m_wait_for_down_buffers.decrement();
+    //    }
     real_up_buf->m_wait_for_down_buffers.increment(1);
     down_buf->m_up_buffer = real_up_buf;
 #ifndef NDEBUG
@@ -384,7 +424,8 @@ void IndexWBCache::free_buf(const IndexBufferPtr& buf, CPContext* cp_ctx) {
     buf->m_node_freed = true;
 
     resource_mgr().inc_free_blk(m_node_size);
-    m_vdev->free_blk(buf->m_blkid, s_cast< VDevCPContext* >(cp_ctx));
+    // Mehdi: remove the bellow line and leave it for dependency graph in do_flush_one_buf
+//    m_vdev->free_blk(buf->m_blkid, s_cast< VDevCPContext* >(cp_ctx));
 }
 
 //////////////////// Recovery Related section /////////////////////////////////
@@ -418,24 +459,41 @@ void IndexWBCache::recover(sisl::byte_view sb) {
     //
     // On the second pass, we only take the new nodes/bufs and then repair their up buffers, if needed.
     std::vector< IndexBufferPtr > l0_bufs;
-    for (auto const& [_, buf] : bufs) {
-        if (buf->m_node_freed || (buf->m_created_cp_id == icp_ctx->id())) {
-            if (was_node_committed(buf)) {
-                if (was_node_committed(buf->m_up_buffer)) {
-                    if (buf->m_node_freed) {
-                        // Up buffer was written, so this buffer can be freed and thus can free the blk.
-                        m_vdev->free_blk(buf->m_blkid, s_cast< VDevCPContext* >(icp_ctx));
+    /*    for (auto const& [_, buf] : bufs) {
+            if (buf->m_node_freed || (buf->m_created_cp_id == icp_ctx->id())) {
+                if (was_node_committed(buf)) {
+                    if (was_node_committed(buf->m_up_buffer)) {
+                        if (buf->m_node_freed) {
+                            // Up buffer was written, so this buffer can be freed and thus can free the blk.
+                            m_vdev->free_blk(buf->m_blkid, s_cast< VDevCPContext* >(icp_ctx));
+                        } else {
+                            m_vdev->commit_blk(buf->m_blkid);
+                        }
+                        l0_bufs.push_back(buf);
                     } else {
-                        m_vdev->commit_blk(buf->m_blkid);
+                        buf->m_up_buffer->m_wait_for_down_buffers.decrement();
                     }
-                    l0_bufs.push_back(buf);
                 } else {
                     buf->m_up_buffer->m_wait_for_down_buffers.decrement();
                 }
+            }
+        }*/
+    for (auto const& [_, buf] : bufs) {
+        bool remove = false;
+        if (buf->m_node_freed) {
+            if (was_node_committed(buf)) {
+                if (was_node_committed(buf->m_up_buffer)) {
+                    // Up buffer was written, so this buffer can be freed and thus can free the blk.
+                    m_vdev->free_blk(buf->m_blkid, s_cast< VDevCPContext* >(icp_ctx));
+                    l0_bufs.push_back(buf);
+                } else {
+                    remove = true;
+                }
             } else {
-                buf->m_up_buffer->m_wait_for_down_buffers.decrement();
+                remove = true;
             }
         }
+        if (remove) { buf->m_up_buffer->m_wait_for_down_buffers.decrement(); }
     }
 
     LOGINFOMOD(wbcache, "Index Recovery detected {} nodes out of {} as new/freed nodes to be recovered in prev cp={}",
@@ -581,6 +639,10 @@ void IndexWBCache::do_flush_one_buf(IndexCPContext* cp_ctx, IndexBufferPtr const
     } else if (buf->m_node_freed) {
         LOGTRACEMOD(wbcache, "Not flushing buf {} as it was freed, its here for merely dependency", cp_ctx->id(),
                     buf->to_string());
+
+        // Mehdi: We are freeing the buffer, but we need to keep the dependency graph intact, so we need to call the
+        // m_vdev->free_blk here to respect the dependency graph
+        m_vdev->free_blk(buf->m_blkid, s_cast< VDevCPContext* >(cp_ctx));
         process_write_completion(cp_ctx, buf);
     } else {
         LOGTRACEMOD(wbcache, "flushing cp {} buf {} info: {}", cp_ctx->id(), buf->to_string(),

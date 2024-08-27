@@ -230,7 +230,8 @@ btree_status_t Btree< K, V >::merge_nodes(const BtreeNodePtr& parent_node, const
     uint32_t balanced_size{0};
     int32_t available_size{0};
     uint32_t num_nodes{0};
-
+    auto old_parent_str = parent_node->to_string();
+    auto old_leftmost_str = leftmost_node->to_string();
     struct _leftmost_src_info {
         std::vector< uint32_t > ith_nodes;
         uint32_t last_node_upto{
@@ -476,7 +477,8 @@ btree_status_t Btree< K, V >::merge_nodes(const BtreeNodePtr& parent_node, const
             ++idx;
         }
 #endif
-
+        LOGINFO("Merging {} nodes into {} nodes, \nold parent: {}\nleftmost child: {} \nnew parent node: {}\nleftmost node: {}", old_nodes.size(), new_nodes.size(),
+                old_parent_str, old_leftmost_str, parent_node->to_string(), leftmost_node->to_string());
         ret = transact_nodes(new_nodes, old_nodes, leftmost_node, parent_node, context);
     }
 
