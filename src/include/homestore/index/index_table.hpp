@@ -112,12 +112,39 @@ public:
         } while (ret == btree_status_t::cp_mismatch);
         return ret;
     }
+    void repair_root_node(IndexBufferPtr const& idx_buf) override {
+        LOGTRACEMOD(wbcache, "check if this was the previous root node {} for buf {} ", m_sb->root_node,
+                    idx_buf->to_string());
+        if (m_sb->root_node == idx_buf->blkid().to_integer()) {
+            // This is the root node, we need to update the root node in superblk
+            LOGTRACEMOD(wbcache, "{} is old root so we need to update the meta node ", idx_buf->to_string());
+            BtreeNode* n = this->init_node(idx_buf->raw_buffer(), idx_buf->blkid().to_integer(), false /* init_buf */,
+                                           BtreeNode::identify_leaf_node(idx_buf->raw_buffer()));
+            static_cast< IndexBtreeNode* >(n)->attach_buf(idx_buf);
+            auto edge_id = n->next_bnode();
 
+            BT_DBG_ASSERT(!n->has_valid_edge(),
+                          "root {} already has a valid edge {}, so we should have found the new root node",
+                          n->to_string(), n->get_edge_value().bnode_id());
+            n->set_next_bnode(empty_bnodeid);
+            n->set_edge_value(BtreeLinkInfo{edge_id, 0});
+            LOGTRACEMOD(wbcache, "change root node {}: edge updated to {} and invalidate the next node! ", n->node_id(),
+                        edge_id);
+            auto cpg = cp_mgr().cp_guard();
+            write_node_impl(n, (void*)cpg.context(cp_consumer_t::INDEX_SVC));
+
+        } else {
+            LOGTRACEMOD(wbcache, "This is not the root node, so we can ignore this repair call for buf {}",
+                        idx_buf->to_string());
+        }
+    }
     void repair_node(IndexBufferPtr const& idx_buf) override {
         if (idx_buf->is_meta_buf()) {
             // We cannot repair the meta buf on its own, we need to repair the root node which modifies the
             // meta_buf. It is ok to ignore this call, because repair will be done from root before meta_buf is
             // attempted to repair, which would have updated the meta_buf already.
+            LOGTRACEMOD(wbcache, "Ignoring repair on meta buf {} root id {} ", idx_buf->to_string(),
+                        this->root_node_id());
             return;
         }
         BtreeNode* n = this->init_node(idx_buf->raw_buffer(), idx_buf->blkid().to_integer(), false /* init_buf */,
@@ -136,6 +163,7 @@ public:
         if (idx_buf->m_up_buffer && idx_buf->m_up_buffer->is_meta_buf()) {
             // Our up buffer is a meta buffer, which means that we are the new root node, we need to update the
             // meta_buf with new root as well
+            LOGTRACEMOD(wbcache, "root change for after repairing {}\n\n", idx_buf->to_string());
             on_root_changed(bn, (void*)cpg.context(cp_consumer_t::INDEX_SVC));
         }
     }
@@ -226,6 +254,8 @@ protected:
     btree_status_t on_root_changed(BtreeNodePtr const& new_root, void* context) override {
         // todo: if(m_sb->root_node == new_root->node_id() && m_sb->root_link_version == new_root->link_version()){
         // return btree_status_t::success;}
+        LOGTRACEMOD(wbcache, "root changed for index old_root={} new_root={}\n\n\n\n", m_sb->root_node,
+                    new_root->node_id());
         m_sb->root_node = new_root->node_id();
         m_sb->root_link_version = new_root->link_version();
 
@@ -240,7 +270,7 @@ protected:
     }
 
     btree_status_t repair_links(BtreeNodePtr const& parent_node, void* cp_ctx) {
-        BT_LOG(DEBUG, "Repairing links for parent node {}", parent_node->to_string());
+        LOGTRACEMOD(wbcache, "Repairing links for parent node {}", parent_node->to_string());
         // TODO: is it possible that repairing many nodes causes an increase to level of btree? If so, then this needs
         // to be handled. Get the last key in the node
         auto const last_parent_key = parent_node->get_last_key< K >();
@@ -250,8 +280,8 @@ protected:
                           parent_node->node_id());
             return btree_status_t::not_found;
         }
-        BT_LOG(INFO, "Repairing node={} with last_parent_key={}", parent_node->to_string(),
-               last_parent_key.to_string());
+        LOGTRACEMOD(wbcache, "Repairing node={} with last_parent_key={}", parent_node->to_string(),
+                    last_parent_key.to_string());
 
         // Get the first child node and its link info
         BtreeLinkInfo child_info;
@@ -259,8 +289,8 @@ protected:
         auto ret = this->get_child_and_lock_node(parent_node, 0, child_info, child_node, locktype_t::READ,
                                                  locktype_t::READ, cp_ctx);
         if (ret != btree_status_t::success) {
-            BT_LOG_ASSERT(false, "Parent node={} repair failed, because first child_node get has failed with ret={}",
-                          parent_node->node_id(), enum_name(ret));
+            LOGTRACEMOD(wbcache, "Parent node={} repair failed, because first child_node get has failed with ret={}",
+                        parent_node->node_id(), enum_name(ret));
             return ret;
         }
 
@@ -285,8 +315,8 @@ protected:
             }
 
             auto const child_last_key = child_node->get_last_key< K >();
-            BT_LOG(INFO, "Repairing node={} child_node={} child_last_key={}", cur_parent->node_id(),
-                   child_node->to_string(), child_last_key.to_string());
+            LOGTRACEMOD(wbcache, "Repairing node={} child_node={} child_last_key={}", cur_parent->node_id(),
+                        child_node->to_string(), child_last_key.to_string());
 
             if (child_last_key.compare(last_parent_key) > 0 && !is_parent_edge_node) {
                 // We have reached the last key, and the parent node doesn't have edge, so we can stop now
@@ -315,7 +345,8 @@ protected:
             cur_parent->insert(cur_parent->total_entries(), child_last_key,
                                BtreeLinkInfo{child_node->node_id(), child_node->link_version()});
 
-            BT_LOG(INFO, "Repairing node={}, repaired so_far={}", cur_parent->node_id(), cur_parent->to_string());
+            LOGTRACEMOD(wbcache, "Repairing node={}, repaired so_far={}", cur_parent->node_id(),
+                        cur_parent->to_string());
 
             // Move to the next child node
             this->unlock_node(child_node, locktype_t::READ);
@@ -343,8 +374,8 @@ protected:
         }
 
         if (ret != btree_status_t::success) {
-            BT_LOG(ERROR, "An error occurred status={} during repair of parent_node={}, aborting the repair",
-                   enum_name(ret), parent_node->node_id());
+            LOGTRACEMOD(wbcache, "An error occurred status={} during repair of parent_node={}, aborting the repair",
+                        enum_name(ret), parent_node->node_id());
             std::memcpy(parent_node->m_phys_node_buf, tmp_buffer, this->m_bt_cfg.node_size());
         }
 

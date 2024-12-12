@@ -320,7 +320,7 @@ struct IndexCrashTest : public test_common::HSTestHelper, BtreeTestHelper< TestT
     void reapply_after_crash() {
         ShadowMap< K, V > snapshot_map{this->m_shadow_map.max_keys()};
         snapshot_map.load(m_shadow_filename);
-        LOGINFO("\tSnapshot before crash\n{}", snapshot_map.to_string());
+        // LOGINFO("\tSnapshot before crash\n{}", snapshot_map.to_string());
         auto diff = this->m_shadow_map.diff(snapshot_map);
 
         // visualize tree after crash
@@ -328,10 +328,11 @@ struct IndexCrashTest : public test_common::HSTestHelper, BtreeTestHelper< TestT
         // this->visualize_keys(recovered_tree_filename);
         // LOGINFO(" tree after recovered stored in {}", recovered_tree_filename);
 
-        std::string dif_str = "KEY \tADDITION\n";
-        for (const auto& [k, addition] : diff) {
-            dif_str += fmt::format(" {} \t{}\n", k.key(), addition);
+        std::string dif_str = "Keys[";
+        for (const auto& [k, _] : diff) {
+            dif_str += fmt::format("{} ", k.key());
         }
+        dif_str += "]";
         LOGINFO("Diff between shadow map and snapshot map\n{}\n", dif_str);
 
         for (const auto& [k, addition] : diff) {
@@ -376,12 +377,12 @@ struct IndexCrashTest : public test_common::HSTestHelper, BtreeTestHelper< TestT
     }
 
     void crash_and_recover(uint32_t s_key, uint32_t e_key) {
-        this->print_keys("Btree prior to CP and susbsequent simulated crash: ");
+        //        this->print_keys("Btree prior to CP and susbsequent simulated crash: ");
         test_common::HSTestHelper::trigger_cp(false);
         this->wait_for_crash_recovery();
         // this->visualize_keys("tree_after_crash_" + std::to_string(s_key) + "_" + std::to_string(e_key) + ".dot");
 
-        this->print_keys("Post crash and recovery, btree structure: ");
+        //        this->print_keys("Post crash and recovery, btree structure: ");
         this->reapply_after_crash();
 
         this->get_all();
@@ -393,24 +394,28 @@ struct IndexCrashTest : public test_common::HSTestHelper, BtreeTestHelper< TestT
         std::set< uint64_t > new_keys;
         std::transform(operations.begin(), operations.end(), std::inserter(new_keys, new_keys.end()),
                        [](const Operation& operation) { return operation.first; });
-        uint32_t count = 1;
+        uint32_t count = 0;
         this->m_shadow_map.foreach ([this, new_keys, &count](K key, V value) {
             // discard the new keys to check
             if (new_keys.find(key.key()) != new_keys.end()) { return; }
+            count++;
             auto copy_key = std::make_unique< K >();
             *copy_key = key;
             auto out_v = std::make_unique< V >();
             auto req = BtreeSingleGetRequest{copy_key.get(), out_v.get()};
             req.enable_route_tracing();
             const auto ret = this->m_bt->get(req);
+            if (ret != btree_status_t::success) {
+                this->print_keys(fmt::format("Sanity check: key {}", key.key()));
+                this->dump_to_file("sanity_fail.txt");
+            }
             ASSERT_EQ(ret, btree_status_t::success) << "Missing key " << key << " in btree but present in shadow map";
         });
         LOGINFO("Sanity check passed for {} keys!", count);
-
     }
 
     void crash_and_recover(OperationList& operations, std::string filename = "") {
-        this->print_keys("Btree prior to CP and susbsequent simulated crash: ");
+        //        this->print_keys("Btree prior to CP and susbsequent simulated crash: ");
         LOGINFO("Before Crash: {} keys in shadow map and it is actually {} keys in tree - operations size {}",
                 this->m_shadow_map.size(), tree_key_count(), operations.size());
 
@@ -428,11 +433,9 @@ struct IndexCrashTest : public test_common::HSTestHelper, BtreeTestHelper< TestT
             std::string rec_filename = filename + "_after_recovery.dot";
             LOGINFO("Visualize the tree file after recovery : {}", rec_filename);
             this->visualize_keys(rec_filename);
-            this->print_keys("Post crash and recovery, btree structure: ");
+            //            this->print_keys("Post crash and recovery, btree structure: ");
         }
         sanity_check(operations);
-        //        Added to the index service right after recovery. Not needed here
-        //        test_common::HSTestHelper::trigger_cp(true);
         LOGINFO("Before Reapply: {} keys in shadow map and actually {} in trees operation size {}",
                 this->m_shadow_map.size(), tree_key_count(), operations.size());
         this->reapply_after_crash(operations);
@@ -440,7 +443,7 @@ struct IndexCrashTest : public test_common::HSTestHelper, BtreeTestHelper< TestT
             std::string re_filename = filename + "_after_reapply.dot";
             LOGINFO("Visualize the tree after reapply {}", re_filename);
             this->visualize_keys(re_filename);
-//            this->print_keys("Post crash and recovery, btree structure: ");
+            //            this->print_keys("Post crash and recovery, btree structure: ");
         }
 
         this->get_all();
@@ -678,7 +681,7 @@ TYPED_TEST(IndexCrashTest, long_running_put_crash) {
     test_common::HSTestHelper::trigger_cp(true);
     this->get_all();
     this->m_shadow_map.save(this->m_shadow_filename);
-    this->print_keys("reapply: after preload");
+    //    this->print_keys("reapply: after preload");
     this->visualize_keys("tree_after_preload.dot");
 
     for (uint32_t round = 1;
@@ -765,7 +768,7 @@ TYPED_TEST(IndexCrashTest, long_running_put_crash) {
                     elapsed_time * 100.0 / this->m_run_time, this->tree_key_count(), num_entries,
                     this->tree_key_count() * 100.0 / num_entries);
         }
-        this->print_keys(fmt::format("reapply: after round {}", round));
+        //        this->print_keys(fmt::format("reapply: after round {}", round));
         if (renew_btree_after_crash) { this->reset_btree(); };
     }
 }

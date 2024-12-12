@@ -145,7 +145,7 @@ void IndexCPContext::to_string_dot(const std::string& filename) {
     LOGINFO("cp dag is stored in file {}", filename);
 }
 
-uint16_t IndexCPContext::num_dags()  {
+uint16_t IndexCPContext::num_dags() {
     // count number of buffers whose up_buffers are nullptr
     uint16_t count = 0;
     std::unique_lock lg{m_flush_buffer_mtx};
@@ -190,15 +190,18 @@ std::string IndexCPContext::to_string_with_dags() {
     // Now walk through the list of graphs and prepare formatted string
     std::string str{fmt::format("IndexCPContext cpid={} dirty_buf_count={} dirty_buf_list_size={} #_of_dags={}\n",
                                 m_cp->id(), m_dirty_buf_count.get(), m_dirty_buf_list.size(), group_roots.size())};
+    int cnt = 1;
     for (const auto& root : group_roots) {
-        std::vector< std::pair< std::shared_ptr< DagNode >, int > > stack;
-        stack.emplace_back(root, 0);
+        std::vector< std::tuple< std::shared_ptr< DagNode >, int, int > > stack;
+        stack.emplace_back(root, 0, cnt++);
         while (!stack.empty()) {
-            auto [node, level] = stack.back();
+            auto [node, level, index] = stack.back();
             stack.pop_back();
-            fmt::format_to(std::back_inserter(str), "{}{} \n", std::string(level * 4, ' '), node->buf->to_string());
+            fmt::format_to(std::back_inserter(str), "{}{}-{} \n", std::string(level * 4, ' '), index,
+                           node->buf->to_string());
+            int c = node->down_nodes.size();
             for (const auto& d : node->down_nodes) {
-                stack.emplace_back(d, level + 1);
+                stack.emplace_back(d, level + 1, c--);
             }
         }
     }

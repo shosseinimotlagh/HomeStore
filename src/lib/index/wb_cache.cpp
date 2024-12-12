@@ -442,6 +442,78 @@ void IndexWBCache::load_buf(IndexBufferPtr const& buf) {
     }
 }
 
+struct DagNode {
+    IndexBufferPtr buffer;
+    std::vector< shared< DagNode > > children;
+};
+
+using DagPtr = std::shared_ptr< DagNode >;
+using DagMap = std::map< IndexBufferPtr, DagPtr >;
+
+static DagMap generate_dag_buffers(std::map< BlkId, IndexBufferPtr >& bufmap) {
+    std::vector< IndexBufferPtr > bufs;
+    std::ranges::transform(bufmap, std::back_inserter(bufs), [](const auto& pair) { return pair.second; });
+
+    auto buildReverseMapping = [](const std::vector< IndexBufferPtr >& buffers) {
+        std::unordered_map< IndexBufferPtr, std::vector< IndexBufferPtr > > parentToChildren;
+        for (const auto& buffer : buffers) {
+            if (buffer->m_up_buffer) { parentToChildren[buffer->m_up_buffer].push_back(buffer); }
+        }
+        return parentToChildren;
+    };
+
+    std::function< DagPtr(IndexBufferPtr, std::unordered_map< IndexBufferPtr, std::vector< IndexBufferPtr > >&) >
+        buildDag;
+    buildDag =
+        [&buildDag](IndexBufferPtr buffer,
+                    std::unordered_map< IndexBufferPtr, std::vector< IndexBufferPtr > >& parentToChildren) -> DagPtr {
+        auto dagNode = std::make_shared< DagNode >();
+        dagNode->buffer = buffer;
+        if (parentToChildren.count(buffer)) {
+            for (const auto& child : parentToChildren[buffer]) {
+                dagNode->children.push_back(buildDag(child, parentToChildren));
+            }
+        }
+        return dagNode;
+    };
+
+    auto generateDagMap = [&](const std::vector< IndexBufferPtr >& buffers) {
+        DagMap dagMap;
+        auto parentToChildren = buildReverseMapping(buffers);
+        for (const auto& buffer : buffers) {
+            if (!buffer->m_up_buffer) { // This is a root buffer
+                auto dagRoot = buildDag(buffer, parentToChildren);
+                dagMap[buffer] = dagRoot;
+            }
+        }
+        return dagMap;
+    };
+
+    return generateDagMap(bufs);
+}
+
+static std::string to_string_dag_bufs(DagMap& dags, cp_id_t cp_id = 0) {
+    std::string str{fmt::format("#_of_dags={}\n", dags.size())};
+    int cnt = 1;
+    for (const auto& [_, dag] : dags) {
+        std::vector< std::tuple< std::shared_ptr< DagNode >, int, int > > stack;
+        stack.emplace_back(dag, 0, cnt++);
+        while (!stack.empty()) {
+            auto [node, level, index] = stack.back();
+            stack.pop_back();
+            auto snew = node->buffer->m_created_cp_id == cp_id ? "NEW" : "";
+            auto sfree = node->buffer->m_node_freed ? "FREED" : "";
+            fmt::format_to(std::back_inserter(str), "{}{}-{} {} {}\n", std::string(level * 4, ' '), index,
+                           node->buffer->to_string(), snew, sfree);
+            int c = node->children.size();
+            for (const auto& d : node->children) {
+                stack.emplace_back(d, level + 1, c--);
+            }
+        }
+    }
+    return str;
+}
+
 void IndexWBCache::recover(sisl::byte_view sb) {
     // If sb is empty, its possible a first time boot.
     if ((sb.bytes() == nullptr) || (sb.size() == 0)) {
@@ -481,6 +553,8 @@ void IndexWBCache::recover(sisl::byte_view sb) {
 
     std::string log = fmt::format("Recovering bufs (#of bufs = {}) before processing them\n", bufs.size());
     LOGTRACEMOD(wbcache, "{}\n{}", log, detailed_log(bufs, {}));
+    auto dags = generate_dag_buffers(bufs);
+    LOGINFO("Before recovery: {}", to_string_dag_bufs(dags, icp_ctx->id()));
 #endif
 
     // At this point, we have the DAG structure (up/down dependency graph), exactly the same as prior to crash, with one
@@ -522,15 +596,42 @@ void IndexWBCache::recover(sisl::byte_view sb) {
                     HS_DBG_ASSERT(found,
                                   "Down buffer is linked to Up buf, but up_buf doesn't have down_buf in its list");
 #endif
+                    if (buf->m_up_buffer->m_wait_for_down_buffers.testz()) {
+                        // if up buffer has upbuffer, then we need to decrement its wait_for_down_buffers
+                        auto grand_buf = buf->m_up_buffer->m_up_buffer;
+                        if (grand_buf) {
+                            HS_DBG_ASSERT(!grand_buf->m_wait_for_down_buffers.testz(),
+                                          "upbuffer of upbuffer is already zero");
+#ifndef NDEBUG
+                            bool found_up{false};
+
+                            for (auto it = grand_buf->m_down_buffers.begin(); it != grand_buf->m_down_buffers.end();
+                                 ++it) {
+                                auto sp = it->lock();
+                                if (sp && sp == buf->m_up_buffer) {
+                                    found_up = true;
+                                    grand_buf->m_down_buffers.erase(it);
+                                    break;
+                                }
+                            }
+                            HS_DBG_ASSERT(
+                                found_up,
+                                "Down buffer is linked to Up buf, but up_buf doesn't have down_buf in its list");
+#endif
+                            grand_buf->m_wait_for_down_buffers.decrement();
+                            LOGINFOMOD(wbcache, "Decrementing wait_for_down_buffers for up buffer of up buffer {}",
+                                       grand_buf->to_string());
+                        }
+                    }
                 }
             }
         }
     }
-
 #ifdef _PRERELEASE
     LOGINFOMOD(wbcache, "Index Recovery detected {} nodes out of {} as new/freed nodes to be recovered in prev cp={}",
                l0_bufs.size(), bufs.size(), icp_ctx->id());
     LOGTRACEMOD(wbcache, "All unclean bufs list\n{}", detailed_log(bufs, l0_bufs));
+    LOGINFO("After recovery: {}", to_string_dag_bufs(dags, icp_ctx->id()));
 #endif
 
     // Second iteration we start from the lowest levels (which are all new_bufs) and check if up_buffers need to be
@@ -541,6 +642,59 @@ void IndexWBCache::recover(sisl::byte_view sb) {
     }
     m_in_recovery = false;
     m_vdev->recovery_completed();
+}
+
+#if 0
+void IndexWBCache::updateUpBufferCounters(std::vector<IndexBufferPtr>& l0_bufs) {
+    std::unordered_set<std::shared_ptr<IndexBuffer>> visited;
+
+    // Reset and update counters for each leaf buffer
+    for (auto& leaf : l0_bufs) {
+        auto currentBuffer = leaf;
+
+        // First pass: Reset counters up the chain
+        while (currentBuffer && !visited.contains(currentBuffer)) {
+            currentBuffer->m_wait_for_down_buffers.set(0);
+            visited.insert(currentBuffer);
+            currentBuffer = currentBuffer->m_up_buffer;
+        }
+
+        // Clear the visited set for the next pass
+        visited.clear();
+
+        // Second pass: Update counters up the chain
+        currentBuffer = leaf;
+        while (currentBuffer && !visited.contains(currentBuffer)) {
+            if (currentBuffer->m_up_buffer) {
+                currentBuffer->m_up_buffer->m_wait_for_down_buffers.increment(1);
+                visited.insert(currentBuffer);
+            }
+            currentBuffer = currentBuffer->m_up_buffer;
+        }
+    }
+}
+#endif
+
+void IndexWBCache::updateUpBufferCounters(std::vector< IndexBufferPtr >& l0_bufs) {
+    std::unordered_set< IndexBufferPtr > allBuffers;
+
+    // First, collect all unique buffers and reset their counters
+    for (auto& leaf : l0_bufs) {
+        auto currentBuffer = leaf;
+        while (currentBuffer) {
+            if (allBuffers.insert(currentBuffer).second) { currentBuffer->m_wait_for_down_buffers.set(0); }
+            currentBuffer = currentBuffer->m_up_buffer;
+        }
+    }
+
+    // Now, iterate over each leaf buffer and update the count for each parent up the chain
+    for (auto& leaf : l0_bufs) {
+        auto currentBuffer = leaf;
+        while (currentBuffer) {
+            if (currentBuffer->m_up_buffer) { currentBuffer->m_up_buffer->m_wait_for_down_buffers.increment(1); }
+            currentBuffer = currentBuffer->m_up_buffer;
+        }
+    }
 }
 
 void IndexWBCache::recover_buf(IndexBufferPtr const& buf) {
@@ -558,6 +712,12 @@ void IndexWBCache::recover_buf(IndexBufferPtr const& buf) {
     } else {
         LOGTRACEMOD(wbcache, "Index Recovery detected up node [{}] as committed no need to repair that",
                     buf->to_string());
+        if (buf->m_up_buffer && buf->m_up_buffer->is_meta_buf()) {
+            // Our up buffer is a meta buffer, which means old root is dirtied and may need no repair but possible of
+            // new root on upper level so needs to be retore the edge
+            LOGTRACEMOD(wbcache, "check root change for without repairing {}\n\n", buf->to_string());
+            index_service().update_root(buf->m_index_ordinal, buf);
+        }
     }
 
     if (buf->m_up_buffer) { recover_buf(buf->m_up_buffer); }
