@@ -79,5 +79,6 @@ private:
     bool was_node_committed(IndexBufferPtr const& buf);
     void load_buf(IndexBufferPtr const& buf);
     void updateUpBufferCounters(std::vector<IndexBufferPtr>& l0_bufs);
+    void updateUpBufferCounters(IndexBufferPtr& buf);
 };
 } // namespace homestore

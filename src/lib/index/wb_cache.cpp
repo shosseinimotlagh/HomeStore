@@ -598,30 +598,7 @@ void IndexWBCache::recover(sisl::byte_view sb) {
 #endif
                     if (buf->m_up_buffer->m_wait_for_down_buffers.testz()) {
                         // if up buffer has upbuffer, then we need to decrement its wait_for_down_buffers
-                        auto grand_buf = buf->m_up_buffer->m_up_buffer;
-                        if (grand_buf) {
-                            HS_DBG_ASSERT(!grand_buf->m_wait_for_down_buffers.testz(),
-                                          "upbuffer of upbuffer is already zero");
-#ifndef NDEBUG
-                            bool found_up{false};
-
-                            for (auto it = grand_buf->m_down_buffers.begin(); it != grand_buf->m_down_buffers.end();
-                                 ++it) {
-                                auto sp = it->lock();
-                                if (sp && sp == buf->m_up_buffer) {
-                                    found_up = true;
-                                    grand_buf->m_down_buffers.erase(it);
-                                    break;
-                                }
-                            }
-                            HS_DBG_ASSERT(
-                                found_up,
-                                "Down buffer is linked to Up buf, but up_buf doesn't have down_buf in its list");
-#endif
-                            grand_buf->m_wait_for_down_buffers.decrement();
-                            LOGINFOMOD(wbcache, "Decrementing wait_for_down_buffers for up buffer of up buffer {}",
-                                       grand_buf->to_string());
-                        }
+                        updateUpBufferCounters(buf->m_up_buffer);
                     }
                 }
             }
@@ -674,6 +651,35 @@ void IndexWBCache::updateUpBufferCounters(std::vector<IndexBufferPtr>& l0_bufs) 
     }
 }
 #endif
+
+//suppose the input is a buffer. if this buffer, buf->m_wait_for_down_buffers.testz() is true (which means that it has no depency on any other buffer) then we can decrement the wait_for_down_buffers of its up buffer. If the up buffer has up buffer, then we need to decrement its wait_for_down_buffers. If the up buffer of up buffer has wait_for_down_buffers as 0, then we need to decrement its wait_for_down_buffers. This process continues until we reach the root buffer. If the root buffer has wait_for_down_buffers as 0, then we need to decrement its wait_for_down_buffers.
+void IndexWBCache::updateUpBufferCounters(IndexBufferPtr& buf){
+    if (buf == nullptr || !buf->m_wait_for_down_buffers.testz()) {
+        LOGINFOMOD(wbcache, "Finish decrementing wait_for_down_buffers");
+        return;
+    }
+        auto grand_buf = buf->m_up_buffer;
+        if (!grand_buf) {return;}
+#ifndef NDEBUG
+            bool found_up{false};
+            for (auto it = grand_buf->m_down_buffers.begin(); it != grand_buf->m_down_buffers.end();
+                 ++it) {
+                auto sp = it->lock();
+                if (sp && sp == buf) {
+                    found_up = true;
+                    grand_buf->m_down_buffers.erase(it);
+                    break;
+                }
+            }
+            HS_DBG_ASSERT(
+                found_up,
+                "Down buffer is linked to Up buf, but up_buf doesn't have down_buf in its list");
+#endif
+            grand_buf->m_wait_for_down_buffers.decrement();
+                LOGINFOMOD(wbcache, "Decrementing wait_for_down_buffers for buffer {} due to zero dependency of child {}, Keep going up",
+                           grand_buf->to_string(), buf->to_string());
+            updateUpBufferCounters(grand_buf);
+}
 
 void IndexWBCache::updateUpBufferCounters(std::vector< IndexBufferPtr >& l0_bufs) {
     std::unordered_set< IndexBufferPtr > allBuffers;
