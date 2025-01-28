@@ -176,7 +176,7 @@ struct TestCfg {
     std::string vol_copy_file_path;
     uint32_t p_zero_buffer;
     uint32_t zero_buffer_period;
-    bool thin_provision_enable{false};
+    bool enable_zero_padding{false};
 
     bool verify_csum() { return verify_type == verify_type_t::csum; }
     bool verify_data() { return verify_type == verify_type_t::data; }
@@ -548,10 +548,10 @@ private:
         fd = vol_info->fd;
         cur_vol = vol_info->vol_idx;
 
-        if (op_type != Op_type::UNMAP) {
+//        if (op_type != Op_type::UNMAP) {
             validate_buffer = iomanager.iobuf_alloc(512, verify_size);
             HS_REL_ASSERT_NOTNULL(validate_buffer);
-        }
+//        }
     }
 
     // compute checksum and store in a buf which will be used for verification
@@ -624,8 +624,8 @@ public:
         // vol_create_del_test = false;
         // move_verify_to_done = false;
         print_startTime = Clock::now();
-        if (tcfg.thin_provision_enable) {
-            HS_SETTINGS_FACTORY().modifiable_settings([](auto& s) { s.generic.boot_thin_provisioning = true; });
+        if (tcfg.enable_zero_padding) {
+            HS_SETTINGS_FACTORY().modifiable_settings([](auto& s) { s.generic.enable_zero_padding = true; });
             HS_SETTINGS_FACTORY().save();
         }
 
@@ -634,8 +634,8 @@ public:
 
     virtual ~VolTest() override {
         if (init_buf) { iomanager.iobuf_free(static_cast< uint8_t* >(init_buf)); }
-        if (tcfg.thin_provision_enable) {
-            HS_SETTINGS_FACTORY().modifiable_settings([](auto& s) { s.generic.boot_thin_provisioning = false; });
+        if (tcfg.enable_zero_padding) {
+            HS_SETTINGS_FACTORY().modifiable_settings([](auto& s) { s.generic.enable_zero_padding = false; });
             HS_SETTINGS_FACTORY().save();
         }
     }
@@ -1835,7 +1835,7 @@ protected:
             HS_REL_ASSERT_NOTNULL(wbuf);
 
             populate_buf(wbuf, size, lba, vinfo.get());
-            if (HS_DYNAMIC_CONFIG(generic->boot_thin_provisioning) &&
+            if (HS_DYNAMIC_CONFIG(generic->enable_zero_padding) &&
                 remaining_period.fetch_sub(1) < zero_counts_per_period) {
                 populate_zero_buf(wbuf, size);
             }
@@ -1852,7 +1852,7 @@ protected:
                     iovecs.emplace_back(std::move(iov));
                     populate_buf(wbuf, page_size, lba + lba_num, vinfo.get());
                 }
-                if (HS_DYNAMIC_CONFIG(generic->boot_thin_provisioning) &&
+                if (HS_DYNAMIC_CONFIG(generic->enable_zero_padding) &&
                     remaining_period.fetch_sub(1) < zero_counts_per_period) {
                     for (const auto& iovec : iovecs) {
                         auto data = static_cast< uint8_t* >(iovec.iov_base);
@@ -1866,7 +1866,7 @@ protected:
             } else {
                 uint8_t* const wbuf{iomanager.iobuf_alloc(512, size)};
                 populate_buf(wbuf, size, lba, vinfo.get());
-                if (HS_DYNAMIC_CONFIG(generic->boot_thin_provisioning) &&
+                if (HS_DYNAMIC_CONFIG(generic->enable_zero_padding) &&
                     remaining_period.fetch_sub(1) < zero_counts_per_period) {
                     populate_zero_buf(wbuf, size);
                 }
@@ -2133,8 +2133,12 @@ public:
                     write_vol(start_lba, nlbas);
                     auto it = m_validate_buf.begin() + start_lba;
                     std::fill(it, it + nlbas, 0);
-                } else {
+                } else if (std::get< 0 >(tuple) == "read") {
                     read_vol(start_lba, nlbas);
+                } else{
+                    auto it = m_validate_buf.begin() + start_lba;
+                    std::fill(it, it + nlbas, 0);
+                    unmap_vol(start_lba, nlbas);
                 }
             } else if (std::holds_alternative< std::tuple< std::string, uint64_t, uint32_t, uint8_t > >(request)) {
                 auto& tuple = std::get< std::tuple< std::string, uint64_t, uint32_t, uint8_t > >(request);
@@ -2145,9 +2149,13 @@ public:
                     write_vol(start_lba, nlbas, value);
                     auto it = m_validate_buf.begin() + start_lba;
                     std::fill(it, it + nlbas, value);
-                } else {
+                } else if (std::get< 0 >(tuple) == "read") {
                     // in case, the caller mistakenly added a value for a read request, we will ignore the value
                     read_vol(start_lba, nlbas);
+                } else{
+                    unmap_vol(start_lba, nlbas);
+                    auto it = m_validate_buf.begin() + start_lba;
+                    std::fill(it, it + nlbas, 0);
                 }
             }
         }
@@ -2155,8 +2163,14 @@ public:
 
     void on_one_iteration_completed(const boost::intrusive_ptr< io_req_t >& req) override {
         --m_outstanding_ios;
+        LOGINFO("Request completed for request id {} lba {} nlbas {} op_type {} ", static_cast< vol_interface_req_ptr >(req)->request_id,  req->lba, req->nlbas, req->op_type);
         if (req->op_type == Op_type::READ) { verify_request(req); }
         req->vol_info->ref_cnt.decrement_testz(1);
+
+        VolInterface::get_instance()->verify_tree(req->vol_info->vol);
+        LOGINFO("tree:");
+        VolInterface::get_instance()->print_tree(req->vol_info->vol);
+
     }
     uint64_t read_buffer(std::vector< iovec >& iovecs, uint8_t* buf) {
         uint8_t* current_position = buf;
@@ -2172,9 +2186,11 @@ public:
         auto total_size_read = read_buffer(req->iovecs, buf.get());
         HS_REL_ASSERT_EQ(req->nlbas * page_size, total_size_read);
         auto raw_buf = buf.get();
+        LOGINFO("raw buffer : {}", raw_buf);
         for (size_t i = 0; i < req->nlbas; i++) {
             HS_REL_ASSERT_EQ(raw_buf[i * page_size], m_validate_buf[req->lba + i]);
         }
+
     }
     bool time_to_stop() const override { return m_current_request == m_requests.size(); }
 
@@ -2191,6 +2207,31 @@ protected:
     std::atomic< uint64_t > m_current_request{0};
     std::vector< uint8_t > m_validate_buf;
     RequestVector m_requests;
+
+    bool unmap_vol(const uint64_t lba, const uint32_t nlbas) {
+        ++m_current_request;
+        std::vector< iovec > iovecs{};
+        for (uint32_t lba_num{0}; lba_num < nlbas; ++lba_num) {
+            uint8_t* const wbuf{iomanager.iobuf_alloc(512, page_size)};
+            iovec iov{static_cast< void* >(wbuf), static_cast< size_t >(page_size)};
+            iovecs.emplace_back(std::move(iov));
+            populate_buf(wbuf, page_size, 0);
+        }
+        const auto vreq{boost::intrusive_ptr< io_req_t >{
+            new io_req_t(vinfo, Op_type::UNMAP, std::move(iovecs), lba, nlbas, tcfg.verify_csum())}};
+
+        vreq->cookie = static_cast< void* >(this);
+
+        ++m_voltest->output.unmap_cnt;
+        ++m_outstanding_ios;
+        vinfo->ref_cnt.increment(1);
+        const auto ret_io{VolInterface::get_instance()->unmap(vol, vreq)};
+        LOGDEBUG("Unmapped lba: {}, nlbas: {} outstanding_ios={}, cache={}", lba, nlbas, m_outstanding_ios.load(),
+                 (tcfg.write_cache != 0 ? true : false));
+        if (ret_io != no_error) { return false; }
+
+        return true;
+    }
 
     bool write_vol(const uint64_t lba, const uint32_t nlbas, const uint8_t value = 0) {
         ++m_current_request;
@@ -2289,7 +2330,45 @@ protected:
         return vreq;
     }
 };
+TEST_F(VolTest, manual_test) {
+    HS_SETTINGS_FACTORY().modifiable_settings([](auto& s) { s.generic.enable_zero_padding = false; });
+    HS_SETTINGS_FACTORY().save();
+    tcfg.max_vols = 1;
+    tcfg.verify_type = static_cast< verify_type_t >(3);
+    tcfg.max_disk_capacity = 1 * (1ul << 30); // 1GB
+    tcfg.p_volume_size = 1;                   // 1% of 2 (devices) * 1G = 20 MB volume
+    output.print("thin_test");
 
+    this->start_homestore();
+
+    std::unique_ptr< IOManualTestJob > job;
+    job = std::make_unique< IOManualTestJob >(this);
+    // request = op=[write|read|unmap], lba, nlbas [value], value is optional and is used only for write requests and If not
+    // provided, it defaults to 0.
+    IOManualTestJob::RequestVector reqs = {
+        // Case one:  normal read (no zero padding)
+        std::make_tuple("write", 0, 20, 'a'),
+        std::make_tuple("unmap", 5, 20),
+        std::make_tuple("write", 5, 15, 'a'),
+        //  Case two:  zero padding, read after write
+        //        std::make_tuple("write", 1, 10), std::make_tuple("read", 1, 20), std::make_tuple("read", 5, 3),
+        // Case three:  zero padding, overlapping for read
+        //        std::make_tuple("write", 100, 200), std::make_tuple("read", 150, 250),
+        // Case four: no write
+        std::make_tuple("read", 5, 10)};
+    job->load_requests(reqs);
+
+    this->start_job(job.get(), wait_type::for_completion);
+
+    LOGINFO("All volumes are deleted, do a shutdown of homestore");
+    this->shutdown();
+
+    LOGINFO("Shutdown of homestore is completed, removing files");
+    //    this->remove_files();
+    //
+    //    HS_SETTINGS_FACTORY().modifiable_settings([](auto& s) { s.generic.enable_zero_padding = false; });
+    //    HS_SETTINGS_FACTORY().save();
+}
 class VolVerifyJob : public IOTestJob {
 public:
     VolVerifyJob(VolTest* test) : IOTestJob(test, load_type_t::sequential) {
@@ -2447,43 +2526,7 @@ TEST_F(VolTest, init_io_test) {
     this->shutdown();
     if (tcfg.remove_file_on_shutdown) { this->remove_files(); }
 }
-TEST_F(VolTest, thin_test) {
-    HS_SETTINGS_FACTORY().modifiable_settings([](auto& s) { s.generic.boot_thin_provisioning = true; });
-    HS_SETTINGS_FACTORY().save();
-    tcfg.max_vols = 1;
-    tcfg.verify_type = static_cast< verify_type_t >(3);
-    tcfg.max_disk_capacity = 1 * (1ul << 30); // 1GB
-    tcfg.p_volume_size = 1;                   // 1% of 2 (devices) * 1G = 20 MB volume
-    output.print("thin_test");
 
-    this->start_homestore();
-
-    std::unique_ptr< IOManualTestJob > job;
-    job = std::make_unique< IOManualTestJob >(this);
-    // request = op=[write|read], lba, nlbas [value], value is optional and is used only for write requests and If not
-    // provided, it defaults to 0.
-    IOManualTestJob::RequestVector reqs = {
-        // Case one:  normal read (no zero padding)
-        std::make_tuple("write", 0, 100, 4), std::make_tuple("read", 5, 20),
-        // Case two:  zero padding, read after write
-        std::make_tuple("write", 1, 10), std::make_tuple("read", 1, 20), std::make_tuple("read", 5, 3),
-        // Case three:  zero padding, overlapping for read
-        std::make_tuple("write", 100, 200), std::make_tuple("read", 150, 250),
-        // Case four: no write
-        std::make_tuple("read", 800, 5)};
-    job->load_requests(reqs);
-
-    this->start_job(job.get(), wait_type::for_completion);
-
-    LOGINFO("All volumes are deleted, do a shutdown of homestore");
-    this->shutdown();
-
-    LOGINFO("Shutdown of homestore is completed, removing files");
-    this->remove_files();
-
-    HS_SETTINGS_FACTORY().modifiable_settings([](auto& s) { s.generic.boot_thin_provisioning = false; });
-    HS_SETTINGS_FACTORY().save();
-}
 
 /*!
     @test   recovery_io_test
@@ -2948,8 +2991,8 @@ SISL_OPTION_GROUP(
      ::cxxopts::value< uint32_t >()->default_value("70"), "0 to 100"),
     (zero_buffer_period, "", "zero_buffer_period", " the period of consecutive zero buffer occurrence",
      ::cxxopts::value< uint32_t >()->default_value("100"), "0 to 100"),
-    (thin_provision_enable, "", "thin_provision_enable", " enable thin provisioning",
-     ::cxxopts::value< uint32_t >()->default_value("0"), "flag"),
+    (enable_zero_padding, "", "enable_zero_padding", " enable zero padding",
+     ::cxxopts::value< uint32_t >()->default_value("1"), "flag"),
     (unmap_frequency, "", "unmap_frequency", "do unmap for every N",
      ::cxxopts::value< uint64_t >()->default_value("100"), "unmap_frequency"))
 
@@ -3028,7 +3071,7 @@ int main(int argc, char* argv[]) {
     const auto io_size_in_kb = SISL_OPTIONS["io_size"].as< uint32_t >();
     gcfg.p_zero_buffer = SISL_OPTIONS["p_zero_buffer"].as< uint32_t >();
     gcfg.zero_buffer_period = SISL_OPTIONS["zero_buffer_period"].as< uint32_t >();
-    gcfg.thin_provision_enable = SISL_OPTIONS["thin_provision_enable"].as< uint32_t >() != 0 ? true : false;
+    gcfg.enable_zero_padding = SISL_OPTIONS["enable_zero_padding"].as< uint32_t >() != 0 ? true : false;
     gcfg.io_size = io_size_in_kb * 1024;
 
     HS_REL_ASSERT(io_size_in_kb && (io_size_in_kb % 4 == 0),

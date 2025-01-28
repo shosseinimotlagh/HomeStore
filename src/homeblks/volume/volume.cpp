@@ -478,6 +478,8 @@ std::error_condition Volume::read(const vol_interface_req_ptr& iface_req) {
     auto vreq = volume_req::make(iface_req);
     THIS_VOL_LOG(TRACE, volume, vreq, "read: lba={}, nlbas={}, sync={}, cache={}", vreq->lba(), vreq->nlbas(),
                  vreq->is_sync(), vreq->use_cache());
+    LOGINFO("read: lba={}, nlbas={}, sync={}, cache={} \n vreq {}", vreq->lba(), vreq->nlbas(),
+                 vreq->is_sync(), vreq->use_cache(),  vreq->to_string());
     COUNTER_INCREMENT(m_metrics, volume_read_count, 1);
     COUNTER_INCREMENT(m_metrics, volume_outstanding_data_read_count, 1);
 
@@ -509,6 +511,7 @@ std::error_condition Volume::unmap(const vol_interface_req_ptr& iface_req) {
     auto vreq = volume_req::make(iface_req);
 
     THIS_VOL_LOG(TRACE, volume, vreq, "unmap: lba={}, nlbas={}", vreq->lba(), vreq->nlbas());
+    LOGINFO("unmap: lba={}, nlbas={}", vreq->lba(), vreq->nlbas());
 
     COUNTER_INCREMENT(m_metrics, volume_unmap_count, 1);
 

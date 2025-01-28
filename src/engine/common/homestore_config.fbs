@@ -121,7 +121,7 @@ table Generic {
     // writeback cache flush threads
     cache_flush_threads : int32 = 1;
 
-    cp_watchdog_timer_sec : uint32 = 10; // it checks if cp stuck every 10 seconds
+    cp_watchdog_timer_sec : uint32 = 10000000; // it checks if cp stuck every 10 seconds
 
     cache_max_throttle_cnt : uint32 = 4; // writeback cache max q depth
 
@@ -143,7 +143,7 @@ table Generic {
     // take into account some floating buffers in writeback cache.
     indx_mempool_percent : uint32 = 110;
 
-    boot_thin_provisioning: bool = false;
+    enable_zero_padding: bool = false;
 }
 
 table ResourceLimits {

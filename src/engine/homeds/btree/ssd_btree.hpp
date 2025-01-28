@@ -444,8 +444,10 @@ public:
 #ifdef _PRERELEASE
         crc_mismatch |= homestore_flip->test_flip("btree_crc_mismatch");
 #endif
+        LOGINFO("mismatch node {}: {} is it from cache vs physical {} bn cp {} vs cp {}", bn->to_string(), vr.to_string(), physical_node->persistent_header_to_string(), bn->bcp->cp_id,  bcp->cp_id);
+
         if (crc_mismatch) {
-            LOGERROR("mismatch node: {} is it from cache", vr.to_string());
+            LOGERROR("mismatch node {}: {} is it from cache vs physical {} bn cp {} vs cp {}", bn->to_string(), vr.to_string(), physical_node->persistent_header_to_string(), bn->bcp->cp_id,  bcp->cp_id);
             return btree_status_t::crc_mismatch;
         }
 #endif
