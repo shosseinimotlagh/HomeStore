@@ -352,6 +352,8 @@ public:
 
         if (bn->bcp->cp_id == bcp->cp_id) {
             // modifying the buffer multiple times in a same cp
+            LOGINFO("node {} modifying the buffer multiple times in a same cp {}", bn->get_node_id(), bcp->to_string());
+
             return btree_status_t::success;
         }
 
@@ -361,6 +363,7 @@ public:
         auto req{bn->req[prev_cp_id]};
         if (!req || req->state == writeback_req_state::WB_REQ_COMPL) {
             // req on last cp is already completed. No need to make copy
+            LOGINFO("node {} req on last cp is already completed for {} . No need to make copy", bn->get_node_id(), bcp->to_string());
             return btree_status_t::success;
         }
 
@@ -379,6 +382,7 @@ public:
 
         // assign new memvec to buffer
         bn->set_memvec(mvec, 0, bn->get_cache_size());
+        LOGINFO("node {} assign new memvec to buffer cp {} ", bn->get_node_id(),bcp->to_string());
         return btree_status_t::success;
     }
 

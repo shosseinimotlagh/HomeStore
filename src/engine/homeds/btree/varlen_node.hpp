@@ -284,12 +284,12 @@ public:
     }
 #endif
 
-    std::string to_string(bool print_friendly = false) const {
+    __attribute__((noinline)) std::string to_string(bool print_friendly = false) const {
         auto str = fmt::format(
-            "{}id={} nEntries={} {} free_space={} ",
+            "{}id={} nEntries={} {} free_space={}  physical={}",
             (print_friendly ? "---------------------------------------------------------------------\n" : ""),
             this->get_node_id(), this->get_total_entries(), (this->is_leaf() ? "LEAF" : "INTERIOR"),
-            get_var_node_header_const()->m_available_space);
+            get_var_node_header_const()->m_available_space, this->persistent_header_to_string());
         if (!this->is_leaf() && (this->has_valid_edge())) {
             fmt::format_to(std::back_inserter(str), "edge_id={} ", this->get_edge_id());
         }
