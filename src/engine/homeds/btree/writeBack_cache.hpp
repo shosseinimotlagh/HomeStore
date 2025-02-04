@@ -304,10 +304,12 @@ public:
             /* check for dirty buffers cnt */
             m_dirty_buf_cnt[cp_id].increment(1);
             ResourceMgrSI().inc_dirty_buf_cnt(m_node_size);
+            LOGINFO("write buf node {}", bn->get_node_id());
         } else {
             HS_DBG_ASSERT_EQ(bn->req[cp_id]->bid.to_integer(), bn->get_node_id());
             if (bn->req[cp_id]->m_mem != bn->get_memvec_intrusive()) {
                 bn->req[cp_id]->m_mem = bn->get_memvec_intrusive();
+                LOGINFO("write buf node {}", bn->get_node_id());
                 HS_DBG_ASSERT_NOTNULL(bn->req[cp_id]->m_mem.get());
             }
         }
@@ -321,6 +323,7 @@ public:
                 wbd_req->req_q.push_back(wb_req);
             }
             wb_req->dependent_cnt.increment(1);
+            LOGINFO("write buf node {} dependent node {}", bn->get_node_id(), dependent_bn->get_node_id());
         }
     }
 
@@ -352,15 +355,19 @@ public:
 
         if (bn->bcp->cp_id == bcp->cp_id) {
             // modifying the buffer multiple times in a same cp
+            LOGINFO("node {} modifying the buffer multiple times in a same cp {}", bn->get_node_id(), bcp->to_string());
             return btree_status_t::success;
         }
 
         if (bn->bcp->cp_id > bcp->cp_id) { return btree_status_t::cp_mismatch; }
 
+        LOGINFO("refresh buf node {} is_write_modify {}", bn->get_node_id(), is_write_modifiable);
+
         const size_t prev_cp_id{static_cast< size_t >((bcp->cp_id - 1)) % MAX_CP_CNT};
         auto req{bn->req[prev_cp_id]};
         if (!req || req->state == writeback_req_state::WB_REQ_COMPL) {
             // req on last cp is already completed. No need to make copy
+            LOGINFO("node {} req on last cp is already completed for {} . No need to make copy", bn->get_node_id(), bcp->to_string());
             return btree_status_t::success;
         }
 
@@ -379,6 +386,7 @@ public:
 
         // assign new memvec to buffer
         bn->set_memvec(mvec, 0, bn->get_cache_size());
+        LOGINFO("node {} assign new memvec to buffer cp {} ", bn->get_node_id(),bcp->to_string());
         return btree_status_t::success;
     }
 
@@ -475,6 +483,8 @@ public:
         auto wb_req = to_wb_req(bs_req);
         const size_t cp_id = wb_req->bcp->cp_id % MAX_CP_CNT;
         wb_req->state = homeds::btree::writeback_req_state::WB_REQ_COMPL;
+        LOGINFO("writeBack_completion_internal state compl node {} req id {}", wb_req->bn->get_node_id(),
+                wb_req->request_id);
 
         --wb_cache_outstanding_cnt;
         auto shared_this = this->shared_from_this();
@@ -537,6 +547,8 @@ public:
         // we are done with this wb_req
         HS_REL_ASSERT_EQ(wb_req, wb_req->bn->req[cp_id]);
         wb_req->bn->req[cp_id] = nullptr;
+        LOGINFO("writeBack_completion_internal reset wb_req node {} req id {}", wb_req->bn->get_node_id(),
+                wb_req->request_id);
 
         /* req and btree node are pointing to each other which is preventing neither of them to be freed */
         wb_req->bn = nullptr;

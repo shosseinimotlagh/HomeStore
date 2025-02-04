@@ -58,10 +58,13 @@ typedef struct __attribute__((__packed__)) {
     bnodeid_t edge_entry;
 
     string to_string() const {
-        return fmt::format("magic={} version={} csum={} node_id={} next_node={} nentries={} node_type={} is_leaf={} "
-                           "valid_node={} node_gen={} edge_entry={}",
-                           magic, version, checksum, node_id, next_node, nentries, node_type, leaf, valid_node,
-                           node_gen, edge_entry);
+        auto snext = (next_node == empty_bnodeid) ? "" : " next=" + std::to_string(next_node);
+        auto sedge = (edge_entry == empty_bnodeid) ? "" : " edge_entry={}"+ std::to_string(edge_entry);
+        vector<std::string> stype= {"SIMPLE", "VAR_VALUE", "VAR_KEY", "VAR_OBJECT", "PREFIX", "COMPACT"};
+        return fmt::format("magic={} version={} csum={} node_id={} {} nentries={} node_type={} is_leaf={} "
+                           "valid_node={} node_gen={} {}",
+                           magic, version, checksum, node_id, snext, nentries, stype[node_type], leaf, valid_node,
+                           node_gen, sedge);
     }
 } persistent_hdr_t;
 
@@ -133,6 +136,7 @@ public:
     ~PhysicalNode() {}
 
     persistent_hdr_t* get_persistent_header() { return &m_pers_header; }
+    std::string persistent_header_to_string() const { return m_pers_header.to_string(); }
 
     uint8_t get_magic() const { return m_pers_header.magic; }
     void set_magic() { get_persistent_header()->magic = MAGICAL_VALUE; }
