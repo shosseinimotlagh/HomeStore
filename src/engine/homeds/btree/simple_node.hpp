@@ -91,7 +91,12 @@ public:
 #endif
         return btree_status_t::success;
     }
-
+    std::string to_string_info() const {
+        auto str = fmt::format(
+            "id={} nEntries={} {} ",
+            this->get_node_id(), this->get_total_entries(), (this->is_leaf() ? "LEAF" : "INTERIOR"));
+        return str;
+    }
     std::string to_string(bool print_friendly = false) const {
         auto str = fmt::format(
             "{}id={} nEntries={} {} ",

@@ -786,6 +786,22 @@ public:
         return resp;
     }
 
+    [[nodiscard]] __attribute__((noinline)) std::string to_string_node(uint64_t node_id) {
+        BtreeNodePtr node = nullptr;
+        auto ret = read_node(node_id, node);
+        if(ret != btree_status_t::success)
+        {
+            return fmt::format("read failed {}, reason {}", node_id, ret);
+        }
+        auto physical_node = (LeafPhysicalNode*)(btree_store_t::get_physical(node.get()));
+        auto crc = crc16_t10dif(init_crc_16, physical_node->get_node_area(), btree_store_t::get_node_area_size(m_btree_store.get()));
+        return fmt::format("{}, {}, {} ",node->get_node_id(), physical_node->persistent_header_to_string(), std::to_string(crc));
+    }
+    void dummy(uint64_t node_id) {
+        LOGINFO("{}", to_string_node(node_id));
+        }
+
+
     // after this function finishes, no node is locked by this function;
     sisl::status_response get_status_nodes(const sisl::status_request& request) {
         sisl::status_response resp;
@@ -1171,7 +1187,7 @@ private:
         }
         if (update_debug_bm &&
             (btree_store_t::update_debug_bm(m_btree_store.get(), my_node) != btree_status_t::success)) {
-            LOGERROR("bitmap update failed for node {}", my_node->to_string());
+            LOGERROR("bitmap update failed for node {}", to_string_node(my_node->get_node_id()));
             return false;
         }
 

@@ -92,6 +92,10 @@ DecBNodeType(std::string) to_string(bool print_friendly) const {
     return call_variant_method_const(this, to_string, print_friendly);
 }
 
+DecBNodeType(std::string) to_string_info() const {
+    return call_variant_method_const(this, to_string_info);
+}
+
 /* Provides the occupied data size within the node */
 DecBNodeType(bool) is_leaf() const { return m_common_header.is_leaf; }
 

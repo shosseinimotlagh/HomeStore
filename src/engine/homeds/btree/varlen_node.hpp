@@ -283,7 +283,13 @@ public:
         return ss.str();
     }
 #endif
-
+    std::string to_string_info() const {
+            auto str = fmt::format(
+                "{} free_space {}",
+            this->persistent_header_to_string(),
+                get_var_node_header_const()->m_available_space);
+            return str;
+    }
     std::string to_string(bool print_friendly = false) const {
         auto str = fmt::format(
             "{}id={} nEntries={} {} free_space={} physical={} ",
