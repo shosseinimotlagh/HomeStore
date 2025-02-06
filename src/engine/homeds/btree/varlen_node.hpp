@@ -601,8 +601,8 @@ private:
         uint16_t obj_size = key_blob.size + val_blob.size;
         uint16_t to_insert_size = obj_size + get_record_size();
         if (to_insert_size > get_var_node_header()->available_space()) {
-            LOGDEBUG("insert failed insert size {} available size {}", to_insert_size,
-                     get_var_node_header()->available_space());
+            LOGDEBUG("insert failed insert size {} available size {} for node {}", to_insert_size,
+                     get_var_node_header()->available_space(), this->get_node_id());
             return 0;
         }
 
@@ -665,7 +665,7 @@ private:
         if (no_of_entries == 0) {
             // this happens when  there is only entry and in update, we first remove and than insert
             get_var_node_header()->m_tail_arena_offset = get_var_node_header()->m_init_available_space;
-            LOGTRACEMOD(btree_generics, "Full available size reclaimed");
+            LOGTRACEMOD(btree_generics, "Full available size reclaimed for {}", this->get_node_id());
             return;
         }
         Record rec[no_of_entries];
@@ -713,7 +713,7 @@ private:
 #ifndef NDEBUG
         validate_sanity();
 #endif
-        LOGTRACEMOD(btree_generics, "Sparse space reclaimed:{}", sparce_space);
+        LOGTRACEMOD(btree_generics, "Sparse space reclaimed:{} for {}", sparce_space, this->get_node_id());
     }
 
     // See template specialization below for each nodetype

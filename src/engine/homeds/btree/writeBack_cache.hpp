@@ -312,7 +312,7 @@ public:
             ResourceMgrSI().inc_dirty_buf_cnt(m_node_size);
             std::string sbn = bn->bcp ? std::to_string(bn->bcp->cp_id) : "null";
             std::string sbcp = bcp ? std::to_string(bcp->cp_id) : "null";
-            LOGINFO("write buf node {}  bn {} bcp {}", bn->to_string_info());
+            LOGINFO("write buf node {}  bn {} bcp {}", bn->to_string_info(), sbn, sbcp);
         } else {
             HS_DBG_ASSERT_EQ(bn->req[cp_id]->bid.to_integer(), bn->get_node_id());
             if (bn->req[cp_id]->m_mem != bn->get_memvec_intrusive()) {
@@ -337,7 +337,6 @@ public:
             std::string sdn2 = bn->bcp ? std::to_string(dependent_bn->bcp->cp_id) : "null";
 
             std::string sbcp2 = bcp ? std::to_string(bcp->cp_id) : "null";
-            LOGINFO("write buf node {}  bn {} bcp {}", bn->to_string_info());
             LOGINFO("write buf node {} dependent node {} - bn {} dn {} bcp {}", bn->to_string_info(), dependent_bn->to_string_info(),sbn2,sdn2, sbcp2);
         }
     }
@@ -384,7 +383,7 @@ public:
         auto req{bn->req[prev_cp_id]};
         if (!req || req->state == writeback_req_state::WB_REQ_COMPL) {
             // req on last cp is already completed. No need to make copy
-            LOGINFO("node {} req on last cp is already completed for bn {} bcp {} . No need to make copy", bn->to_string_info(), sbn, sbcp);
+            LOGINFO("node {} req on last cp is already completed for bn {} bcp {} . No need to make copy req is null?= {}", bn->to_string_info(), sbn, sbcp, !req);
             return btree_status_t::success;
         }
 

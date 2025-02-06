@@ -87,7 +87,7 @@ struct blkalloc_cp_id;
 #define THIS_BT_LOG(level, mod, node, msg, ...)                                                                        \
     HS_DETAILED_LOG(level, mod, , "btree", m_btree_cfg.get_name(),                                                     \
                     BOOST_PP_IF(BOOST_VMD_IS_EMPTY(node), BOOST_PP_EMPTY, BOOST_PP_IDENTITY("node"))(),                \
-                    node->to_string(), msg, ##__VA_ARGS__)
+                    node->to_string_info(), msg, ##__VA_ARGS__)
 
 #define THIS_BT_CP_LOG(level, cp_id, msg, ...)                                                                         \
     HS_PERIODIC_DETAILED_LOG(level, cp, "cp", cp_id, "btree", m_btree_cfg.get_name(), msg, ##__VA_ARGS__)
@@ -95,11 +95,11 @@ struct blkalloc_cp_id;
 #define BT_ASSERT(assert_type, cond, node, ...)                                                                        \
     HS_DETAILED_ASSERT(assert_type, cond, , "btree", m_btree_cfg.get_name(),                                           \
                        BOOST_PP_IF(BOOST_VMD_IS_EMPTY(node), BOOST_PP_EMPTY, BOOST_PP_IDENTITY("node"))(),             \
-                       node->to_string(), ##__VA_ARGS__)
+                       node->to_string_info(), ##__VA_ARGS__)
 #define BT_ASSERT_CMP(assert_type, val1, cmp, val2, node, ...)                                                         \
     HS_DETAILED_ASSERT_CMP(assert_type, val1, cmp, val2, , "btree", m_btree_cfg.get_name(),                            \
                            BOOST_PP_IF(BOOST_VMD_IS_EMPTY(node), BOOST_PP_EMPTY, BOOST_PP_IDENTITY("node"))(),         \
-                           node->to_string(), ##__VA_ARGS__)
+                           node->to_string_info(), ##__VA_ARGS__)
 
 #define BT_DBG_ASSERT(...) BT_ASSERT(DEBUG_ASSERT_FMT, __VA_ARGS__)
 #define BT_REL_ASSERT(...) BT_ASSERT(RELEASE_ASSERT_FMT, __VA_ARGS__)

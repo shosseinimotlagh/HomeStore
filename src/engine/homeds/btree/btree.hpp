@@ -1406,7 +1406,7 @@ private:
                     my_node = next_node;
                 }
 
-                THIS_BT_LOG(TRACE, btree_nodes, my_node, "Query leaf node:\n {}", my_node->to_string());
+//                THIS_BT_LOG(TRACE, btree_nodes, my_node, "Query leaf node:\n {}", my_node->to_string());
 
                 int start_ind = 0, end_ind = 0;
                 static thread_local std::vector< std::pair< K, V > > s_match_kv;
@@ -2090,9 +2090,9 @@ private:
             }
 
             if (bur && child_node->is_leaf()) {
-                THIS_BT_LOG(DEBUG, btree_structures, my_node, "Subrange:s:{},e:{},c:{},nid:{},edgeid:{},sk:{},ek:{}",
-                            start_ind, end_ind, curr_ind, my_node->get_node_id(), my_node->get_edge_id(),
-                            subrange.get_start_key()->to_string(), subrange.get_end_key()->to_string());
+//                THIS_BT_LOG(DEBUG, btree_structures, my_node, "Subrange:s:{},e:{},c:{},nid:{},edgeid:{},sk:{},ek:{}",
+//                            start_ind, end_ind, curr_ind, my_node->get_node_id(), my_node->get_edge_id(),
+//                            subrange.get_start_key()->to_string(), subrange.get_end_key()->to_string());
             }
 
 #ifndef NDEBUG
