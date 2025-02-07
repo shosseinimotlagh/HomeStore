@@ -49,6 +49,8 @@ namespace btree {
 #define wb_cache_t WriteBackCache< K, V, InteriorNodeType, LeafNodeType >
 typedef std::function< bool() > flush_buffer_callback;
 #define SSDBtreeNode BtreeNode< btree_store_type::SSD_BTREE, K, V, InteriorNodeType, LeafNodeType >
+#undef btree_store_t
+#define btree_store_t BtreeStore< btree_store_type::SSD_BTREE, K, V, InteriorNodeType, LeafNodeType >
 #define btree_blkstore_t homestore::BlkStore< wb_cache_buffer_t >
 
 enum class writeback_req_state : uint8_t {
@@ -275,11 +277,15 @@ public:
         }
     }
 
-//    [[nodiscard]] __attribute__((noinline)) std::string to_string_node(SSDBtreeNode & bn) {
-//        auto physical_node = (LeafPhysicalNode*)(btree_store_t::get_physical(bn));
-//        auto crc = crc16_t10dif(init_crc_16, physical_node->get_node_area(), btree_store_t::get_node_area_size(m_btree_store.get()));
-//        return fmt::format("{}, {}, crc {} ",bn->get_node_id(), physical_node->persistent_header_to_string(), std::to_string(crc));
-//    }
+    std::string to_string_node(const SSDBtreeNode& bn) const {
+        auto physical_node = (const LeafPhysicalNode*)(btree_store_t::get_physical(&bn));
+        auto crc = crc16_t10dif(init_crc_16, physical_node->get_node_area(), 4056);
+        if (crc != physical_node->get_checksum()) {
+            HS_REL_ASSERT(crc != physical_node->get_checksum(), "mismatch crc {} vs {}", crc, physical_node->get_checksum() );
+
+        }
+        return fmt::format("{} CAL_CRC {} ", bn.to_string_info(), std::to_string(crc));
+    }
 
     void write(const boost::intrusive_ptr< SSDBtreeNode >& bn, const boost::intrusive_ptr< SSDBtreeNode >& dependent_bn,
                const btree_cp_ptr& bcp) {
@@ -312,14 +318,15 @@ public:
             ResourceMgrSI().inc_dirty_buf_cnt(m_node_size);
             std::string sbn = bn->bcp ? std::to_string(bn->bcp->cp_id) : "null";
             std::string sbcp = bcp ? std::to_string(bcp->cp_id) : "null";
-            LOGINFO("write buf node {}  bn {} bcp {}", bn->to_string_info(), sbn, sbcp);
+            LOGINFO("write buf node {}  bn {} bcp {} node crc {}", to_string_node(*bn.get()), sbn, sbcp);
         } else {
             HS_DBG_ASSERT_EQ(bn->req[cp_id]->bid.to_integer(), bn->get_node_id());
+            HS_REL_ASSERT_EQ(bn->req[cp_id]->m_mem,bn->get_memvec_intrusive());
             if (bn->req[cp_id]->m_mem != bn->get_memvec_intrusive()) {
                  bn->req[cp_id]->m_mem = bn->get_memvec_intrusive();
                  std::string sbn = bn->bcp ? std::to_string(bn->bcp->cp_id) : "null";
                  std::string sbcp = bcp ? std::to_string(bcp->cp_id) : "null";
-                LOGINFO("write buf  diff memvec node {}  bn {} bcp {}", bn->to_string_info(), sbn, sbcp);
+                LOGINFO("write buf  diff memvec node {}  bn {} bcp {}", to_string_node(*bn.get()), sbn, sbcp);
                 HS_DBG_ASSERT_NOTNULL(bn->req[cp_id]->m_mem.get());
             }
         }
@@ -337,7 +344,7 @@ public:
             std::string sdn2 = bn->bcp ? std::to_string(dependent_bn->bcp->cp_id) : "null";
 
             std::string sbcp2 = bcp ? std::to_string(bcp->cp_id) : "null";
-            LOGINFO("write buf node {} dependent node {} - bn {} dn {} bcp {}", bn->to_string_info(), dependent_bn->to_string_info(),sbn2,sdn2, sbcp2);
+            LOGINFO("write buf node {} dependent node {} - bn {} dn {} bcp {}", to_string_node(*bn.get()), to_string_node(*dependent_bn.get()),sbn2,sdn2, sbcp2);
         }
     }
 
@@ -372,18 +379,18 @@ public:
 
         if (bn->bcp->cp_id == bcp->cp_id) {
 
-            LOGINFO("node {} modifying the buffer multiple times in a same cp {}", bn->to_string_info(), sbn);
+            LOGINFO("node {} modifying the buffer multiple times in a same cp {}", to_string_node(*bn.get()), sbn);
             return btree_status_t::success;
         }
         if (bn->bcp->cp_id > bcp->cp_id) { return btree_status_t::cp_mismatch; }
 
-        LOGINFO("refresh buf node {} is_write_modify {} bn {} bcp {}", bn->to_string_info(), is_write_modifiable, sbn, sbcp);
+        LOGINFO("refresh buf node {} is_write_modify {} bn {} bcp {}", to_string_node(*bn.get()), is_write_modifiable, sbn, sbcp);
 
         const size_t prev_cp_id{static_cast< size_t >((bcp->cp_id - 1)) % MAX_CP_CNT};
         auto req{bn->req[prev_cp_id]};
         if (!req || req->state == writeback_req_state::WB_REQ_COMPL) {
             // req on last cp is already completed. No need to make copy
-            LOGINFO("node {} req on last cp is already completed for bn {} bcp {} . No need to make copy req is null?= {}", bn->to_string_info(), sbn, sbcp, !req);
+            LOGINFO("node {} req on last cp is already completed for bn {} bcp {} . No need to make copy req is null?= {}", to_string_node(*bn.get()), sbn, sbcp, !req);
             return btree_status_t::success;
         }
 
@@ -404,7 +411,7 @@ public:
         bn->set_memvec(mvec, 0, bn->get_cache_size());
         std::string sbn2 = bn->bcp ? std::to_string(bn->bcp->cp_id) : "null";
         std::string sbcp2 = bcp ? std::to_string(bcp->cp_id) : "null";
-        LOGINFO("node {} assign new memvec to buffer cp bn {} bcp {}", bn->to_string_info(), sbn2, sbcp2);
+        LOGINFO("node {} assign new memvec to buffer cp bn {} bcp {}",to_string_node(*bn.get()), sbn2, sbcp2);
         return btree_status_t::success;
     }
 
@@ -464,7 +471,7 @@ public:
                     wb_req->state = homeds::btree::writeback_req_state::WB_REQ_SENT;
                     ++wb_cache_outstanding_cnt;
                     std::string sbn = wb_req->bn->bcp ? std::to_string(wb_req->bn->bcp->cp_id) : "null";
-                    LOGINFO("flushing buffer node {} req id {} bn {} bcp {}", wb_req->bn->to_string_info(), wb_req->request_id, sbn , bt_cp_id);
+                    LOGINFO("flushing buffer node {} req id {} bn {} bcp {}", shared_this->to_string_node(*(wb_req->bn.get())), wb_req->request_id, sbn , bt_cp_id);
                     shared_this->m_blkstore->write(wb_req->bid, wb_req->m_mem, 0, wb_req, false);
                     ++write_count;
 
@@ -503,7 +510,7 @@ public:
         auto wb_req = to_wb_req(bs_req);
         const size_t cp_id = wb_req->bcp->cp_id % MAX_CP_CNT;
         wb_req->state = homeds::btree::writeback_req_state::WB_REQ_COMPL;
-        LOGINFO("writeBack_completion_internal state compl node {} req id {} new cp id {} ", wb_req->bn->to_string_info(),
+        LOGINFO("writeBack_completion_internal state compl node {} req id {} new cp id {} ", to_string_node(*(wb_req->bn.get())),
                 wb_req->request_id, cp_id);
 
         --wb_cache_outstanding_cnt;
@@ -567,7 +574,7 @@ public:
         // we are done with this wb_req
         HS_REL_ASSERT_EQ(wb_req, wb_req->bn->req[cp_id]);
         wb_req->bn->req[cp_id] = nullptr;
-        LOGINFO("writeBack_completion_internal reset wb_req node {} req id {}", wb_req->bn->to_string_info(),
+        LOGINFO("writeBack_completion_internal reset wb_req node {} req id {}", to_string_node(*(wb_req->bn.get())),
                 wb_req->request_id);
 
         /* req and btree node are pointing to each other which is preventing neither of them to be freed */
