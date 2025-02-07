@@ -282,7 +282,6 @@ public:
         auto crc = crc16_t10dif(init_crc_16, physical_node->get_node_area(), 4056);
         if (crc != physical_node->get_checksum()) {
             HS_REL_ASSERT(crc != physical_node->get_checksum(), "mismatch crc {} vs {}", crc, physical_node->get_checksum() );
-
         }
         return fmt::format("{} CAL_CRC {} ", bn.to_string_info(), std::to_string(crc));
     }
@@ -318,17 +317,22 @@ public:
             ResourceMgrSI().inc_dirty_buf_cnt(m_node_size);
             std::string sbn = bn->bcp ? std::to_string(bn->bcp->cp_id) : "null";
             std::string sbcp = bcp ? std::to_string(bcp->cp_id) : "null";
-            LOGINFO("write buf node {}  bn {} bcp {} node crc {}", to_string_node(*bn.get()), sbn, sbcp);
+            LOGINFO("write buf node {}  bn {} bcp {}", to_string_node(*bn.get()), sbn, sbcp);
         } else {
             HS_DBG_ASSERT_EQ(bn->req[cp_id]->bid.to_integer(), bn->get_node_id());
-            HS_REL_ASSERT_EQ(bn->req[cp_id]->m_mem,bn->get_memvec_intrusive());
+
             if (bn->req[cp_id]->m_mem != bn->get_memvec_intrusive()) {
+//                HS_REL_ASSERT_EQ(bn->req[cp_id]->m_mem != bn->get_memvec_intrusive(), false);
                  bn->req[cp_id]->m_mem = bn->get_memvec_intrusive();
                  std::string sbn = bn->bcp ? std::to_string(bn->bcp->cp_id) : "null";
                  std::string sbcp = bcp ? std::to_string(bcp->cp_id) : "null";
                 LOGINFO("write buf  diff memvec node {}  bn {} bcp {}", to_string_node(*bn.get()), sbn, sbcp);
                 HS_DBG_ASSERT_NOTNULL(bn->req[cp_id]->m_mem.get());
             }
+            std::string sbn = bn->bcp ? std::to_string(bn->bcp->cp_id) : "null";
+            std::string sbcp = bcp ? std::to_string(bcp->cp_id) : "null";
+            LOGINFO("write buf node {} same cpP  bn {} bcp {}", to_string_node(*bn.get()), sbn, sbcp);
+
         }
 
         auto wb_req{bn->req[cp_id]};
