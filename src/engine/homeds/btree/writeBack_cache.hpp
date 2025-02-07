@@ -133,7 +133,7 @@ public:
                 bcp(nullptr),
                 req_q(),
                 dependent_cnt(1),
-                m_mem(nullptr){};
+                m_mem(nullptr) {};
     };
 
     //*************************************************** WriteBackCacheBuffer *******************************
@@ -281,7 +281,8 @@ public:
         auto physical_node = (const LeafPhysicalNode*)(btree_store_t::get_physical(&bn));
         auto crc = crc16_t10dif(init_crc_16, physical_node->get_node_area(), 4056);
         if (crc != physical_node->get_checksum()) {
-            HS_REL_ASSERT(crc != physical_node->get_checksum(), "mismatch crc {} vs {}", crc, physical_node->get_checksum() );
+            HS_REL_ASSERT(crc == physical_node->get_checksum(), "mismatch crc {} vs {}", crc,
+                          physical_node->get_checksum());
         }
         return fmt::format("{} CAL_CRC {} ", bn.to_string_info(), std::to_string(crc));
     }
@@ -317,22 +318,24 @@ public:
             ResourceMgrSI().inc_dirty_buf_cnt(m_node_size);
             std::string sbn = bn->bcp ? std::to_string(bn->bcp->cp_id) : "null";
             std::string sbcp = bcp ? std::to_string(bcp->cp_id) : "null";
-            LOGINFO("write buf node {}  bn {} bcp {}", to_string_node(*bn.get()), sbn, sbcp);
+            LOGINFO("write buf node {}  bn {} bcp {} wb_req_mem {} bn_mem {} ", to_string_node(*bn.get()), sbn, sbcp,
+                    static_cast< void* >(wb_req->m_mem.get()), static_cast< void* >(bn->get_memvec_intrusive().get()));
         } else {
             HS_DBG_ASSERT_EQ(bn->req[cp_id]->bid.to_integer(), bn->get_node_id());
 
             if (bn->req[cp_id]->m_mem != bn->get_memvec_intrusive()) {
-//                HS_REL_ASSERT_EQ(bn->req[cp_id]->m_mem != bn->get_memvec_intrusive(), false);
-                 bn->req[cp_id]->m_mem = bn->get_memvec_intrusive();
-                 std::string sbn = bn->bcp ? std::to_string(bn->bcp->cp_id) : "null";
-                 std::string sbcp = bcp ? std::to_string(bcp->cp_id) : "null";
+                //                HS_REL_ASSERT_EQ(bn->req[cp_id]->m_mem != bn->get_memvec_intrusive(), false);
+                bn->req[cp_id]->m_mem = bn->get_memvec_intrusive();
+                std::string sbn = bn->bcp ? std::to_string(bn->bcp->cp_id) : "null";
+                std::string sbcp = bcp ? std::to_string(bcp->cp_id) : "null";
                 LOGINFO("write buf  diff memvec node {}  bn {} bcp {}", to_string_node(*bn.get()), sbn, sbcp);
                 HS_DBG_ASSERT_NOTNULL(bn->req[cp_id]->m_mem.get());
             }
             std::string sbn = bn->bcp ? std::to_string(bn->bcp->cp_id) : "null";
             std::string sbcp = bcp ? std::to_string(bcp->cp_id) : "null";
-            LOGINFO("write buf node {} same cpP  bn {} bcp {}", to_string_node(*bn.get()), sbn, sbcp);
-
+            LOGINFO("write buf node {} same cpP  bn {} bcp {}  wb_req_mem {} bn_mem {}", to_string_node(*bn.get()), sbn,
+                    sbcp, static_cast< void* >(bn->req[cp_id]->m_mem.get()),
+                    static_cast< void* >(bn->get_memvec_intrusive().get()));
         }
 
         auto wb_req{bn->req[cp_id]};
@@ -348,7 +351,8 @@ public:
             std::string sdn2 = bn->bcp ? std::to_string(dependent_bn->bcp->cp_id) : "null";
 
             std::string sbcp2 = bcp ? std::to_string(bcp->cp_id) : "null";
-            LOGINFO("write buf node {} dependent node {} - bn {} dn {} bcp {}", to_string_node(*bn.get()), to_string_node(*dependent_bn.get()),sbn2,sdn2, sbcp2);
+            LOGINFO("write buf node {} dependent node {} - bn {} dn {} bcp {}", to_string_node(*bn.get()),
+                    to_string_node(*dependent_bn.get()), sbn2, sdn2, sbcp2);
         }
     }
 
@@ -373,7 +377,7 @@ public:
                                const btree_cp_ptr& bcp) {
         std::string sbn = bn->bcp ? std::to_string(bn->bcp->cp_id) : "null";
         std::string sbcp = bcp ? std::to_string(bcp->cp_id) : "null";
-//        LOGINFO(" before refresh {} bn {} bcp {}", bn->to_string_info(), sbn, sbcp);
+        //        LOGINFO(" before refresh {} bn {} bcp {}", bn->to_string_info(), sbn, sbcp);
         if (!bcp || !bn->bcp) { return btree_status_t::success; }
 
         if (!is_write_modifiable) {
@@ -388,13 +392,20 @@ public:
         }
         if (bn->bcp->cp_id > bcp->cp_id) { return btree_status_t::cp_mismatch; }
 
-        LOGINFO("refresh buf node {} is_write_modify {} bn {} bcp {}", to_string_node(*bn.get()), is_write_modifiable, sbn, sbcp);
+        LOGINFO("refresh buf node {} is_write_modify {} bn {} bcp {} ", to_string_node(*bn.get()), is_write_modifiable,
+                sbn, sbcp);
 
         const size_t prev_cp_id{static_cast< size_t >((bcp->cp_id - 1)) % MAX_CP_CNT};
         auto req{bn->req[prev_cp_id]};
         if (!req || req->state == writeback_req_state::WB_REQ_COMPL) {
             // req on last cp is already completed. No need to make copy
-            LOGINFO("node {} req on last cp is already completed for bn {} bcp {} . No need to make copy req is null?= {}", to_string_node(*bn.get()), sbn, sbcp, !req);
+            LOGINFO(
+                "node {} req on last cp is already completed for bn {} bcp {} . No need to make copy req is null?= {}",
+                to_string_node(*bn.get()), sbn, sbcp, !req);
+
+            string req_mem_str = req ? std::to_string(reinterpret_cast< long int >(req->m_mem.get())) : "null";
+            LOGINFO("node {} wb_req_mem {} bn_mem {} ", to_string_node(*bn.get()), req_mem_str,
+                    static_cast< void* >(bn->get_memvec_intrusive().get()));
             return btree_status_t::success;
         }
 
@@ -415,7 +426,9 @@ public:
         bn->set_memvec(mvec, 0, bn->get_cache_size());
         std::string sbn2 = bn->bcp ? std::to_string(bn->bcp->cp_id) : "null";
         std::string sbcp2 = bcp ? std::to_string(bcp->cp_id) : "null";
-        LOGINFO("node {} assign new memvec to buffer cp bn {} bcp {}",to_string_node(*bn.get()), sbn2, sbcp2);
+        LOGINFO("node {} assign new memvec to buffer cp bn {} bcp {} wb_req_mem {} bn_mem {}",
+                to_string_node(*bn.get()), sbn2, sbcp2, static_cast< void* >(req->m_mem.get()),
+                static_cast< void* >(bn->get_memvec_intrusive().get()));
         return btree_status_t::success;
     }
 
@@ -475,7 +488,11 @@ public:
                     wb_req->state = homeds::btree::writeback_req_state::WB_REQ_SENT;
                     ++wb_cache_outstanding_cnt;
                     std::string sbn = wb_req->bn->bcp ? std::to_string(wb_req->bn->bcp->cp_id) : "null";
-                    LOGINFO("flushing buffer node {} req id {} bn {} bcp {}", shared_this->to_string_node(*(wb_req->bn.get())), wb_req->request_id, sbn , bt_cp_id);
+                    LOGINFO("flushing buffer node {} req id {} bn {} bcp {} wb_req_mem {} bn_mem {}",
+                            shared_this->to_string_node(*(wb_req->bn.get())), wb_req->request_id, sbn, bt_cp_id,
+                            static_cast< void* >(wb_req->m_mem.get()),
+                            static_cast< void* >(wb_req->bn->get_memvec_intrusive().get()));
+
                     shared_this->m_blkstore->write(wb_req->bid, wb_req->m_mem, 0, wb_req, false);
                     ++write_count;
 
@@ -514,8 +531,10 @@ public:
         auto wb_req = to_wb_req(bs_req);
         const size_t cp_id = wb_req->bcp->cp_id % MAX_CP_CNT;
         wb_req->state = homeds::btree::writeback_req_state::WB_REQ_COMPL;
-        LOGINFO("writeBack_completion_internal state compl node {} req id {} new cp id {} ", to_string_node(*(wb_req->bn.get())),
-                wb_req->request_id, cp_id);
+        LOGINFO("writeBack_completion_internal state compl node {} req id {} new cp id {}  wb_req_mem {} bn_mem {} ",
+                to_string_node(*(wb_req->bn.get())), wb_req->request_id, cp_id,
+                static_cast< void* >(wb_req->m_mem.get()),
+                static_cast< void* >(wb_req->bn->get_memvec_intrusive().get()));
 
         --wb_cache_outstanding_cnt;
         auto shared_this = this->shared_from_this();
