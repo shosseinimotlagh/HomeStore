@@ -789,18 +789,14 @@ public:
     [[nodiscard]] __attribute__((noinline)) std::string to_string_node(uint64_t node_id) {
         BtreeNodePtr node = nullptr;
         auto ret = read_node(node_id, node);
-        if(ret != btree_status_t::success)
-        {
-            return fmt::format("read failed {}, reason {}", node_id, ret);
-        }
+        if (ret != btree_status_t::success) { return fmt::format("read failed {}, reason {}", node_id, ret); }
         auto physical_node = (LeafPhysicalNode*)(btree_store_t::get_physical(node.get()));
-        auto crc = crc16_t10dif(init_crc_16, physical_node->get_node_area(), btree_store_t::get_node_area_size(m_btree_store.get()));
-        return fmt::format("{}, {}, {} ",node->get_node_id(), physical_node->persistent_header_to_string(), std::to_string(crc));
+        auto crc = crc16_t10dif(init_crc_16, physical_node->get_node_area(),
+                                btree_store_t::get_node_area_size(m_btree_store.get()));
+        return fmt::format("{}, {}, {} ", node->get_node_id(), physical_node->persistent_header_to_string(),
+                           std::to_string(crc));
     }
-    void dummy(uint64_t node_id) {
-        LOGINFO("{}", to_string_node(node_id));
-        }
-
+    void dummy(uint64_t node_id) { LOGINFO("{}", to_string_node(node_id)); }
 
     // after this function finishes, no node is locked by this function;
     sisl::status_response get_status_nodes(const sisl::status_request& request) {
@@ -1406,7 +1402,7 @@ private:
                     my_node = next_node;
                 }
 
-//                THIS_BT_LOG(TRACE, btree_nodes, my_node, "Query leaf node:\n {}", my_node->to_string());
+                THIS_BT_LOG(TRACE, btree_nodes, my_node, "Query leaf node:\n {}", my_node->get_node_id());
 
                 int start_ind = 0, end_ind = 0;
                 static thread_local std::vector< std::pair< K, V > > s_match_kv;
@@ -2090,9 +2086,11 @@ private:
             }
 
             if (bur && child_node->is_leaf()) {
-//                THIS_BT_LOG(DEBUG, btree_structures, my_node, "Subrange:s:{},e:{},c:{},nid:{},edgeid:{},sk:{},ek:{}",
-//                            start_ind, end_ind, curr_ind, my_node->get_node_id(), my_node->get_edge_id(),
-//                            subrange.get_start_key()->to_string(), subrange.get_end_key()->to_string());
+                //                THIS_BT_LOG(DEBUG, btree_structures, my_node,
+                //                "Subrange:s:{},e:{},c:{},nid:{},edgeid:{},sk:{},ek:{}",
+                //                            start_ind, end_ind, curr_ind, my_node->get_node_id(),
+                //                            my_node->get_edge_id(), subrange.get_start_key()->to_string(),
+                //                            subrange.get_end_key()->to_string());
             }
 
 #ifndef NDEBUG

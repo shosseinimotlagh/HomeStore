@@ -436,8 +436,8 @@ public:
                                        bool is_write_modifiable, const btree_cp_ptr& bcp) {
         /* add the latest request pending on this node */
         auto ret = store->get_wb_cache()->refresh_buf(bn, is_write_modifiable, bcp);
-        if (ret != btree_status_t::success) { 
-            LOGERROR(" refresh node failed! for {} cp {}",bn->to_string(), bcp->to_string() );
+        if (ret != btree_status_t::success) {
+            LOGERROR(" refresh node failed! for {} cp {}", bn->to_string(), bcp->to_string());
             return ret;
         }
         auto physical_node = (LeafPhysicalNode*)(bn->at_offset(0).bytes);
@@ -448,9 +448,13 @@ public:
         crc_mismatch |= homestore_flip->test_flip("btree_crc_mismatch");
 #endif
         if (crc_mismatch) {
-            std::string  bs = bn->bcp? "bn->bcp= " +bn->bcp->to_string():" ";
-            std::string  sbcp = bcp? "bcp= " +bcp->to_string():" ";
-            LOGERROR("mismatch : node {} is it from cache  bn {} vs {} \n verify {}", bn->to_string(), bs,  sbcp, vr.to_string());
+            std::string bs = bn->bcp ? "bn->bcp= " + bn->bcp->to_string() : " ";
+            std::string sbcp = bcp ? "bcp= " + bcp->to_string() : " ";
+            LOGERROR(
+                "mismatch : node {} is it from cache bn {} vs {} \t\t verify {} area size {} is_write_modifiable {}",
+                bn->to_string(), bs, sbcp, vr.to_string(), get_node_area_size(store), is_write_modifiable);
+            LOGINFO("\n\n\n\n\n going to sleep \n\n\n\n\n");
+            std::this_thread::sleep_for(std::chrono::hours(10000000));
             return btree_status_t::crc_mismatch;
         }
 #endif

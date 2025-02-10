@@ -284,10 +284,25 @@ public:
             LOGINFO("mismatch bn {} node_area {} computed crc {} vs header crc {}", bn.to_string_info(),
                     reinterpret_cast< void* >(const_cast< uint8_t* >(physical_node->get_node_area())), crc,
                     physical_node->get_checksum());
-            HS_REL_ASSERT(crc == physical_node->get_checksum(), "mismatch crc {} vs {}", crc,
-                          physical_node->get_checksum());
+            LOGINFO("Going to sleep");
+            std::this_thread::sleep_for(10000000s);
+            /*HS_REL_ASSERT(crc == physical_node->get_checksum(), "mismatch crc {} vs {}", crc,
+                          physical_node->get_checksum()); */
         }
         return fmt::format("{} CAL_CRC {} ", bn.to_string_info(), std::to_string(crc));
+    }
+
+    uint8_t* memvec_to_ptr(const boost::intrusive_ptr< homeds::MemVector >& mem) const {
+        sisl::blob b;
+        b.bytes = nullptr;
+        b.size = 0;
+        mem->get(&b, 0);
+        return b.bytes;
+    }
+
+    uint8_t* btree_node_area(const boost::intrusive_ptr< SSDBtreeNode >& bn) const {
+        auto physical_node = (LeafPhysicalNode*)(bn->at_offset(0).bytes);
+        return physical_node->get_node_area_mutable();
     }
 
     void write(const boost::intrusive_ptr< SSDBtreeNode >& bn, const boost::intrusive_ptr< SSDBtreeNode >& dependent_bn,
@@ -319,26 +334,26 @@ public:
             /* check for dirty buffers cnt */
             m_dirty_buf_cnt[cp_id].increment(1);
             ResourceMgrSI().inc_dirty_buf_cnt(m_node_size);
-            std::string sbn = bn->bcp ? std::to_string(bn->bcp->cp_id) : "null";
-            std::string sbcp = bcp ? std::to_string(bcp->cp_id) : "null";
+            std::string sbn = bn->bcp ? std::to_string(bn->bcp->cp_id % MAX_CP_CNT) : "null";
+            std::string sbcp = bcp ? std::to_string(bcp->cp_id % MAX_CP_CNT) : "null";
             LOGINFO("write buf node {}  bn {} bcp {} wb_req_mem {} bn_mem {} ", to_string_node(*bn.get()), sbn, sbcp,
-                    static_cast< void* >(wb_req->m_mem.get()), static_cast< void* >(bn->get_memvec_intrusive().get()));
+                    static_cast< void* >(memvec_to_ptr(wb_req->m_mem)), static_cast< void* >(btree_node_area(bn)));
         } else {
             HS_DBG_ASSERT_EQ(bn->req[cp_id]->bid.to_integer(), bn->get_node_id());
 
             if (bn->req[cp_id]->m_mem != bn->get_memvec_intrusive()) {
                 //                HS_REL_ASSERT_EQ(bn->req[cp_id]->m_mem != bn->get_memvec_intrusive(), false);
                 bn->req[cp_id]->m_mem = bn->get_memvec_intrusive();
-                std::string sbn = bn->bcp ? std::to_string(bn->bcp->cp_id) : "null";
-                std::string sbcp = bcp ? std::to_string(bcp->cp_id) : "null";
+                std::string sbn = bn->bcp ? std::to_string(bn->bcp->cp_id % MAX_CP_CNT) : "null";
+                std::string sbcp = bcp ? std::to_string(bcp->cp_id % MAX_CP_CNT) : "null";
                 LOGINFO("write buf  diff memvec node {}  bn {} bcp {}", to_string_node(*bn.get()), sbn, sbcp);
                 HS_DBG_ASSERT_NOTNULL(bn->req[cp_id]->m_mem.get());
             }
             std::string sbn = bn->bcp ? std::to_string(bn->bcp->cp_id) : "null";
             std::string sbcp = bcp ? std::to_string(bcp->cp_id) : "null";
             LOGINFO("write buf node {} same cpP  bn {} bcp {}  wb_req_mem {} bn_mem {}", to_string_node(*bn.get()), sbn,
-                    sbcp, static_cast< void* >(bn->req[cp_id]->m_mem.get()),
-                    static_cast< void* >(bn->get_memvec_intrusive().get()));
+                    sbcp, static_cast< void* >(memvec_to_ptr(bn->req[cp_id]->m_mem)),
+                    static_cast< void* >(btree_node_area(bn)));
         }
 
         auto wb_req{bn->req[cp_id]};
@@ -378,10 +393,13 @@ public:
 
     btree_status_t refresh_buf(const boost::intrusive_ptr< SSDBtreeNode >& bn, const bool is_write_modifiable,
                                const btree_cp_ptr& bcp) {
-        std::string sbn = bn->bcp ? std::to_string(bn->bcp->cp_id) : "null";
-        std::string sbcp = bcp ? std::to_string(bcp->cp_id) : "null";
+        std::string sbn = bn->bcp ? std::to_string(bn->bcp->cp_id % MAX_CP_CNT) : "null";
+        std::string sbcp = bcp ? std::to_string(bcp->cp_id % MAX_CP_CNT) : "null";
         //        LOGINFO(" before refresh {} bn {} bcp {}", bn->to_string_info(), sbn, sbcp);
         if (!bcp || !bn->bcp) { return btree_status_t::success; }
+
+        LOGINFO("refresh buf node {} is_write_modify {} bn {} bcp {} ", to_string_node(*bn.get()), is_write_modifiable,
+                sbn, sbcp);
 
         if (!is_write_modifiable) {
             if (bn->bcp->cp_id > bcp->cp_id) { return btree_status_t::cp_mismatch; }
@@ -395,9 +413,6 @@ public:
         }
         if (bn->bcp->cp_id > bcp->cp_id) { return btree_status_t::cp_mismatch; }
 
-        LOGINFO("refresh buf node {} is_write_modify {} bn {} bcp {} ", to_string_node(*bn.get()), is_write_modifiable,
-                sbn, sbcp);
-
         const size_t prev_cp_id{static_cast< size_t >((bcp->cp_id - 1)) % MAX_CP_CNT};
         auto req{bn->req[prev_cp_id]};
         if (!req || req->state == writeback_req_state::WB_REQ_COMPL) {
@@ -406,9 +421,9 @@ public:
                 "node {} req on last cp is already completed for bn {} bcp {} . No need to make copy req is null?= {}",
                 to_string_node(*bn.get()), sbn, sbcp, !req);
 
-            string req_mem_str = req ? std::to_string(reinterpret_cast< long int >(req->m_mem.get())) : "null";
+            string req_mem_str = req ? std::to_string(reinterpret_cast< long int >(memvec_to_ptr(req->m_mem))) : "null";
             LOGINFO("node {} wb_req_mem {} bn_mem {} ", to_string_node(*bn.get()), req_mem_str,
-                    static_cast< void* >(bn->get_memvec_intrusive().get()));
+                    static_cast< void* >(btree_node_area(bn)));
             return btree_status_t::success;
         }
 
@@ -427,11 +442,12 @@ public:
 
         // assign new memvec to buffer
         bn->set_memvec(mvec, 0, bn->get_cache_size());
+
         std::string sbn2 = bn->bcp ? std::to_string(bn->bcp->cp_id % MAX_CP_CNT) : "null";
         std::string sbcp2 = bcp ? std::to_string(bcp->cp_id % MAX_CP_CNT) : "null";
         LOGINFO("node {} assign new memvec to buffer cp bn {} bcp {} wb_req_mem {} bn_mem {}",
-                to_string_node(*bn.get()), sbn2, sbcp2, static_cast< void* >(req->m_mem.get()),
-                static_cast< void* >(bn->get_memvec_intrusive().get()));
+                to_string_node(*bn.get()), sbn2, sbcp2, static_cast< void* >(memvec_to_ptr(req->m_mem)),
+                static_cast< void* >(btree_node_area(bn)));
         return btree_status_t::success;
     }
 
@@ -468,6 +484,7 @@ public:
         const size_t cp_id = bcp->cp_id % MAX_CP_CNT;
         if (m_dirty_buf_cnt[cp_id].testz()) {
             CP_PERIODIC_LOG(DEBUG, bcp->cp_id, "no buffers to flush");
+            LOGINFO("============ writeBackCache no buffers to flush {}", cp_id);
             m_cp_comp_cb(bcp);
             return; // nothing to flush
         }
@@ -494,8 +511,8 @@ public:
                     std::string sbn = wb_req->bn->bcp ? std::to_string(wb_req->bn->bcp->cp_id) : "null";
                     LOGINFO("flushing buffer node_id={} req id {} bn {} bcp {} wb_req_mem {} bn_mem {}",
                             wb_req->bid.to_integer(), wb_req->request_id, sbn, bt_cp_id,
-                            static_cast< void* >(wb_req->m_mem.get()),
-                            static_cast< void* >(wb_req->bn->get_memvec_intrusive().get()));
+                            static_cast< void* >(shared_this->memvec_to_ptr(wb_req->m_mem)),
+                            static_cast< void* >(shared_this->btree_node_area(wb_req->bn)));
 
                     shared_this->m_blkstore->write(wb_req->bid, wb_req->m_mem, 0, wb_req, false);
                     ++write_count;
@@ -536,8 +553,8 @@ public:
         const size_t cp_id = wb_req->bcp->cp_id % MAX_CP_CNT;
         wb_req->state = homeds::btree::writeback_req_state::WB_REQ_COMPL;
         LOGINFO("writeBack_completion_internal state compl node_id={} req id {} new cp id {}  wb_req_mem {} bn_mem {} ",
-                wb_req->bid.to_integer(), wb_req->request_id, cp_id, static_cast< void* >(wb_req->m_mem.get()),
-                static_cast< void* >(wb_req->bn->get_memvec_intrusive().get()));
+                wb_req->bid.to_integer(), wb_req->request_id, cp_id, static_cast< void* >(memvec_to_ptr(wb_req->m_mem)),
+                static_cast< void* >(btree_node_area(wb_req->bn)));
 
         --wb_cache_outstanding_cnt;
         auto shared_this = this->shared_from_this();
