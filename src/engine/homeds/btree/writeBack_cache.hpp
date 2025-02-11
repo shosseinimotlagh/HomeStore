@@ -397,12 +397,16 @@ public:
         std::string sbn = bn->bcp ? std::to_string(bn->bcp->cp_id % MAX_CP_CNT) : "null";
         std::string sbcp = bcp ? std::to_string(bcp->cp_id % MAX_CP_CNT) : "null";
         //        LOGINFO(" before refresh {} bn {} bcp {}", bn->to_string_info(), sbn, sbcp);
-        if (!bcp || !bn->bcp) { return btree_status_t::success; }
 
-        LOGINFO("refresh buf node {} is_write_modify {} bn {} bcp {} ", to_string_node(*bn.get()), is_write_modifiable,
-                sbn, sbcp);
+        if (!bcp || !bn->bcp) {
+            LOGINFO("NULL bn bcp refresh buf node {} is_write_modify {} bn {} bcp {} ", to_string_node(*bn.get()),
+                    is_write_modifiable, sbn, sbcp);
+            return btree_status_t::success;
+        }
 
         if (!is_write_modifiable) {
+            LOGINFO("is_write_modifiable READ refresh buf node {} is_write_modify {} bn {} bcp {} ",
+                    to_string_node(*bn.get()), is_write_modifiable, sbn, sbcp);
             if (bn->bcp->cp_id > bcp->cp_id) { return btree_status_t::cp_mismatch; }
             return btree_status_t::success;
         }
@@ -413,6 +417,9 @@ public:
             return btree_status_t::success;
         }
         if (bn->bcp->cp_id > bcp->cp_id) { return btree_status_t::cp_mismatch; }
+
+        LOGINFO("refresh buf node {} is_write_modify {} bn {} bcp {} ", to_string_node(*bn.get()), is_write_modifiable,
+                sbn, sbcp);
 
         const size_t prev_cp_id{static_cast< size_t >((bcp->cp_id - 1)) % MAX_CP_CNT};
         auto req{bn->req[prev_cp_id]};
