@@ -1747,7 +1747,7 @@ private:
         }
 #endif
 
-        BT_DBG_ASSERT_CMP(my_node->m_common_header.is_lock, ==, 1, my_node);
+        BT_REL_ASSERT_CMP(my_node->m_common_header.is_lock, ==, 1, my_node);
     done:
         return ret;
     }
@@ -2124,11 +2124,11 @@ private:
                 curlock = LOCKTYPE_NONE;
             }
 
-#ifndef NDEBUG
+            // #ifndef NDEBUG
             if (child_cur_lock == homeds::thread::LOCKTYPE_WRITE) {
-                HS_DBG_ASSERT_EQ(child_node->m_common_header.is_lock, true);
+                HS_REL_ASSERT_EQ(child_node->m_common_header.is_lock, true);
             }
-#endif
+            // #endif
 
             ret = do_put(child_node, child_cur_lock, k, v, ind_hint, put_type, existing_val, bur, bcp, subrange);
 
@@ -3112,9 +3112,9 @@ private:
 
         if (type == homeds::thread::LOCKTYPE_WRITE) {
             is_write_modifiable = true;
-#ifndef NDEBUG
+            // #ifndef NDEBUG
             node->m_common_header.is_lock = 1;
-#endif
+            // #endif
         } else {
             is_write_modifiable = false;
         }
@@ -3134,9 +3134,9 @@ private:
         auto time_spent = end_of_lock(node, LOCKTYPE_READ);
 
         node->lock_upgrade();
-#ifndef NDEBUG
+        // #ifndef NDEBUG
         node->m_common_header.is_lock = 1;
-#endif
+        // #endif
         node->lock_acknowledge();
         auto ret = btree_store_t::refresh_node(m_btree_store.get(), node, true, bcp);
         if (ret != btree_status_t::success) {
@@ -3150,9 +3150,9 @@ private:
     }
 
     void unlock_node(const BtreeNodePtr& node, homeds::thread::locktype type) {
-#ifndef NDEBUG
+        // #ifndef NDEBUG
         if (type == homeds::thread::LOCKTYPE_WRITE) { node->m_common_header.is_lock = 0; }
-#endif
+        // #endif
         node->unlock(type);
         auto time_spent = end_of_lock(node, type);
         observe_lock_time(node, type, time_spent);

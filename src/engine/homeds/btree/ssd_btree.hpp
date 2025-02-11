@@ -422,7 +422,7 @@ public:
         auto physical_node = (LeafPhysicalNode*)(bn->at_offset(0).bytes);
         physical_node->set_checksum(get_node_area_size(store));
         store->get_wb_cache()->write(bn, dependent_bn, bcp);
-
+        LOGINFO("write_node {}", bn->to_string());
         return btree_status_t::success;
     }
 

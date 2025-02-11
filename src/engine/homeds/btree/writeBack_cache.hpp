@@ -281,9 +281,10 @@ public:
         auto physical_node = (const LeafPhysicalNode*)(btree_store_t::get_physical(&bn));
         auto crc = crc16_t10dif(init_crc_16, physical_node->get_node_area(), 4056);
         if (crc != physical_node->get_checksum()) {
-            LOGINFO("mismatch bn {} node_area {} computed crc {} vs header crc {}", bn.to_string_info(),
+            LOGINFO("mismatch bn {} node_area {} computed crc {} vs header crc {} hdr {}", bn.to_string_info(),
                     reinterpret_cast< void* >(const_cast< uint8_t* >(physical_node->get_node_area())), crc,
-                    physical_node->get_checksum());
+                    physical_node->get_checksum(), bn.m_common_header.to_string());
+            LOGINFO("mismatch bn {}", bn.to_string());
             LOGINFO("Going to sleep");
             std::this_thread::sleep_for(10000000s);
             /*HS_REL_ASSERT(crc == physical_node->get_checksum(), "mismatch crc {} vs {}", crc,

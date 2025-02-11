@@ -59,15 +59,15 @@ typedef struct __attribute__((__packed__)) {
 
     string to_string() const {
         auto snext = (next_node == empty_bnodeid) ? "" : " next=" + std::to_string(next_node);
-        auto sedge = (edge_entry == empty_bnodeid) ? "" : " edge_entry="+ std::to_string(edge_entry);
+        auto sedge = (edge_entry == empty_bnodeid) ? "" : " edge_entry=" + std::to_string(edge_entry);
         auto sleaf = leaf ? "LEAF" : "INTERIOR";
-//        vector<std::string> stype= {"SIMPLE", "VAR_VALUE", "VAR_KEY", "VAR_OBJECT", "PREFIX", "COMPACT"};
-//        return fmt::format("node_id={} csum={} nentries={} node_type={} {} "
-//                           "valid_node={} node_gen={} {} {}",
-//                           node_id, checksum, nentries, stype[node_type], sleaf, valid_node,
-//                           node_gen, snext, sedge);
-        return fmt::format("node_id={} csum={} nentries={} {} valid_node={} {} {} node_gen={}",
-                            node_id, checksum, nentries, sleaf, valid_node, snext, sedge, node_gen);
+        //        vector<std::string> stype= {"SIMPLE", "VAR_VALUE", "VAR_KEY", "VAR_OBJECT", "PREFIX", "COMPACT"};
+        //        return fmt::format("node_id={} csum={} nentries={} node_type={} {} "
+        //                           "valid_node={} node_gen={} {} {}",
+        //                           node_id, checksum, nentries, stype[node_type], sleaf, valid_node,
+        //                           node_gen, snext, sedge);
+        return fmt::format("node_id={} csum={} magic={} nentries={} {} valid_node={} {} {} node_gen={}", node_id,
+                           checksum, magic, nentries, sleaf, valid_node, snext, sedge, node_gen);
     }
 } persistent_hdr_t;
 

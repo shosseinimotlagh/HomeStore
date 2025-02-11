@@ -35,17 +35,21 @@ struct transient_hdr_t {
     folly::SharedMutexReadPriority lock;
     /* these variables are accessed without taking lock and are not expected to change after init */
     bool is_leaf;
-#ifndef NDEBUG
+    // #ifndef NDEBUG
     int is_lock;
-#endif
+    // #endif
     transient_hdr_t() :
             upgraders(0),
             is_leaf(false)
-#ifndef NDEBUG
+            // #ifndef NDEBUG
             ,
             is_lock(-1)
-#endif
-                {};
+    // #endif
+    {};
+
+    std::string to_string() const {
+        return fmt::format("is_lock={} is_leaf={} upgraders={}", is_lock, is_leaf, upgraders.get());
+    }
 };
 
 template < btree_node_type NodeType, typename K, typename V >
