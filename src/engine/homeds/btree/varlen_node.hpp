@@ -291,6 +291,8 @@ public:
                 "{} free_space {} Area_crc {} area {:08x} {}",
             this->persistent_header_to_string(),
                 get_var_node_header_const()->m_available_space, crc, reinterpret_cast<uintptr_t>(area), mism);
+
+            return str;
             return str;
     }
     std::string to_string(bool print_friendly = false) const {

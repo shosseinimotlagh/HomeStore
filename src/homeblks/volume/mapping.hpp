@@ -332,9 +332,9 @@ public:
     std::string to_string() const {
         std::string str = fmt::format("seq_id={} BaseBlk=[{}] lba_off={} nlbas={}", get_seqid(), get_base_blkid(),
                                       get_lba_offset(), get_num_lbas());
-        if (HomeBlks::instance()->print_checksum()) {
-            fmt::format_to(std::back_inserter(str), " cs=[{}]", get_checksums_string());
-        }
+//        if (HomeBlks::instance()->print_checksum()) {
+//            fmt::format_to(std::back_inserter(str), " cs=[{}]", get_checksums_string());
+//        }
         return str;
     }
 
