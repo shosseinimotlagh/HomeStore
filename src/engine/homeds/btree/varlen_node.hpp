@@ -284,10 +284,13 @@ public:
     }
 #endif
     std::string to_string_info() const {
+        auto area = this->get_node_area();
+        auto crc = crc16_t10dif(init_crc_16, area, 4056);
+        std::string mism = (crc != this->get_checksum())? "MISMATCH" : "";
             auto str = fmt::format(
-                "{} free_space {}",
+                "{} free_space {} Area_crc {} area {:08x} {}",
             this->persistent_header_to_string(),
-                get_var_node_header_const()->m_available_space);
+                get_var_node_header_const()->m_available_space, crc, reinterpret_cast<uintptr_t>(area), mism);
             return str;
     }
     std::string to_string(bool print_friendly = false) const {
