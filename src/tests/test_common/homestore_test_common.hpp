@@ -213,9 +213,33 @@ public:
 
 #ifdef _PRERELEASE
     void wait_for_crash_recovery() {
-        m_crash_recovered.getFuture().get();
-        m_crash_recovered = folly::Promise< folly::Unit >();
+        try {
+            m_crash_recovered.getFuture().get();
+        } catch (const std::exception& e) {
+            LOGERROR("Exception in wait_for_crash_recovery: {}", e.what());
+        }
+        m_crash_recovered = folly::Promise<folly::Unit>();
     }
+
+//    void wait_for_crash_recovery() {
+//        try {
+//            // Apply a 20-second timeout to the future
+//            auto future = m_crash_recovered.getFuture().within(std::chrono::seconds(20));
+//
+//            // Use std::move to call get() on a temporary
+//            std::move(future).get();
+//        } catch (const folly::FutureTimeout& e) {
+//            // Timeout occurred, stop waiting
+//            LOGWARN("Timeout occurred while waiting for crash recovery");
+//            return;
+//        } catch (const std::exception& e) {
+//            // Handle other exceptions
+//            LOGERROR("Exception in wait_for_crash_recovery: {}", e.what());
+//        }
+//
+//        // Reset the promise after processing
+//        m_crash_recovered = folly::Promise<folly::Unit>();
+//    }
 #endif
 
     void set_min_chunk_size(uint64_t chunk_size) {
@@ -438,10 +462,28 @@ private:
             }
         }
 #ifdef _PRERELEASE
-        hsi->with_crash_simulator([this](void) mutable {
-            LOGWARN("CrashSimulator::crash() is called - restarting homestore");
-            this->restart_homestore();
-            m_crash_recovered.setValue();
+        hsi->with_crash_simulator([this](bool x) mutable {
+//            if (x){
+//                    LOGWARN("CrashSimulator::crash() has skipped - not restarting homestore");
+////                    m_crash_recovered.setException(std::make_exception_ptr(std::runtime_error("CrashSimulator skipped")));
+//                    m_crash_recovered.setException(folly::exception_wrapper(std::runtime_error("CrashSimulator skipped")));
+//                }else{
+//                    LOGWARN("CrashSimulator::crash() is called - restarting homestore");
+//                    this->restart_homestore();
+//                    m_crash_recovered.setValue();
+//                }
+            if (x) {
+                LOGWARN("CrashSimulator::crash() has skipped - not restarting homestore");
+                if (!m_crash_recovered.isFulfilled()) {
+                    m_crash_recovered.setException(folly::exception_wrapper(std::runtime_error("CrashSimulator skipped")));
+                }
+            } else {
+                LOGWARN("CrashSimulator::crash() is called - restarting homestore");
+                this->restart_homestore();
+                if (!m_crash_recovered.isFulfilled()) {
+                    m_crash_recovered.setValue();
+                }
+            }
         });
 #endif
 

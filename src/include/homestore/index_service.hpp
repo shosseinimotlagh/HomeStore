@@ -53,6 +53,9 @@ private:
     mutable std::mutex m_index_map_mtx;
     std::map< uuid_t, std::shared_ptr< IndexTableBase > > m_index_map;
     std::unordered_map< uint32_t, std::shared_ptr< IndexTableBase > > m_ordinal_index_map;
+#ifdef _PRERELEASE
+    std::atomic<bool> crash_expecting{false};
+#endif
 
 public:
     IndexService(std::unique_ptr< IndexServiceCallbacks > cbs);
@@ -88,6 +91,15 @@ public:
         if (!m_wb_cache) { throw std::runtime_error("Attempted to access a null pointer wb_cache"); }
         return *m_wb_cache;
     }
+
+#ifdef _PRERELEASE
+    void set_expect_crash(bool value=true) {
+        LOGINFO("Index service is expecting A crash = {} ", value);
+        crash_expecting.store(value);
+    }
+    bool is_crash_expected() { return crash_expecting.load(); }
+#endif
+
 };
 
 extern IndexService& index_service();

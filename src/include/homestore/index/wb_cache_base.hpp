@@ -65,6 +65,9 @@ public:
     /// @return
     // virtual IndexBufferPtr copy_buffer(const IndexBufferPtr& cur_buf, const CPContext* context) const = 0;
     virtual void recover(sisl::byte_view sb) = 0;
+#ifdef _PRERELEASE
+    std::atomic<bool> recovery_flush{false};
+#endif
 };
 
 } // namespace homestore

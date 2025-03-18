@@ -416,7 +416,11 @@ struct IndexCrashTest : public test_common::HSTestHelper, BtreeTestHelper< TestT
         LOGINFO("Expect to have [{},{}) in tree and it is actually{} ", s_key, e_key, tree_key_count());
         ASSERT_EQ(this->m_shadow_map.size(), this->tree_key_count()) << "shadow map size and tree size mismatch";
     }
+    void expect_crash(std::string flip) {
+        this->set_basic_flip(flip, 1, 100);
+        hs()->index_service().set_expect_crash();
 
+    }
     void sanity_check(OperationList& operations) const {
         std::set< uint64_t > new_keys;
         std::transform(operations.begin(), operations.end(), std::inserter(new_keys, new_keys.end()),
@@ -442,7 +446,7 @@ struct IndexCrashTest : public test_common::HSTestHelper, BtreeTestHelper< TestT
     }
 
     void crash_and_recover(OperationList& operations, std::string filename = "") {
-         // this->print_keys("Btree prior to CP and susbsequent simulated crash: ");
+          this->print_keys("Btree prior to CP and susbsequent simulated crash: ");
         LOGINFO("Before Crash: {} keys in shadow map and it is actually {} keys in tree - operations size {}",
                 this->m_shadow_map.size(), tree_key_count(), operations.size());
 
@@ -461,7 +465,7 @@ struct IndexCrashTest : public test_common::HSTestHelper, BtreeTestHelper< TestT
             LOGINFO("Visualize the tree file after recovery : {}", rec_filename);
             this->visualize_keys(rec_filename);
         }
-         // this->print_keys("Post crash and recovery, btree structure: ");
+          this->print_keys("Post crash and recovery, btree structure: ");
         sanity_check(operations);
         //        Added to the index service right after recovery. Not needed here
         //        test_common::HSTestHelper::trigger_cp(true);
@@ -659,7 +663,8 @@ TYPED_TEST(IndexCrashTest, long_running_put_crash) {
                     normal_execution = false;
                     flip = line;
                     LOGINFO("Step 1-{}: Set flag {}", round, flip);
-                    this->set_basic_flip(flip, 1, 100);
+//                    this->set_basic_flip(flip, 1, 100);
+                    this->expect_crash(flip);
                 }
             }
             file.close();
@@ -667,7 +672,8 @@ TYPED_TEST(IndexCrashTest, long_running_put_crash) {
             if (dis(g_re) <= flip_percentage) {
                 flip = flips[cur_flip_idx++ % flips.size()];
                 LOGINFO("Step 1-{}: Set flag {}", round, flip);
-                this->set_basic_flip(flip, 1, 100);
+//                this->set_basic_flip(flip, 1, 100);
+                this->expect_crash(flip);
                 normal_execution = false;
             } else {
                 normal_execution = true;
@@ -776,7 +782,7 @@ TYPED_TEST(IndexCrashTest, long_running_remove_crash) {
     test_common::HSTestHelper::trigger_cp(true);
     this->get_all();
     this->m_shadow_map.save(this->m_shadow_filename);
-    // this->print_keys("reapply: after preload");
+     this->print_keys("reapply: after preload");
     this->visualize_keys("tree_after_preload.dot");
 
     for (uint32_t round = 1;
@@ -1102,7 +1108,6 @@ int main(int argc, char* argv[]) {
     SISL_OPTIONS_LOAD(parsed_argc, argv, logging, test_index_crash_recovery, iomgr, test_common_setup);
     sisl::logging::SetLogger("test_index_crash_recovery");
     spdlog::set_pattern("[%D %T%z] [%^%L%$] [%t] %v");
-
     if (SISL_OPTIONS.count("seed")) {
         auto seed = SISL_OPTIONS["seed"].as< uint64_t >();
         LOGINFO("Using seed {} to sow the random generation", seed);

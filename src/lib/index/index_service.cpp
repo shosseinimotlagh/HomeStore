@@ -89,6 +89,9 @@ void IndexService::start() {
     }
     // Force taking cp after recovery done. This makes sure that the index table is in consistent state and dirty buffer
     // after recovery can be added to dirty list for flushing in the new cp
+#ifdef _PRERELEASE
+    if(is_crash_expected()){m_wb_cache->recovery_flush.store(true);}
+#endif
     hs()->cp_mgr().trigger_cp_flush(true /* force */);
 }
 

@@ -772,7 +772,10 @@ void IndexWBCache::do_flush_one_buf(IndexCPContext* cp_ctx, IndexBufferPtr const
                 try {
                     auto& pthis = s_cast< IndexWBCache& >(wb_cache());
                     pthis.process_write_completion(cp_ctx, buf);
-                } catch (const std::runtime_error& e) { LOGERROR("Failed to access write-back cache: {}", e.what()); }
+                } catch (const std::runtime_error& e) {
+                    std::call_once(flag, []() { LOGINFO("Crash simulation is ongoing; aid simulation by not flushing."); });
+//                    LOGERROR("Failed to access write-back cache: {}", e.what());
+                    }
             });
 
         if (!part_of_batch) { m_vdev->submit_batch(); }
@@ -797,10 +800,25 @@ void IndexWBCache::process_write_completion(IndexCPContext* cp_ctx, IndexBufferP
     } else if (!has_more) {
         // We are done flushing the buffers, We flush the vdev to persist the vdev bitmaps and free blks
         // Pick a CP Manager blocking IO fiber to execute the cp flush of vdev
+        LOGINFO("All dirty buffers are flushed, now flushing the vdev");
         iomanager.run_on_forget(cp_mgr().pick_blocking_io_fiber(), [this, cp_ctx]() {
             LOGTRACEMOD(wbcache, "Initiating CP flush");
             m_vdev->cp_flush(cp_ctx); // This is a blocking io call
             cp_ctx->complete(true);
+            // if crash was expected to happen but we are here means that we don't need to wait for crash to happen
+                // so we can reset the crash flag
+#ifdef _PRERELEASE
+            if(index_service().is_crash_expected() && !recovery_flush.load()) {
+                LOGINFO("crash is expected but nothing happened so reset the crash flag");
+//                index_service().set_expect_crash(false);
+                hs()->crash_simulator().skip_crash();
+//                hs()->crash_simulator().crash();
+            }
+            if( recovery_flush.load()) {
+                LOGINFO("recovery flush is done, so reset the recovery flush flag");
+                recovery_flush.store(false);
+            }
+#endif
         });
     }
 }

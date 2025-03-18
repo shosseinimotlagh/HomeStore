@@ -41,6 +41,10 @@ private:
     std::mutex m_flush_mtx;
     void* m_meta_blk;
     bool m_in_recovery{false};
+//#ifdef _PRERELEASE
+//    std::atomic< bool > m_crash_called{false};
+//    std::atomic<bool> m_crash_will_happen{false};
+//#endif
 
 public:
     IndexWBCache(const std::shared_ptr< VirtualDev >& vdev, std::pair< meta_blk*, sisl::byte_view > sb,
