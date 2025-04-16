@@ -244,6 +244,7 @@ struct BtreeConfig {
     uint8_t m_suggested_min_pct{30};
     uint8_t m_split_pct{50};
     uint32_t m_max_merge_nodes{3};
+    uint8_t m_max_merge_depth{1};
 #ifdef _PRERELEASE
     // These are for testing purpose only
     uint64_t m_max_keys_in_node{0};

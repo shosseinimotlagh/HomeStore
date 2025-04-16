@@ -77,6 +77,7 @@ private:
                                 IndexBufferPtrList& bufs);
 
     void recover_buf(IndexBufferPtr const& buf);
+    void parent_recover(IndexBufferPtr const& buf);
     bool was_node_committed(IndexBufferPtr const& buf);
     void load_buf(IndexBufferPtr const& buf);
     void update_up_buffer_counters(IndexBufferPtr const& buf);

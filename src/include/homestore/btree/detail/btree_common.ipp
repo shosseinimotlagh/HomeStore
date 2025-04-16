@@ -148,23 +148,27 @@ void Btree< K, V >::to_string(bnodeid_t bnodeid, std::string& buf) const {
 
 template < typename K, typename V >
 void Btree< K, V >::to_custom_string_internal(bnodeid_t bnodeid, std::string& buf,
-                                              to_string_cb_t< K, V > const& cb) const {
+                                              to_string_cb_t< K, V > const& cb, int nindent) const {
     BtreeNodePtr node;
 
     locktype_t acq_lock = locktype_t::READ;
 
     if (read_and_lock_node(bnodeid, node, acq_lock, acq_lock, nullptr) != btree_status_t::success) { return; }
-    fmt::format_to(std::back_inserter(buf), "{}\n", node->to_custom_string(cb));
+    if(nindent <0){
+        nindent = node->level();
+    }
+    std::string tabs(3*(nindent- node->level()), ' ');
+    fmt::format_to(std::back_inserter(buf), "{}{}\n", tabs, node->to_custom_string(cb));
 
     if (!node->is_leaf()) {
         uint32_t i = 0;
         while (i < node->total_entries()) {
             BtreeLinkInfo p;
             node->get_nth_value(i, &p, false);
-            to_custom_string_internal(p.bnode_id(), buf, cb);
+            to_custom_string_internal(p.bnode_id(), buf, cb, nindent);
             ++i;
         }
-        if (node->has_valid_edge()) { to_custom_string_internal(node->edge_id(), buf, cb); }
+        if (node->has_valid_edge()) { to_custom_string_internal(node->edge_id(), buf, cb, nindent); }
     }
     unlock_node(node, acq_lock);
 }
@@ -223,6 +227,34 @@ uint64_t Btree< K, V >::count_keys(bnodeid_t bnodeid) const {
 }
 
 template < typename K, typename V >
+void Btree< K, V >::sanity_sub_tree(bnodeid_t bnodeid) const {
+    if (bnodeid==0) {
+        bnodeid= m_root_node_info.bnode_id();
+    }
+    BtreeNodePtr node;
+    if (
+        auto ret = read_node_impl(bnodeid, node); ret!=btree_status_t::success) {
+        LOGINFO("reading node failed for bnodeid: {} reason: {}", bnodeid, ret);
+    }else{
+        if(node->is_leaf()){
+            return;
+        }
+        uint32_t nentries = node->has_valid_edge() ? node->total_entries() + 1 : node->total_entries();
+        std::vector<bnodeid_t> child_id_list;
+        child_id_list.reserve(nentries);
+        for (uint32_t i = 0; i < nentries; ++i) {
+            validate_sanity_child(node, i);
+            BtreeLinkInfo child_info;
+            node->get_nth_value(i, &child_info, false /* copy */);
+            child_id_list.push_back(child_info.bnode_id());
+        }
+        for (auto child_id: child_id_list){
+            sanity_sub_tree(child_id);
+        }
+    }
+}
+
+template < typename K, typename V >
 void Btree< K, V >::validate_sanity_child(const BtreeNodePtr& parent_node, uint32_t ind) const {
     BtreeLinkInfo child_info;
     K child_first_key;
@@ -235,34 +267,84 @@ void Btree< K, V >::validate_sanity_child(const BtreeNodePtr& parent_node, uint3
     BT_REL_ASSERT_EQ(ret, btree_status_t::success, "read failed, reason: {}", ret);
     if (child_node->total_entries() == 0) {
         auto parent_entries = parent_node->total_entries();
-        if (!child_node->is_leaf()) { // leaf node or edge node can have 0 entries
-            BT_REL_ASSERT_EQ(((parent_node->has_valid_edge() && ind == parent_entries)), true);
-        }
+//        if (!child_node->is_leaf()) { // leaf node or edge node can have 0 entries
+//            BT_REL_ASSERT_EQ(((parent_node->has_valid_edge() && ind == parent_entries)), true);
+//        }
         return;
     }
-    child_node->get_first_key(&child_first_key);
-    child_node->get_last_key(&child_last_key);
-    BT_REL_ASSERT_LE(child_first_key.compare(&child_last_key), 0);
-    if (ind == parent_node->total_entries()) {
+    BT_REL_ASSERT_NE(child_node->is_node_deleted(), true, "child node {} is deleted", child_node->to_string());
+    if(ind >= parent_node->total_entries()){
         BT_REL_ASSERT_EQ(parent_node->has_valid_edge(), true);
-        if (ind > 0) {
-            parent_node->get_nth_key< K >(ind - 1, &parent_key, false);
-            BT_REL_ASSERT_GT(child_first_key.compare(&parent_key), 0);
-            BT_REL_ASSERT_LT(parent_key.compare_start(&child_first_key), 0);
+        if( ind >0){
+            parent_key = parent_node->get_nth_key< K >(ind -1, false);
         }
-    } else {
-        parent_node->get_nth_key< K >(ind, &parent_key, false);
-        BT_REL_ASSERT_LE(child_first_key.compare(&parent_key), 0)
-        BT_REL_ASSERT_LE(child_last_key.compare(&parent_key), 0)
-        BT_REL_ASSERT_GE(parent_key.compare_start(&child_first_key), 0)
-        BT_REL_ASSERT_GE(parent_key.compare_start(&child_first_key), 0)
-        if (ind != 0) {
-            parent_node->get_nth_key< K >(ind - 1, &parent_key, false);
-            BT_REL_ASSERT_GT(child_first_key.compare(&parent_key), 0)
-            BT_REL_ASSERT_LT(parent_key.compare_start(&child_first_key), 0)
+    }else
+    {
+        parent_key = parent_node->get_nth_key< K >(ind, false);
+    }
+    K previous_parent_key;
+    if( ind >0 && parent_node->total_entries()>0){
+        previous_parent_key = parent_node->get_nth_key< K >(ind - 1, false);
+    }
+    for (uint32_t i = 0; i <child_node->total_entries() ; ++i) {
+        K cur_child_key = child_node->get_nth_key< K >(i, false);
+        if(ind < parent_node->total_entries()){
+            BT_REL_ASSERT_LE(cur_child_key.compare(parent_key), 0, " child {} {}-th key is greater than its parent's {} {}-th key", child_node->to_string(), i , parent_node->to_string(), ind);
+            if(ind>0) {
+                BT_REL_ASSERT_GT(cur_child_key.compare(previous_parent_key), 0,
+                                 " child {} {}-th key is less than its parent's {} {}-th key", child_node->to_string(),
+                                 i, parent_node->to_string(), ind - 1);
+            }
+
+        }else
+        {
+            BT_REL_ASSERT_GT(cur_child_key.compare(parent_key), 0, " child {} {}-th key is greater than its parent {} {}-th key", child_node->to_string(), i , parent_node->to_string(), ind);
         }
     }
 }
+
+//template < typename K, typename V >
+//void Btree< K, V >::validate_sanity_child(const BtreeNodePtr& parent_node, uint32_t ind) const {
+//    BtreeLinkInfo child_info;
+//    K child_first_key;
+//    K child_last_key;
+//    K parent_key;
+//
+//    parent_node->get_nth_value(ind, &child_info, false /* copy */);
+//    BtreeNodePtr child_node = nullptr;
+//    auto ret = read_node_impl(child_info.bnode_id(), child_node);
+//    BT_REL_ASSERT_EQ(ret, btree_status_t::success, "read failed, reason: {}", ret);
+//    if (child_node->total_entries() == 0) {
+//        auto parent_entries = parent_node->total_entries();
+//        if (!child_node->is_leaf()) { // leaf node or edge node can have 0 entries
+//            BT_REL_ASSERT_EQ(((parent_node->has_valid_edge() && ind == parent_entries)), true);
+//        }
+//        return;
+//    }
+//    BT_REL_ASSERT_NE(child_node->is_node_deleted(), true, "child node {} is deleted", child_node->to_string());
+//    child_first_key = child_node->get_first_key<K>();
+//    child_last_key = child_node->get_last_key<K>();
+//    BT_REL_ASSERT_LE(child_first_key.compare(child_last_key), 0);
+//    if (ind == parent_node->total_entries()) {
+//        BT_REL_ASSERT_EQ(parent_node->has_valid_edge(), true);
+//        if (ind > 0) {
+//            parent_key = parent_node->get_nth_key< K >(ind - 1, false);
+//            BT_REL_ASSERT_GT(child_first_key.compare(parent_key), 0, "child on edge first_key: {} is less than parent_key: {}", child_node->to_string(), parent_node->to_string());
+////            BT_REL_ASSERT_LT(parent_key.compare_start(child_first_key), 0);
+//        }
+//    } else {
+//        parent_key = parent_node->get_nth_key< K >(ind, false);
+//        BT_REL_ASSERT_LE(child_first_key.compare(parent_key), 0,"child_first_key: {} is greater than parent_key: {}", child_node->to_string(), parent_node->to_string());
+//        BT_REL_ASSERT_LE(child_last_key.compare(parent_key), 0, "child_last_key: {} is greater than parent_key: {}", child_node->to_string(), parent_node->to_string());
+////        BT_REL_ASSERT_GE(parent_key.compare_start(&child_first_key), 0)
+////        BT_REL_ASSERT_GE(parent_key.compare_start(&child_first_key), 0)
+//        if (ind != 0) {
+//            parent_key = parent_node->get_nth_key< K >(ind - 1, false);
+//            BT_REL_ASSERT_GT(child_first_key.compare(parent_key), 0)
+////            BT_REL_ASSERT_LT(parent_key.compare_start(child_first_key), 0)
+//        }
+//    }
+//}
 
 template < typename K, typename V >
 void Btree< K, V >::validate_sanity_next_child(const BtreeNodePtr& parent_node, uint32_t ind) const {

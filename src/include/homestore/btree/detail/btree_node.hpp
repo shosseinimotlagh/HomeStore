@@ -86,9 +86,8 @@ struct persistent_hdr_t {
         auto sedge = (edge_info.m_bnodeid == empty_bnodeid)
             ? ""
             : fmt::format(" edge={}.{}", edge_info.m_bnodeid, edge_info.m_link_version);
-        return fmt::format("id={}{}{} {} level={} nentries={}{} mod_cp={}", node_id, snext, sedge,
-                           leaf ? "LEAF" : "INTERIOR", level, nentries, (node_deleted == 0x1) ? "  Deleted" : "",
-                           modified_cp_id);
+        return fmt::format("id={}{}{} {} level={} nentries={} mod_cp={}{}", node_id, snext, sedge,
+                           leaf ? "LEAF" : "INTERIOR", level, nentries, modified_cp_id, node_deleted == 0x1 ? "  Deleted" : " LIVE");
     }
 };
 #pragma pack()
@@ -368,9 +367,9 @@ public:
     std::string to_custom_string(to_string_cb_t< K, V > const& cb) const {
         std::string snext =
             (this->next_bnode() == empty_bnodeid) ? "" : fmt::format(" next_node={}", this->next_bnode());
-        auto str = fmt::format("id={}.{} level={} nEntries={} {}{} node_gen={} ", this->node_id(), this->link_version(),
+        auto str = fmt::format("id={}.{} level={} nEntries={} {}{} node_gen={} {} ", this->node_id(), this->link_version(),
                                this->level(), this->total_entries(), (this->is_leaf() ? "LEAF" : "INTERIOR"), snext,
-                               this->node_gen());
+                               this->node_gen(), this->is_node_deleted()?" **DELETED**":"");
         if (this->has_valid_edge()) {
             fmt::format_to(std::back_inserter(str), " edge={}.{}", this->edge_info().m_bnodeid,
                            this->edge_info().m_link_version);
@@ -396,11 +395,11 @@ public:
             }
             fmt::format_to(std::back_inserter(str), "]");
         }
-
-        // Should not happen
-        if (this->is_node_deleted()) {
-            fmt::format_to(std::back_inserter(str), " **DELETED** ");
-        }
+//
+//        // Should not happen
+//        if (this->is_node_deleted()) {
+//            fmt::format_to(std::back_inserter(str), " **DELETED** ");
+//        }
 
         return str;
     }
@@ -537,11 +536,18 @@ public:
 
     virtual uint32_t occupied_size() const { return (node_data_size() - available_size()); }
     bool is_merge_needed(const BtreeConfig& cfg) const {
+        if (level() > cfg.m_max_merge_depth) {
+//            LOGINFO("merge not needed for level {}", level(), cfg.m_max_merge_depth);
+            return false;
+        }
 #ifdef _PRERELEASE
         if (min_keys_in_node()) {
             return total_entries() < min_keys_in_node();
         }
 #endif
+        if (level() <= cfg.m_max_merge_depth) {
+            LOGINFO("merge is OK for level {} max depth {} ", level(), cfg.m_max_merge_depth);
+        }
         return (occupied_size() < cfg.suggested_min_size());
     }
 
