@@ -225,16 +225,14 @@ public:
         rreq.enable_route_tracing();
         bool removed = (m_bt->remove(rreq) == btree_status_t::success);
 
-        if(care_success) {
+        if (care_success) {
             ASSERT_EQ(removed, m_shadow_map.exists(*pk))
                 << "Removal of key " << pk->key() << " status doesn't match with shadow";
             if (removed) { m_shadow_map.remove_and_check(*pk, *existing_v); }
-        }else {
+        } else {
             // Do not care if the key is not present in the btree, just cleanup the shadow map
             m_shadow_map.erase(*pk);
         }
-
-
     }
 
     void remove_random() {
@@ -402,7 +400,7 @@ public:
 
         LOGINFO("{}{}", preamble.empty() ? "" : preamble + ":\n", m_bt->to_custom_string(print_key_range));
     }
-    void visualize_keys(const std::string& file) const { m_bt->visualize_tree_keys(file); }
+    void visualize_keys(const std::string& file) const { /* m_bt->visualize_tree_keys(file);*/ }
 
     void compare_files(const std::string& before, const std::string& after) {
         std::ifstream b(before, std::ifstream::ate);

@@ -529,15 +529,6 @@ protected:
                     auto sibling_node_id = parent_node->next_bnode();
                     while (sibling_node_id != empty_bnodeid) {
                         if (auto ret = read_node_impl(sibling_node_id, sibling); ret == btree_status_t::success) {
-                            //                            auto sibling_first_key = sibling->get_first_key< K >();
-                            //                                auto sibling_first_key = sibling->get_first_key< K >();
-                            //                            if (sibling_first_key.compare(last_child_neighbor_key) < 0) {
-                            //                                siblings.push_back(sibling);
-                            //                                sibling_node_id = sibling->next_bnode();
-                            //                            } else {
-                            //                                true_sibling = sibling;
-                            //                                break;
-                            //                            }
                             if (sibling->is_node_deleted()) {
                                 // Do we need to free the sibling node here?
                                 siblings.push_back(sibling);
@@ -566,10 +557,6 @@ protected:
                     if (sibling_node_id != empty_bnodeid) {
                         last_parent_key = last_child_last_key;
                         parent_node->set_next_bnode(true_sibling->node_id());
-                        //                    leave it free later
-                        //                    for(auto sibling: siblings){
-                        //                        free_node(sibling, locktype_t::WRITE, cp_ctx);
-                        //                    }
                         // print list of siblings as a list
                         for (auto sibling : siblings) {
                             LOGTRACEMOD(wbcache, "Mehdi: sibling list [{}]", sibling->to_string());
@@ -577,10 +564,6 @@ protected:
                         LOGTRACEMOD(wbcache, "Mehdi: true sibling [{}]", true_sibling->to_string());
                         BtreeLinkInfo first_child_info;
                         parent_node->get_nth_value(0, &first_child_info, false);
-                        //                        BT_DBG_ASSERT_EQ(first_child_info,
-                        //                                         BtreeLinkInfo{cur_child->node_id(),
-                        //                                         cur_child->link_version()}, "First child of parent
-                        //                                         should be the child node");
                     }
                 } else {
                     LOGTRACEMOD(wbcache,
@@ -665,13 +648,6 @@ protected:
                     break;
                 }
 
-                //                    LOGTRACEMOD(wbcache, "Repairing node={}, child_node=[{}] is an edge node, end
-                //                    loop",
-                //                                cur_parent->node_id(), child_node->to_string());
-                //                    child_node->set_next_bnode(empty_bnodeid);
-                //                    write_node_impl(child_node, cp_ctx);
-                //                    cur_parent->set_edge_value(BtreeLinkInfo{child_node->node_id(),
-                //                    child_node->link_version()});}
                 break;
             }
 
@@ -766,19 +742,6 @@ protected:
                 }
                 cur_parent->insert(cur_parent->total_entries(), child_last_key,
                                    BtreeLinkInfo{child_node->node_id(), child_node->link_version()});
-                //                cur_parent->insert(cur_parent->total_entries(),
-                //                                   child_node->total_entries() > 0 ? child_last_key : last_parent_key,
-                //                                   BtreeLinkInfo{child_node->node_id(), child_node->link_version()});
-
-                //                if (child_node->total_entries() == 0) {
-                //                    // There should be at most one empty child node per parent - if we find one, we
-                //                    should stop
-                //                    // here
-                //                    LOGTRACEMOD(wbcache, "Repairing node={}, child_node=[{}] is empty, end loop",
-                //                    cur_parent->node_id(),
-                //                                child_node->to_string());
-                //                    break;
-                //                }
             } else {
                 // Node deleted indicates it's freed & no longer used during recovery
                 LOGTRACEMOD(wbcache, "Repairing node={}, child node=[{}] is deleted, skipping the insert",

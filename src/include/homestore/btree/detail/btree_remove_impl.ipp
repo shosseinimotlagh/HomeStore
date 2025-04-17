@@ -69,7 +69,6 @@ retry:
         auto const [found, idx] = my_node->find(req.key(), nullptr, false);
         ASSERT_IS_VALID_INTERIOR_CHILD_INDX(found, idx, my_node);
         end_idx = start_idx = idx;
-//        LOGINFO("key {} found {}  at idx={} in node={} req.route_tracing {}", req.key().to_string(),found, idx, my_node->node_id(), req.route_string());
         if (false) { goto out_return; } // Please the compiler
     } else if constexpr (std::is_same_v< ReqT, BtreeRangeRemoveRequest< K > >) {
         auto const matched = my_node->match_range< K >(req.working_range(), start_idx, end_idx);
@@ -250,7 +249,6 @@ btree_status_t Btree< K, V >::merge_nodes(const BtreeNodePtr& parent_node, const
     uint32_t expected_entities = leftmost_node->total_entries();
 #ifdef _PRERELEASE
     const uint64_t max_keys = leftmost_node->max_keys_in_node();
-//    LOGINFO("max_keys: {} expected entities {}", max_keys, expected_entities);
 #endif
 
     for (auto indx = start_idx + 1; indx <= end_idx; ++indx) {
@@ -278,19 +276,14 @@ btree_status_t Btree< K, V >::merge_nodes(const BtreeNodePtr& parent_node, const
         // Only option is to rebalance the nodes across. If we are asked not to do so, skip it.
         if (!m_bt_cfg.m_rebalance_turned_on) {
             ret = btree_status_t::merge_not_required;
-//            LOGINFO("MERGE disqualified for parent node {} leftmost_node {}! num_nodes {} is more than old_nodes.size() {}",parent_node->to_string(),  leftmost_node->to_string(), num_nodes,
-//                    old_nodes.size());
             goto out;
         }
     }
 
     balanced_size = (total_size == 0) ? 0 : (total_size - 1) / num_nodes + 1;
-//    LOGINFO("lefmost node {}, total size {}, num_nodes {}, balanced size {}", leftmost_node->to_string(), total_size, num_nodes,
-//            balanced_size);
     if (leftmost_node->occupied_size() > balanced_size) {
         // If for some reason balancing increases the current size, give up.
         // TODO: Is this a real case, isn't happening would mean some sort of bug in calculation of is_merge_needed?
-//        LOGINFO("MERGE disqualified for parent node {} leftmost_node {}! current size {} is more than balanced size {}", parent_node->to_string(), leftmost_node->to_string(), leftmost_node->occupied_size(), balanced_size);
         BT_NODE_DBG_ASSERT(false, leftmost_node,
                            "Didn't expect current size is more than balanced size without rebalancing");
         ret = btree_status_t::merge_not_required;
@@ -307,8 +300,6 @@ btree_status_t Btree< K, V >::merge_nodes(const BtreeNodePtr& parent_node, const
         // TODO: check whether value size of the node is greater than available_size? If so nentries is 0. Suppose if a
         // node contains one entry and the value size is much bigger than available size
         auto nentries = old_nodes[i]->num_entries_by_size(0, available_size);
-//        LOGINFO("lefmost node {}, ith node {}, available size {}, nentries {}", leftmost_node->to_string(), old_nodes[i]->to_string(), available_size, nentries);
-
 #ifdef _PRERELEASE
         if(max_keys){
             if(expected_entities+nentries > max_keys) {
@@ -337,8 +328,6 @@ btree_status_t Btree< K, V >::merge_nodes(const BtreeNodePtr& parent_node, const
             break;
         }
     }
-    //bound it to max_keys from start (src_cursor.ith_entry+1) to end
-    //src_cursor.nth_entry = nentries;
     // We are ready to keep copying all the old nodes from src cursor to new nodes
     available_size = 0;
     while (src_cursor.ith_node < old_nodes.size()) {
@@ -354,8 +343,6 @@ btree_status_t Btree< K, V >::merge_nodes(const BtreeNodePtr& parent_node, const
         }
 
         auto& old_ith_node = old_nodes[src_cursor.ith_node];
-        // change here
-//        LOGINFO("src_cursor.ith_node: {} src_cursor.nth_entry: {}", src_cursor.ith_node, src_cursor.nth_entry);
         auto const nentries = new_node->copy_by_size(m_bt_cfg, *old_ith_node, src_cursor.nth_entry, available_size);
         total_size -= new_node->occupied_size();
         if (old_ith_node->total_entries() == (src_cursor.nth_entry + nentries)) {
@@ -382,8 +369,6 @@ btree_status_t Btree< K, V >::merge_nodes(const BtreeNodePtr& parent_node, const
     // better merge next time.
     if (new_nodes.size() > old_nodes.size()) {
         ret = btree_status_t::merge_not_required;
-//        LOGINFO("MERGE disqualified for parent node {} leftmost_node {}! new nodes size {} is more than old nodes size {}", parent_node->to_string(), leftmost_node->to_string(), new_nodes.size(),
-//                old_nodes.size());
         goto out;
     }
 
@@ -391,8 +376,6 @@ btree_status_t Btree< K, V >::merge_nodes(const BtreeNodePtr& parent_node, const
     // the first node is going to be exactly same and we will do again merge, so bail out here.
     if ((new_nodes.size() == old_nodes.size()) && (old_nodes[0]->occupied_size() == new_nodes[0]->occupied_size())) {
         ret = btree_status_t::merge_not_required;
-//        LOGINFO("MERGE disqualified for parent node {} leftmost_node {}!  old nodes occupied size {} is more than as new nodes occupied size {}", parent_node->to_string(), leftmost_node->to_string(), old_nodes[0]->occupied_size(),
-//                new_nodes[0]->occupied_size());
         goto out;
     }
 
