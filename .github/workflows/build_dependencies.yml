@@ -217,6 +217,13 @@ jobs:
         connect-timeout-seconds: 60
       if: ${{ inputs.testing == 'True' }}
 
+    - name: Check disk space and mount
+      run: |
+        sudo mkdir -p /mnt/tmp
+        sudo chmod 1777 /mnt/tmp
+        sudo mount --bind /mnt/tmp /tmp
+        df -h /tmp
+
     - name: Create and Test Package
       run: |
         sanitize=$([[ "${{ inputs.tooling }}" == "Sanitize" ]] && echo "True" || echo "False")
