@@ -249,7 +249,7 @@ btree_status_t Btree< K, V >::merge_nodes(const BtreeNodePtr& parent_node, const
     total_size = leftmost_node->occupied_size();
     uint32_t expected_entities = leftmost_node->total_entries();
 #ifdef _PRERELEASE
-    const uint64_t max_keys = leftmost_node->max_keys_in_node();
+    const uint32_t max_keys = leftmost_node->max_keys_in_node();
 #endif
 
     for (auto indx = start_idx + 1; indx <= end_idx; ++indx) {

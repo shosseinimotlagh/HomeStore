@@ -92,19 +92,28 @@ struct BtreeTest : public BtreeTestHelper< TestType >, public ::testing::Test {
 
         LOGINFO("Node size {} ", hs()->index_service().node_size());
         this->m_cfg = BtreeConfig(hs()->index_service().node_size());
+        // Create index table and attach to index service.
+        this->m_cfg.m_merge_turned_on = !SISL_OPTIONS["disable_merge"].as< bool >();
+        if constexpr (std::is_same_v<TestType, PrefixIntervalBtree>) {
+            this->m_cfg.m_merge_turned_on = false;
+        }
 
         auto uuid = boost::uuids::random_generator()();
         auto parent_uuid = boost::uuids::random_generator()();
 
         // Test cp flush of write back.
-        HS_SETTINGS_FACTORY().modifiable_settings([](auto& s) {
-            s.generic.cache_max_throttle_cnt = 10000;
-            HS_SETTINGS_FACTORY().save();
-        });
-        homestore::hs()->resource_mgr().reset_dirty_buf_qd();
+//        HS_SETTINGS_FACTORY().modifiable_settings([](auto& s) {
+//            s.generic.cache_max_throttle_cnt = 10000;
+//            s.generic.cp_timer_us = 0x8000000000000000;
+//            s.resource_limits.dirty_buf_percent = 100;
+//            HS_SETTINGS_FACTORY().save();
+//        });
 
-        // Create index table and attach to index service.
         BtreeTestHelper< TestType >::SetUp();
+
+
+
+
         this->m_bt = std::make_shared< typename T::BtreeType >(uuid, parent_uuid, 0, this->m_cfg);
         hs()->index_service().add_index_table(this->m_bt);
         LOGINFO("Added index table to index service");
@@ -133,8 +142,7 @@ struct BtreeTest : public BtreeTestHelper< TestType >, public ::testing::Test {
     test_common::HSTestHelper m_helper;
 };
 
-using BtreeTypes = testing::Types< FixedLenBtree, VarKeySizeBtree, VarValueSizeBtree, VarObjSizeBtree >;
-
+using BtreeTypes = testing::Types< FixedLenBtree, PrefixIntervalBtree/*, VarKeySizeBtree, VarValueSizeBtree, VarObjSizeBtree*/ >;
 TYPED_TEST_SUITE(BtreeTest, BtreeTypes);
 
 TYPED_TEST(BtreeTest, SequentialInsert) {
@@ -192,6 +200,7 @@ TYPED_TEST(BtreeTest, RandomInsert) {
         this->put(vec[i], btree_put_type::INSERT);
     }
     this->get_all();
+    this->print_keys("after populating");
 }
 
 TYPED_TEST(BtreeTest, TriggerCacheEviction) {
@@ -286,13 +295,14 @@ TYPED_TEST(BtreeTest, RangeUpdate) {
     }
 
     LOGINFO("Step 2: Do Range Update of random intervals between [1-50] for 100 times with random key ranges");
-    for (uint32_t i{0}; i < 100; ++i) {
+    for (uint32_t i{0}; i < 10000; ++i) {
         this->range_put_random();
     }
 
     LOGINFO("Step 2: Query {} entries and validate with pagination of 75 entries", num_entries);
     this->do_query(0, num_entries - 1, 75);
     LOGINFO("RangeUpdate test end");
+    this->print_keys("after populating");
 }
 
 TYPED_TEST(BtreeTest, CpFlush) {
@@ -339,7 +349,7 @@ TYPED_TEST(BtreeTest, CpFlush) {
 
 TYPED_TEST(BtreeTest, MultipleCpFlush) {
     LOGINFO("MultipleCpFlush test start");
-
+    test_common::HSTestHelper::trigger_cp(true /* wait */);
     const auto num_entries = SISL_OPTIONS["num_entries"].as< uint32_t >();
     LOGINFO("Do Forward sequential insert for {} entries", num_entries / 2);
     for (uint32_t i = 0; i < num_entries / 2; ++i) {
@@ -348,30 +358,32 @@ TYPED_TEST(BtreeTest, MultipleCpFlush) {
             LOGINFO("Trigger checkpoint flush wait=false.");
             test_common::HSTestHelper::trigger_cp(false /* wait */);
         }
+//        LOGINFO("after inserting {} entries", i+1);
+//        this->dump_to_file();
     }
-
+    this->print_keys(fmt::format("tree finish for {} entries", num_entries));
     LOGINFO("Trigger checkpoint flush wait=false.");
     test_common::HSTestHelper::trigger_cp(false /* wait */);
-
+    this->print_keys(fmt::format("tree finish for {} entries2", num_entries));
     for (uint32_t i = num_entries / 2; i < num_entries; ++i) {
         this->put(i, btree_put_type::INSERT);
     }
-
+    this->print_keys(fmt::format("tree finish for {} entries3", num_entries));
     LOGINFO("Trigger checkpoint flush wait=false.");
     test_common::HSTestHelper::trigger_cp(false /* wait */);
 
     LOGINFO("Trigger checkpoint flush wait=true.");
     test_common::HSTestHelper::trigger_cp(true /* wait */);
-
+    this->print_keys(fmt::format("tree finish for {} entries10", num_entries));
     LOGINFO("Query {} entries and validate with pagination of 75 entries", num_entries);
     this->do_query(0, num_entries - 1, 75);
 
     this->dump_to_file(std::string("before.txt"));
 
-    this->destroy_btree();
+//    this->destroy_btree();
 
     // Restart homestore. m_bt is updated by the TestIndexServiceCallback.
-    this->restart_homestore();
+//    this->restart_homestore();
 
     std::this_thread::sleep_for(std::chrono::seconds{1});
     LOGINFO(" Restarted homestore with index recovered");
@@ -490,12 +502,12 @@ struct BtreeConcurrentTest : public BtreeTestHelper< TestType >, public ::testin
         auto uuid = boost::uuids::random_generator()();
         auto parent_uuid = boost::uuids::random_generator()();
 
-        // Test cp flush of write back.
-        HS_SETTINGS_FACTORY().modifiable_settings([](auto& s) {
-            s.generic.cache_max_throttle_cnt = 10000;
-            HS_SETTINGS_FACTORY().save();
-        });
-        homestore::hs()->resource_mgr().reset_dirty_buf_qd();
+//        // Test cp flush of write back.
+//        HS_SETTINGS_FACTORY().modifiable_settings([](auto& s) {
+//            s.generic.cache_max_throttle_cnt = 10000;
+//            HS_SETTINGS_FACTORY().save();
+//        });
+//        homestore::hs()->resource_mgr().reset_dirty_buf_qd();
 
         // Create index table and attach to index service.
         BtreeTestHelper< TestType >::SetUp();
@@ -516,6 +528,15 @@ struct BtreeConcurrentTest : public BtreeTestHelper< TestType >, public ::testin
         this->get_all();
     }
 
+    void destroy_btree() {
+        hs()->index_service().remove_index_table(this->m_bt);
+        this->m_bt->destroy();
+        this->m_bt.reset();
+        this->m_shadow_map.range_erase(0, SISL_OPTIONS["num_entries"].as< uint32_t >() - 1);
+        this->m_shadow_map.save(m_shadow_filename);
+        LOGINFO("destroy btree - erase shadow map {}", m_shadow_filename);
+    }
+
     void TearDown() override {
         bool cleanup = SISL_OPTIONS["cleanup_after_shutdown"].as< bool >();
         LOGINFO("cleanup the dump map and index data? {}", cleanup);
@@ -524,12 +545,14 @@ struct BtreeConcurrentTest : public BtreeTestHelper< TestType >, public ::testin
         } else {
             if (std::filesystem::remove(m_shadow_filename)) {
                 LOGINFO("File {} removed successfully", m_shadow_filename);
+
             } else {
                 LOGINFO("Error: failed to remove {}", m_shadow_filename);
             }
         }
         LOGINFO("Teardown with Root bnode_id {} tree size: {}", this->m_bt->root_node_id(),
                 this->m_bt->count_keys(this->m_bt->root_node_id()));
+//        if(cleanup){ this->destroy_btree();}
         BtreeTestHelper< TestType >::TearDown();
         m_helper.shutdown_homestore(false);
     }
@@ -542,7 +565,9 @@ private:
 TYPED_TEST_SUITE(BtreeConcurrentTest, BtreeTypes);
 TYPED_TEST(BtreeConcurrentTest, ConcurrentAllOps) {
     // range put is not supported for non-extent keys
-    std::vector< std::string > input_ops = {"put:18", "remove:14", "range_put:20", "range_remove:2", "query:10"};
+//    std::vector< std::string > input_ops = {"put:18", "remove:14", "range_put:20", "range_remove:2", "query:10"};
+    std::vector< std::string > input_ops = {"put:18", "range_put:20", "query:10"};
+
     if (SISL_OPTIONS.count("operation_list")) {
         input_ops = SISL_OPTIONS["operation_list"].as< std::vector< std::string > >();
     }

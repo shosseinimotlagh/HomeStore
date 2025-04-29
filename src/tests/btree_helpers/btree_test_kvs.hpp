@@ -309,8 +309,9 @@ public:
         m_base = other->m_base;
         m_offset = other->m_offset;
     }
-
-    std::string to_string() const override { return fmt::format("{}.{}", m_base, m_offset); }
+    //output formart:
+//    std::string to_string() const override { return fmt::format("{}.{}", m_base, m_offset); }
+    std::string to_string() const override { return fmt::format("{}", key()); }
 
     static uint32_t get_max_size() { return sizeof(TestIntervalKey); }
 
@@ -502,6 +503,8 @@ public:
 
     static TestIntervalValue generate_rand() {
         return TestIntervalValue{g_randval_generator(g_re), s_cast< uint16_t >(0)};
+//        return TestIntervalValue{s_cast< uint32_t >(0), s_cast< uint16_t >(0)};
+
     }
 
     ///////////////////////////// Overriding methods of BtreeValue //////////////////////////
@@ -519,7 +522,10 @@ public:
         m_offset = other->m_offset;
     }
 
-    std::string to_string() const override { return fmt::format("{}.{}", m_base_val, m_offset); }
+//    std::string to_string() const override { return fmt::format("{}.{}", m_base_val, m_offset); }
+    std::string to_string() const override { return fmt::format("{}", value()); }
+//    std::string value() const { return m_val; }
+    uint64_t value() const { return (uint64_cast(m_base_val) << 16) | m_offset; }
 
     friend std::ostream& operator<<(std::ostream& os, const TestIntervalValue& v) {
         os << v.to_string();

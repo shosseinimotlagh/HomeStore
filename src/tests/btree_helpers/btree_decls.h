@@ -26,6 +26,14 @@ struct FixedLenBtree {
     static constexpr btree_node_type interior_node_type = btree_node_type::FIXED;
 };
 
+struct PrefixIntervalBtree {
+    using BtreeType = IndexTable< TestIntervalKey, TestIntervalValue >;
+    using KeyType = TestIntervalKey;
+    using ValueType = TestIntervalValue;
+    static constexpr btree_node_type leaf_node_type = btree_node_type::PREFIX;
+    static constexpr btree_node_type interior_node_type = btree_node_type::FIXED;
+};
+
 struct VarKeySizeBtree {
     using BtreeType = IndexTable< TestVarLenKey, TestFixedValue >;
     using KeyType = TestVarLenKey;
@@ -48,12 +56,4 @@ struct VarObjSizeBtree {
     using ValueType = TestVarLenValue;
     static constexpr btree_node_type leaf_node_type = btree_node_type::VAR_OBJECT;
     static constexpr btree_node_type interior_node_type = btree_node_type::VAR_OBJECT;
-};
-
-struct PrefixIntervalBtree {
-    using BtreeType = IndexTable< TestIntervalKey, TestIntervalValue >;
-    using KeyType = TestIntervalKey;
-    using ValueType = TestIntervalValue;
-    static constexpr btree_node_type leaf_node_type = btree_node_type::PREFIX;
-    static constexpr btree_node_type interior_node_type = btree_node_type::FIXED;
 };

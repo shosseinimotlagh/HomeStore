@@ -36,8 +36,8 @@ struct transient_hdr_t {
 
     /* these variables are accessed without taking lock and are not expected to change after init */
     uint8_t leaf_node{0};
-    uint64_t max_keys_in_node{0};
-    uint64_t min_keys_in_node{0}; // to specify the threshold for triggering merge
+    uint32_t max_keys_in_node{0};
+    uint32_t min_keys_in_node{0}; // to specify the threshold for triggering merge
 
     bool is_leaf() const { return (leaf_node != 0); }
 };
@@ -334,8 +334,8 @@ public:
     uint16_t level() const { return get_persistent_header_const()->level; }
 
     // uint32_t total_entries() const { return (has_valid_edge() ? total_entries() + 1 : total_entries()); }
-    uint64_t max_keys_in_node() const { return m_trans_hdr.max_keys_in_node; }
-    uint64_t min_keys_in_node() const { return m_trans_hdr.min_keys_in_node; }
+    uint32_t max_keys_in_node() const { return m_trans_hdr.max_keys_in_node; }
+    uint32_t min_keys_in_node() const { return m_trans_hdr.min_keys_in_node; }
 
     void lock(locktype_t l) const {
         if (l == locktype_t::READ) {

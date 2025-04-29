@@ -32,7 +32,6 @@ public:
 
     VariantNode(uint8_t* node_buf, bnodeid_t id, bool init_buf, bool is_leaf, BtreeConfig const& cfg) :
             StoreSpecificBtreeNode(node_buf, id, init_buf, is_leaf, cfg) {}
-
     ///////////////////////////////////////// Get related APIs of the node /////////////////////////////////////////
 
     /// @brief Gets all entries in the node that have keys within the specified range.

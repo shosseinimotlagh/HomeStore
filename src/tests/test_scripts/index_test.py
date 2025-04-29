@@ -78,7 +78,7 @@ def long_runnig_index(options, type=0):
 
 def long_running_clean_shutdown(options, type=0):
     print("Long running clean shutdown started")
-    options['run_time'] =  options['run_time'] // 10
+    options['run_time'] = options['run_time'] // 10
     try:
         run_test(options, type)
         options['init_device'] = False
@@ -132,15 +132,17 @@ def main():
 
 def long_running(*args):
     options = parse_arguments()
+    long_runnig_index(options, 0)
+    long_running_clean_shutdown(options, 0)
+    long_runnig_index(options, 1)
+    long_running_clean_shutdown(options, 1)
+
     for i in range(50):
         print(f"Iteration {i + 1}")
         long_running_crash_remove(options)
     for i in range(5):
         print(f"Iteration {i + 1}")
         long_running_crash_put(options)
-    long_runnig_index(options)
-    long_running_clean_shutdown(options)
-
 
 if __name__ == "__main__":
     main()

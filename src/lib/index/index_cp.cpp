@@ -58,7 +58,7 @@ void IndexCPContext::add_to_txn_journal(uint32_t index_ordinal, const IndexBuffe
             rec->append(op_t::child_new, buf->blkid());
         }
         for (auto const& buf : freed_bufs) {
-            rec->free_node_level = buf->m_node_level;
+//            rec->free_node_level = buf->m_node_level;
             rec->append(op_t::child_freed, buf->blkid());
         }
     }
@@ -378,7 +378,7 @@ void IndexCPContext::process_txn_record(txn_record const* rec, std::map< BlkId, 
     for (uint8_t idx{0}; idx < rec->num_freed_ids; ++idx) {
         auto freed_buf = rec_to_buf(rec, false /* is_meta */, rec->blk_id(cur_idx++),
                                     inplace_child_buf ? inplace_child_buf : parent_buf);
-        freed_buf->m_node_level = rec->free_node_level;
+//        freed_buf->m_node_level = rec->free_node_level;
         freed_buf->m_node_freed = true;
     }
 }

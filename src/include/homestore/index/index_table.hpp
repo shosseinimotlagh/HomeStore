@@ -252,7 +252,7 @@ protected:
 
         node->set_checksum();
         auto prev_state = idx_node->m_idx_buf->m_state.exchange(index_buf_state_t::DIRTY);
-        idx_node->m_idx_buf->m_node_level = node->level();
+//        idx_node->m_idx_buf->m_node_level = node->level();
         if (prev_state == index_buf_state_t::CLEAN) {
             // It was clean before, dirtying it first time, add it to the wb_cache list to flush
             if (idx_node->m_idx_buf->m_dirtied_cp_id != -1) {
@@ -319,7 +319,7 @@ protected:
 
     void free_node_impl(const BtreeNodePtr& node, void* context) override {
         auto n = static_cast< IndexBtreeNode* >(node.get());
-        n->m_idx_buf->m_node_level = node->level();
+//        n->m_idx_buf->m_node_level = node->level();
         wb_cache().free_buf(n->m_idx_buf, r_cast< CPContext* >(context));
     }
 

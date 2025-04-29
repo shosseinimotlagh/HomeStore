@@ -201,7 +201,10 @@ IndexBuffer::IndexBuffer(BlkId blkid, uint32_t buf_size, uint32_t align_size) :
 IndexBuffer::IndexBuffer(uint8_t* raw_bytes, BlkId blkid) : m_blkid(blkid), m_bytes{raw_bytes} {}
 
 IndexBuffer::~IndexBuffer() {
-    if (m_bytes) { hs_utils::iobuf_free(m_bytes, sisl::buftag::btree_node); }
+    if (m_bytes) {
+        LOGINFO("freein node buffer {}", (void*)m_bytes);
+        hs_utils::iobuf_free(m_bytes, sisl::buftag::btree_node);
+    }
 }
 
 std::string IndexBuffer::to_string() const {

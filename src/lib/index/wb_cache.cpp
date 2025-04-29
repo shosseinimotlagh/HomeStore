@@ -106,7 +106,7 @@ BtreeNodePtr IndexWBCache::alloc_buf(node_initializer_t&& node_initializer) {
     idx_buf->m_created_cp_id = cpg->id();
     idx_buf->m_dirtied_cp_id = cpg->id();
     auto node = node_initializer(idx_buf);
-    idx_buf->m_node_level = node->level();
+//    idx_buf->m_node_level = node->level();
 
     if (!m_in_recovery) {
         // Add the node to the cache. Skip if we are in recovery mode.
@@ -165,10 +165,12 @@ retry:
 
 bool IndexWBCache::get_writable_buf(const BtreeNodePtr& node, CPContext* context) {
     IndexCPContext* icp_ctx = r_cast< IndexCPContext* >(context);
+//    LOGINFO("get_writable_buf for node id={} cp_id={} node={}", node->node_id(), icp_ctx->id(), node->to_string());
     auto& idx_buf = static_cast< IndexBtreeNode* >(node.get())->m_idx_buf;
     if (idx_buf->m_dirtied_cp_id == icp_ctx->id()) {
         return true; // For same cp, we don't need a copy, we can rewrite on the same buffer
     } else if (idx_buf->m_dirtied_cp_id > icp_ctx->id()) {
+        LOGERROR("\n\n\n\nwe are asked to provide the buffer of a newer CP, which is not possible");
         return false; // We are asked to provide the buffer of an older CP, which is not possible
     }
 
@@ -181,13 +183,13 @@ bool IndexWBCache::get_writable_buf(const BtreeNodePtr& node, CPContext* context
         // If its not clean, we do deep copy.
         auto new_buf = std::make_shared< IndexBuffer >(idx_buf->m_blkid, m_node_size, m_vdev->align_size());
         new_buf->m_created_cp_id = idx_buf->m_created_cp_id;
-        new_buf->m_node_level = idx_buf->m_node_level;
+//        new_buf->m_node_level = idx_buf->m_node_level;
         std::memcpy(new_buf->raw_buffer(), idx_buf->raw_buffer(), m_node_size);
 
         node->update_phys_buf(new_buf->raw_buffer());
-        LOGTRACEMOD(wbcache, "cp={} cur_buf={} for node={} is dirtied by cp={} copying new_buf={}", icp_ctx->id(),
+        LOGTRACEMOD(wbcache, "cp={} cur_buf={} for node id={} is dirtied by cp={} copying new_buf={} node: {}", icp_ctx->id(),
                     static_cast< void* >(idx_buf.get()), node->node_id(), idx_buf->m_dirtied_cp_id,
-                    static_cast< void* >(new_buf.get()));
+                    static_cast< void* >(new_buf.get()),node->to_string());
         idx_buf = std::move(new_buf);
     }
     idx_buf->m_dirtied_cp_id = icp_ctx->id();
@@ -571,7 +573,7 @@ void IndexWBCache::recover(sisl::byte_view sb) {
     std::vector< IndexBufferPtr > deleted_bufs;
     std::multiset< IndexBufferPtr, bool (*)(const IndexBufferPtr&, const IndexBufferPtr&) >
         potential_parent_recovered_bufs(
-            [](const IndexBufferPtr& a, const IndexBufferPtr& b) { return a->m_node_level < b->m_node_level; });
+            [](const IndexBufferPtr& a, const IndexBufferPtr& b) { return false;/*return a->m_node_level < b->m_node_level;*/ });
 
     LOGTRACEMOD(wbcache, "\n\n\nRecovery processing begins\n\n\n");
     for (auto const& [_, buf] : bufs) {
@@ -600,7 +602,7 @@ void IndexWBCache::recover(sisl::byte_view sb) {
                     // it can happen when children moved to one of right parent sibling and then the previous node is
                     // deleted but not commited during crash (upbuffer is not committed). but its children already
                     // committed. and freed (or changed)
-                    if (buf->m_node_level) { potential_parent_recovered_bufs.insert(buf); }
+//                    if (buf->m_node_level) { potential_parent_recovered_bufs.insert(buf); }
                 } else {
                     LOGINFO("deleting and creating new buf {}", buf->to_string());
                     deleted_bufs.push_back(buf);
@@ -848,6 +850,7 @@ void IndexWBCache::do_flush_one_buf(IndexCPContext* cp_ctx, IndexBufferPtr const
                     buf->to_string());
         process_write_completion(cp_ctx, buf);
     } else {
+        LOGTRACEMOD(wbcache, "Flushing cp {} buf {}", cp_ctx->id(), buf->to_string());
         m_vdev->async_write(r_cast< const char* >(buf->raw_buffer()), m_node_size, buf->m_blkid, part_of_batch)
             .thenValue([buf, cp_ctx](auto) {
                 try {
@@ -881,7 +884,7 @@ void IndexWBCache::process_write_completion(IndexCPContext* cp_ctx, IndexBufferP
         // We are done flushing the buffers, We flush the vdev to persist the vdev bitmaps and free blks
         // Pick a CP Manager blocking IO fiber to execute the cp flush of vdev
         iomanager.run_on_forget(cp_mgr().pick_blocking_io_fiber(), [this, cp_ctx]() {
-            LOGTRACEMOD(wbcache, "Initiating CP flush");
+            LOGTRACEMOD(wbcache, "Initiating CP flush for cp {}", cp_ctx->id());
             m_vdev->cp_flush(cp_ctx); // This is a blocking io call
             cp_ctx->complete(true);
         });
@@ -907,7 +910,7 @@ std::pair< IndexBufferPtr, bool > IndexWBCache::on_buf_flush_done_internal(Index
     }
 #endif
     buf->set_state(index_buf_state_t::CLEAN);
-
+    LOGINFO("Flushed buf {} - {} - {}", buf->to_string(), (void*)buf->m_bytes, (void*)(buf.get()));
     if (cp_ctx->m_dirty_buf_count.decrement_testz()) {
         return std::make_pair(nullptr, false);
     } else {
