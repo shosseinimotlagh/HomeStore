@@ -848,6 +848,7 @@ void IndexWBCache::do_flush_one_buf(IndexCPContext* cp_ctx, IndexBufferPtr const
                     buf->to_string());
         process_write_completion(cp_ctx, buf);
     } else {
+        LOGTRACEMOD(wbcache, "Flushing cp {} buf {}", cp_ctx->id(), buf->to_string());
         m_vdev->async_write(r_cast< const char* >(buf->raw_buffer()), m_node_size, buf->m_blkid, part_of_batch)
             .thenValue([buf, cp_ctx](auto) {
                 try {
@@ -881,7 +882,7 @@ void IndexWBCache::process_write_completion(IndexCPContext* cp_ctx, IndexBufferP
         // We are done flushing the buffers, We flush the vdev to persist the vdev bitmaps and free blks
         // Pick a CP Manager blocking IO fiber to execute the cp flush of vdev
         iomanager.run_on_forget(cp_mgr().pick_blocking_io_fiber(), [this, cp_ctx]() {
-            LOGTRACEMOD(wbcache, "Initiating CP flush");
+            LOGTRACEMOD(wbcache, "Initiating CP flush for cp {}", cp_ctx->id());
             m_vdev->cp_flush(cp_ctx); // This is a blocking io call
             cp_ctx->complete(true);
         });

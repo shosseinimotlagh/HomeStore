@@ -167,7 +167,7 @@ public:
         nentries = std::min(nentries, other.total_entries() - start_idx);
         nentries = std::min(nentries, this->get_available_entries());
 #ifdef _PRERELEASE
-        const uint64_t max_keys = this->max_keys_in_node();
+        const uint32_t max_keys = this->max_keys_in_node();
         if(max_keys){
                 if(this->total_entries() + nentries > max_keys) {
                         nentries = max_keys - this->total_entries();

@@ -56,7 +56,7 @@ SISL_OPTION_GROUP(
      ::cxxopts::value< uint64_t >()->default_value("0"), "number"),
     (run_time, "", "run_time", "run time for io", ::cxxopts::value< uint32_t >()->default_value("360000"), "seconds"))
 
-struct FixedLenBtreeTest {
+struct FixedLenBtree {
     using BtreeType = MemBtree< TestFixedKey, TestFixedValue >;
     using KeyType = TestFixedKey;
     using ValueType = TestFixedValue;
@@ -64,7 +64,15 @@ struct FixedLenBtreeTest {
     static constexpr btree_node_type interior_node_type = btree_node_type::FIXED;
 };
 
-struct VarKeySizeBtreeTest {
+struct PrefixIntervalBtree {
+    using BtreeType = MemBtree< TestIntervalKey, TestIntervalValue >;
+    using KeyType = TestIntervalKey;
+    using ValueType = TestIntervalValue;
+    static constexpr btree_node_type leaf_node_type = btree_node_type::PREFIX;
+    static constexpr btree_node_type interior_node_type = btree_node_type::FIXED;
+};
+
+struct VarKeySizeBtree {
     using BtreeType = MemBtree< TestVarLenKey, TestFixedValue >;
     using KeyType = TestVarLenKey;
     using ValueType = TestFixedValue;
@@ -72,7 +80,7 @@ struct VarKeySizeBtreeTest {
     static constexpr btree_node_type interior_node_type = btree_node_type::VAR_KEY;
 };
 
-struct VarValueSizeBtreeTest {
+struct VarValueSizeBtree {
     using BtreeType = MemBtree< TestFixedKey, TestVarLenValue >;
     using KeyType = TestFixedKey;
     using ValueType = TestVarLenValue;
@@ -80,20 +88,12 @@ struct VarValueSizeBtreeTest {
     static constexpr btree_node_type interior_node_type = btree_node_type::FIXED;
 };
 
-struct VarObjSizeBtreeTest {
+struct VarObjSizeBtree {
     using BtreeType = MemBtree< TestVarLenKey, TestVarLenValue >;
     using KeyType = TestVarLenKey;
     using ValueType = TestVarLenValue;
     static constexpr btree_node_type leaf_node_type = btree_node_type::VAR_OBJECT;
     static constexpr btree_node_type interior_node_type = btree_node_type::VAR_OBJECT;
-};
-
-struct PrefixIntervalBtreeTest {
-    using BtreeType = MemBtree< TestIntervalKey, TestIntervalValue >;
-    using KeyType = TestIntervalKey;
-    using ValueType = TestIntervalValue;
-    static constexpr btree_node_type leaf_node_type = btree_node_type::PREFIX;
-    static constexpr btree_node_type interior_node_type = btree_node_type::FIXED;
 };
 
 template < typename TestType >
@@ -111,16 +111,15 @@ struct BtreeTest : public BtreeTestHelper< TestType >, public ::testing::Test {
 #endif
         this->m_cfg.m_max_merge_level = SISL_OPTIONS["max_merge_level"].as< uint8_t >();
         this->m_cfg.m_merge_turned_on = !SISL_OPTIONS["disable_merge"].as< bool >();
-        //if TestType is PrefixIntervalBtreeTest print here something
-        if constexpr (std::is_same_v<TestType, PrefixIntervalBtreeTest>) {
-            this->m_cfg.m_merge_turned_on = false;
-        }
+//        if constexpr (std::is_same_v<TestType, PrefixIntervalBtree>) {
+//            this->m_cfg.m_merge_turned_on = false;
+//        }
         this->m_bt = std::make_shared< typename T::BtreeType >(this->m_cfg);
     }
 };
 
-using BtreeTypes = testing::Types<  FixedLenBtreeTest, VarKeySizeBtreeTest,
-                                   VarValueSizeBtreeTest, VarObjSizeBtreeTest, PrefixIntervalBtreeTest >;
+using BtreeTypes = testing::Types<  FixedLenBtree, PrefixIntervalBtree, VarKeySizeBtree,
+                                   VarValueSizeBtree, VarObjSizeBtree >;
 TYPED_TEST_SUITE(BtreeTest, BtreeTypes);
 
 TYPED_TEST(BtreeTest, SequentialInsert) {
@@ -169,12 +168,14 @@ TYPED_TEST(BtreeTest, SequentialRemove) {
     }
     LOGINFO("Step 2: Query {} entries and validate with pagination of 75 entries", num_entries);
     this->do_query(0, num_entries - 1, 75);
+    this->print_keys("after populating");
 
     const auto entries_iter1 = num_entries / 2;
     LOGINFO("Step 3: Do forward sequential remove for {} entries", entries_iter1);
     for (uint32_t i{0}; i < entries_iter1; ++i) {
         this->remove_one(i);
     }
+    this->print_keys("after removing first half");
     LOGINFO("Step 4: Query {} entries and validate with pagination of 75 entries", entries_iter1);
     this->do_query(0, entries_iter1 - 1, 75);
 
@@ -294,6 +295,43 @@ TYPED_TEST(BtreeTest, RandomRemoveRange) {
 
     this->query_all();
 }
+TYPED_TEST(BtreeTest, MultipleCpFlush) {
+    LOGINFO("MultipleCpFlush test start");
+
+    const auto num_entries = 7000;
+    LOGINFO("Do Forward sequential insert for {} entries", num_entries / 2);
+    for (uint32_t i = 0; i < num_entries / 2; ++i) {
+        this->put(i, btree_put_type::INSERT);
+        if (i % 500 == 0) {
+            LOGINFO("Trigger checkpoint flush wait=false.");
+            this->dump_to_file();
+        }
+    }
+    this->print_keys(fmt::format("tree finish for {} entries", num_entries));
+    LOGINFO("Trigger checkpoint flush wait=false.");
+    this->print_keys(fmt::format("tree finish for {} entries2", num_entries));
+    for (uint32_t i = num_entries / 2; i < num_entries; ++i) {
+        this->put(i, btree_put_type::INSERT);
+    }
+    this->print_keys(fmt::format("tree finish for {} entries3", num_entries));
+    LOGINFO("Trigger checkpoint flush wait=false.");
+
+    LOGINFO("Trigger checkpoint flush wait=true.");
+    this->print_keys(fmt::format("tree finish for {} entries10", num_entries));
+    LOGINFO("Query {} entries and validate with pagination of 75 entries", num_entries);
+    this->do_query(0, num_entries - 1, 75);
+
+    this->dump_to_file(std::string("before.txt"));
+
+    LOGINFO(" Restarted homestore with index recovered");
+    this->dump_to_file(std::string("after.txt"));
+
+    this->compare_files("before.txt", "after.txt");
+
+    LOGINFO("Query {} entries and validate with pagination of 1000 entries", num_entries);
+    this->do_query(0, num_entries - 1, 1000);
+    LOGINFO("MultipleCpFlush test end");
+}
 
 template < typename TestType >
 struct BtreeConcurrentTest : public BtreeTestHelper< TestType >, public ::testing::Test {
@@ -317,9 +355,9 @@ struct BtreeConcurrentTest : public BtreeTestHelper< TestType >, public ::testin
 #endif
         this->m_cfg.m_max_merge_level = SISL_OPTIONS["max_merge_level"].as< uint8_t >();
         this->m_cfg.m_merge_turned_on = !SISL_OPTIONS["disable_merge"].as< bool >();
-        if constexpr (std::is_same_v<TestType, PrefixIntervalBtreeTest>) {
-            this->m_cfg.m_merge_turned_on = false;
-        }
+//        if constexpr (std::is_same_v<TestType, PrefixIntervalBtree>) {
+//            this->m_cfg.m_merge_turned_on = false;
+//        }
         this->m_bt = std::make_shared< typename T::BtreeType >(this->m_cfg);
     }
 

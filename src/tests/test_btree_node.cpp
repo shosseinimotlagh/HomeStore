@@ -315,7 +315,7 @@ protected:
 
     void print() const {
         LOGDEBUG("Node1:\n {}", m_node1->to_string(true));
-        LOGDEBUG("Node2:\n {}", m_node2->to_string(true));
+//        LOGDEBUG("Node2:\n {}", m_node2->to_string(true));
     }
 
     uint32_t remaining_space() const { return m_node1->available_size(); }
@@ -329,8 +329,7 @@ private:
     }
 };
 
-using NodeTypes = testing::Types< FixedLenNodeTest, VarKeySizeNodeTest, VarValueSizeNodeTest, VarObjSizeNodeTest,
-                                  PrefixIntervalBtreeTest >;
+using NodeTypes = testing::Types< FixedLenNodeTest, PrefixIntervalBtreeTest, VarKeySizeNodeTest, VarValueSizeNodeTest, VarObjSizeNodeTest>;
 TYPED_TEST_SUITE(NodeTest, NodeTypes);
 
 TYPED_TEST(NodeTest, SequentialInsert) {
@@ -342,6 +341,66 @@ TYPED_TEST(NodeTest, SequentialInsert) {
     this->validate_get_any(0, 2);
     this->validate_get_any(3, 3);
     this->validate_get_any(98, 102);
+}
+
+TYPED_TEST(NodeTest, SimpleInsert) {
+    this->print();
+    this->put(1, btree_put_type::INSERT);
+    this->print();
+    this->put(2, btree_put_type::INSERT);
+    this->print();
+    this->put(3, btree_put_type::INSERT);
+    this->print();
+    this->remove(2);
+    this->print();
+    this->remove(1);
+    this->print();
+    this->remove(3);
+    this->print();
+    //insert and remove from last
+    this->put(1, btree_put_type::INSERT);
+    this->print();
+    this->put(2, btree_put_type::INSERT);
+    this->print();
+    this->put(3, btree_put_type::INSERT);
+    this->print();
+    this->remove(3);
+    this->print();
+    this->remove(2);
+    this->print();
+    this->remove(1);
+    this->print();
+
+
+    this->put(2, btree_put_type::INSERT);
+    this->print();
+    this->put(1, btree_put_type::INSERT);
+    this->print();
+    this->put(4, btree_put_type::INSERT);
+    this->print();
+    this->put(3, btree_put_type::INSERT);
+    this->print();
+    for (uint32_t i = 5; i <=50 ; ++i) {
+        this->put(i, btree_put_type::INSERT);
+    }
+    this->print();
+    LOGDEBUG("\n\n\n\ncreating a hole 10 for prefix compaction usecase");
+    for (uint32_t i = 10; i <= 20; ++i) {
+        this->remove(i);
+    }
+    this->print();
+    this->m_node1->move_out_to_right_by_entries(this->m_cfg, *this->m_node2, 20);
+    this->print();
+    this->m_node1->copy_by_entries(this->m_cfg, *this->m_node2, 0,std::numeric_limits< uint32_t >::max());
+    this->print();
+    this->put(51, btree_put_type::INSERT);
+    this->print();
+
+//
+////    this->validate_get_all();
+//    this->validate_get_any(0, 2);
+//    this->validate_get_any(3, 3);
+//    this->validate_get_any(98, 102);
 }
 
 TYPED_TEST(NodeTest, ReverseInsert) {

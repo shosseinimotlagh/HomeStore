@@ -45,7 +45,7 @@ struct BtreeTestHelper {
         m_cfg.m_leaf_node_type = T::leaf_node_type;
         m_cfg.m_int_node_type = T::interior_node_type;
         m_cfg.m_max_merge_level = SISL_OPTIONS["max_merge_level"].as< uint8_t >();
-        if (SISL_OPTIONS.count("disable_merge")){m_cfg.m_merge_turned_on = false;}
+        if (SISL_OPTIONS.count("disable_merge")) { m_cfg.m_merge_turned_on = false; }
 
         m_max_range_input = SISL_OPTIONS["num_entries"].as< uint32_t >();
 
@@ -280,7 +280,7 @@ public:
             qreq.enable_route_tracing();
             auto const ret = m_bt->query(qreq, out_vector);
             auto const expected_count = std::min(remaining, batch_size);
-            // this->print_keys();
+            if (out_vector.size() != expected_count) { this->print_keys(); }
             ASSERT_EQ(out_vector.size(), expected_count) << "Received incorrect value on query pagination";
 
             if (remaining < batch_size) {
@@ -327,8 +327,8 @@ public:
             auto req = BtreeSingleGetRequest{copy_key.get(), out_v.get()};
             req.enable_route_tracing();
             const auto ret = m_bt->get(req);
-            ASSERT_EQ(ret, btree_status_t::success) << "Missing key " << key << " in btree but present in shadow map" << 
-                " - status=" << enum_name(ret);
+            ASSERT_EQ(ret, btree_status_t::success)
+                << "Missing key " << key << " in btree but present in shadow map" << " - status=" << enum_name(ret);
             ASSERT_EQ((const V&)req.value(), value)
                 << "Found value in btree doesn't return correct data for key=" << key;
         });
