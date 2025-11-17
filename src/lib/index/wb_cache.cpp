@@ -818,7 +818,8 @@ bool IndexWBCache::was_node_committed(IndexBufferPtr const& buf) {
 
 //////////////////// CP Related API section /////////////////////////////////
 folly::Future< bool > IndexWBCache::async_cp_flush(IndexCPContext* cp_ctx) {
-    LOGTRACEMOD(wbcache, "Starting Index CP Flush with cp \ndag={}", cp_ctx->to_string_with_dags());
+    LOGINFO("Starting Index CP Flush with cp \ndag={}", cp_ctx->to_string_with_dags());
+    cp_ctx->start();
     // #ifdef _PRERELEASE
     //     static int id = 0;
     //     auto filename = "cp_" + std::to_string(id++) + "_" + std::to_string(rand() % 100) + ".dot";
@@ -846,6 +847,7 @@ folly::Future< bool > IndexWBCache::async_cp_flush(IndexCPContext* cp_ctx) {
     // First thing is to flush the journal created as part of the CP.
     auto const& journal_buf = cp_ctx->journal_buf();
     auto txn = r_cast< IndexCPContext::txn_journal const* >(journal_buf.cbytes());
+ 	auto start = std::chrono::high_resolution_clock::now();
     if (journal_buf.size() != 0) {
         if (m_meta_blk) {
             LOGTRACEMOD(wbcache, " journal {} ", txn->to_string());
@@ -855,6 +857,9 @@ folly::Future< bool > IndexWBCache::async_cp_flush(IndexCPContext* cp_ctx) {
             meta_service().add_sub_sb("wb_cache", journal_buf.cbytes(), journal_buf.size(), m_meta_blk);
         }
     }
+	auto end = std::chrono::high_resolution_clock::now();
+	auto duration_us = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+	LOGINFO("Index cp id {} Journal size: {} it took {} us", cp_ctx->id(), journal_buf.size(), duration_us);
 
     cp_ctx->prepare_flush_iteration();
     m_updated_ordinals.clear();
@@ -946,18 +951,30 @@ void IndexWBCache::process_write_completion(IndexCPContext* cp_ctx, IndexBufferP
     if (next_buf) {
         do_flush_one_buf(cp_ctx, next_buf, false);
     } else if (!has_more) {
+        cp_ctx->end();
+        LOGINFO("Index CP {} flushing buffers takes {} us", cp_ctx->id(), cp_ctx->elapsedMicroseconds());
+        auto start1 = std::chrono::high_resolution_clock::now();
+
         for (const auto& ordinal : m_updated_ordinals) {
             LOGTRACEMOD(wbcache, "Updating sb for ordinal {}", ordinal);
             index_service().write_sb(ordinal);
         }
+ 	    auto end1 = std::chrono::high_resolution_clock::now();
 
+	    auto duration_us1 = std::chrono::duration_cast<std::chrono::microseconds>(end1- start1).count();
+        LOGINFO("Index CP {} write sb takes {} us", cp_ctx->id(), duration_us1);
         // We are done flushing the buffers, We flush the vdev to persist the vdev bitmaps and free blks
         // Pick a CP Manager blocking IO fiber to execute the cp flush of vdev
         iomanager.run_on_forget(cp_mgr().pick_blocking_io_fiber(), [this, cp_ctx]() {
             auto cp_id = cp_ctx->id();
             LOGTRACEMOD(wbcache, "Initiating CP {} flush", cp_id);
+            auto start2 = std::chrono::high_resolution_clock::now();
             m_vdev->cp_flush(cp_ctx); // This is a blocking io call
             LOGTRACEMOD(wbcache, "CP {} freed blkids: \n{}", cp_id, cp_ctx->to_string_free_list());
+            auto end2 = std::chrono::high_resolution_clock::now();
+	        auto duration_us2 = std::chrono::duration_cast<std::chrono::microseconds>(end2- start2).count();
+
+            LOGINFO("Index CP {} vdev flush takes {} us", cp_id, duration_us2);
             cp_ctx->complete(true);
             LOGTRACEMOD(wbcache, "Completed CP {} flush", cp_id);
         });

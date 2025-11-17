@@ -167,6 +167,14 @@ public:
     std::string to_string_with_dags();
     uint16_t num_dags();
     void to_string_dot(const std::string& filename);
+    std::chrono::steady_clock::time_point start_;
+    std::chrono::steady_clock::time_point end_;
+    void start() { start_ = std::chrono::steady_clock::now();}
+    void end() { end_ = std::chrono::steady_clock::now();}
+    long long elapsedMicroseconds() const {
+       auto now = std::chrono::steady_clock::now();
+       return std::chrono::duration_cast<std::chrono::microseconds>(now - start_).count();
+    }
 
 private:
     void check_cycle();
