@@ -833,6 +833,7 @@ folly::Future< bool > IndexWBCache::async_cp_flush(IndexCPContext* cp_ctx) {
         } else {
             CP_PERIODIC_LOG(DEBUG, cp_ctx->id(), "Btree does not have any dirty buffers to flush");
         }
+  		 cp_ctx->complete(true);
         return folly::makeFuture< bool >(true); // nothing to flush
     }
 
@@ -862,7 +863,6 @@ folly::Future< bool > IndexWBCache::async_cp_flush(IndexCPContext* cp_ctx) {
         iomanager.run_on_forget(fiber, [this, cp_ctx]() {
             IndexBufferPtrList buf_list;
             get_next_bufs(cp_ctx, resource_mgr().get_dirty_buf_qd(), buf_list);
-
             for (auto& buf : buf_list) {
                 do_flush_one_buf(cp_ctx, buf, true);
             }
@@ -946,14 +946,15 @@ void IndexWBCache::process_write_completion(IndexCPContext* cp_ctx, IndexBufferP
     if (next_buf) {
         do_flush_one_buf(cp_ctx, next_buf, false);
     } else if (!has_more) {
-        for (const auto& ordinal : m_updated_ordinals) {
-            LOGTRACEMOD(wbcache, "Updating sb for ordinal {}", ordinal);
-            index_service().write_sb(ordinal);
-        }
+
 
         // We are done flushing the buffers, We flush the vdev to persist the vdev bitmaps and free blks
         // Pick a CP Manager blocking IO fiber to execute the cp flush of vdev
         iomanager.run_on_forget(cp_mgr().pick_blocking_io_fiber(), [this, cp_ctx]() {
+			for (const auto& ordinal : m_updated_ordinals) {
+        		    LOGTRACEMOD(wbcache, "Updating sb for ordinal {}", ordinal);
+        	    index_service().write_sb(ordinal);
+       		 }
             auto cp_id = cp_ctx->id();
             LOGTRACEMOD(wbcache, "Initiating CP {} flush", cp_id);
             m_vdev->cp_flush(cp_ctx); // This is a blocking io call

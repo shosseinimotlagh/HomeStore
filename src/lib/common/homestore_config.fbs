@@ -90,6 +90,9 @@ table LogStore {
     // Time interval to wake up to check if flush is needed
     flush_timer_frequency_us: uint64 = 500 (hotswap);
 
+    // Number of flush fibers
+    //num_sync_flush_fibers:uint32 = 1 (hotswap);
+
     // Max time between 2 flushes. while it wakes up every flush timer, it checks if it needs to force a flush of
     // logs if it exceeds this limit
     max_time_between_flush_us: uint64 = 300 (hotswap);
@@ -111,7 +114,7 @@ table LogStore {
 
     // Logdev will flush the logs only in a dedicated thread. Turn this on, if flush IO doesn't want to
     // intervene with data IO path.
-    flush_only_in_dedicated_thread: bool = true;
+    flush_only_in_dedicated_thread: bool = true (hotswap);
 
     //we support 3 flush mode , 1(inline), 2 (timer) and 4(explicitly), mixed flush mode is also supportted
     //for example, if we want inline and explicitly, we just set the flush mode to 1+4 = 5

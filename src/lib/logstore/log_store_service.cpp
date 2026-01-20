@@ -347,7 +347,7 @@ void LogStoreService::start_threads() {
     auto ctx = std::make_shared< Context >();
 
     m_flush_fiber = nullptr;
-    iomanager.create_reactor("log_flush_thread", iomgr::TIGHT_LOOP | iomgr::ADAPTIVE_LOOP, 1 /* num_fibers */,
+   iomanager.create_reactor("log_flush_thread", iomgr::TIGHT_LOOP | iomgr::ADAPTIVE_LOOP, 1 /* num_fibers */,
                              [this, ctx](bool is_started) {
                                  if (is_started) {
                                      m_flush_fiber = iomanager.iofiber_self();
@@ -363,7 +363,34 @@ void LogStoreService::start_threads() {
         ctx->cv.wait(lk, [ctx] { return (ctx->thread_cnt == 1); });
     }
 }
-
+//	/*auto nfibers = HS_DYNAMIC_CONFIG(logstore.num_sync_flush_fibers);
+//    iomanager.create_reactor("log_flush_thread", iomgr::TIGHT_LOOP | iomgr::ADAPTIVE_LOOP, 1+nfibers)
+// /* num_fibers */,
+//                             [this, ctx](bool is_started) {
+//       							 if (is_started) {
+//         					  	 {
+//           					     std::unique_lock< std::mutex > lk{ctx->mtx};
+//         					        auto v = iomanager.sync_io_capable_fibers();
+//									m_flushing_timer_fiber = iomnager.main_fiber();
+ //           					    m_flush_fibers.insert(m_flush_fibers.end(), v.begin(), v.end());
+//             				   		HS_REL_ASSERT_EQ(m_flush_fibers.size(), nfibers, "Expecting only one fiber for log flush thread");
+//              					  ++(ctx->thread_cnt);
+//           						 }
+//         					   ctx->cv.notify_one();
+//        }
+ //                            });
+ //   {
+//        std::unique_lock< std::mutex > lk{ctx->mtx};
+//        ctx->cv.wait(lk, [ctx] { return (ctx->thread_cnt == 1); });
+//    }
+//}
+/*
+iomgr::io_fiber_t LogStoreService::pick_blocking_io_fiber() const {
+    static thread_local std::random_device s_rd{};
+    static thread_local std::default_random_engine s_re{s_rd()};
+    static auto rand_fiber = std::uniform_int_distribution< size_t >(0, m_flush_fibers.size() - 1);
+    return m_flush_fibers[rand_fiber(s_re)];
+} */
 nlohmann::json LogStoreService::dump_log_store(const log_dump_req& dump_req) {
     nlohmann::json json_dump{}; // create root object
     if (is_stopping()) return json_dump;

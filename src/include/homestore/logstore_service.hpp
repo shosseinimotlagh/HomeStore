@@ -174,6 +174,8 @@ public:
     uint32_t used_size() const;
     uint32_t total_size() const;
     iomgr::io_fiber_t flush_thread() { return m_flush_fiber; }
+    //iomgr::io_fiber_t pick_flush_fiber();
+	//iomgr::io_fiber_t main_fiber() { return m_flushing_timer_fiber; }
 
     void delete_unopened_logdevs();
 
@@ -192,7 +194,9 @@ private:
     folly::SharedMutexWritePriority m_logdev_map_mtx;
 
     std::shared_ptr< JournalVirtualDev > m_logdev_vdev;
-    iomgr::io_fiber_t m_flush_fiber;
+    //std::vectore<iomgr::io_fiber_t> m_flush_fibers;
+	//iomgr::io_fiber_t m_flushing_timer_fiber;
+	iomgr::io_fiber_t m_flush_fiber;
     LogStoreServiceMetrics m_metrics;
     std::unordered_set< logdev_id_t > m_unopened_logdev;
     superblk< logstore_service_super_block > m_sb;

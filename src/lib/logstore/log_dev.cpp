@@ -174,6 +174,7 @@ void LogDev::destroy() {
 void LogDev::start_timer() {
     // Currently only tests set it to 0.
     if (HS_DYNAMIC_CONFIG(logstore.flush_timer_frequency_us))
+//        iomanager.run_on_wait(logstore_service().main_fiber(), [this]() {
         iomanager.run_on_wait(logstore_service().flush_thread(), [this]() {
             m_flush_timer_hdl = iomanager.schedule_thread_timer(
                 HS_DYNAMIC_CONFIG(logstore.flush_timer_frequency_us) * 1000, true /* recurring */, nullptr /* cookie */,
@@ -186,6 +187,7 @@ folly::Future< int > LogDev::stop_timer() {
     // this future will be completed when the timer is stopped
     auto p = std::make_shared< folly::Promise< int > >();
     auto f = p->getFuture();
+//    iomanager.run_on_forget(logstore_service().main_fiber(), [this, p]() mutable {
     iomanager.run_on_forget(logstore_service().flush_thread(), [this, p]() mutable {
         if (m_flush_timer_hdl != iomgr::null_timer_handle) {
             iomanager.cancel_timer(m_flush_timer_hdl, true);
@@ -428,6 +430,7 @@ bool LogDev::flush_if_necessary(int64_t threshold_size) {
     incr_pending_request_num();
     if (!can_flush_in_this_thread()) {
         iomanager.run_on_forget(logstore_service().flush_thread(),
+   //     iomanager.run_on_forget(logstore_service().pick_blocking_io_fiber(),
                                 [this, threshold_size]() { flush_if_necessary(threshold_size); });
         decr_pending_request_num();
         return false;
@@ -517,6 +520,7 @@ bool LogDev::flush() {
         HISTOGRAM_OBSERVE(logstore_service().m_metrics, logdev_flush_size_distribution, lg->actual_data_size());
 
         // TODO:: add logic to handle this error in upper layer
+//
         auto error = m_vdev_jd->sync_pwritev(lg->iovecs().data(), int_cast(lg->iovecs().size()), lg->m_log_dev_offset);
         if (error) {
             THIS_LOGDEV_LOG(ERROR, "Fail to sync write to journal vde , error code {} : {}", error.value(),
