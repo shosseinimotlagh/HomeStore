@@ -19,8 +19,10 @@
 
 #include "device/chunk.h"
 #include "device/virtual_dev.hpp"
-#include "device/physical_dev.hpp"     // vdev_info_block
-#include "common/homestore_config.hpp" // is_data_drive_hdd
+#include "device/physical_dev.hpp"        // vdev_info_block
+#include <sisl/async/when_all.hpp>        // sisl::async::when_all (collectAllUnsafe replacement)
+#include <sisl/async/value_awaitable.hpp> // sisl::async::value_awaitable
+#include "common/homestore_config.hpp"    // is_data_drive_hdd
 #include "common/homestore_assert.hpp"
 #include "common/error.h"
 #include "blk_read_tracker.hpp"
@@ -66,126 +68,116 @@ shared< VirtualDev > BlkDataService::open_vdev(const vdev_info& vinfo, bool load
     return m_vdev;
 }
 
-static auto collect_all_futures(std::vector< folly::Future< std::error_code > >& futs) {
-    return folly::collectAllUnsafe(futs).thenValue([](auto&& vf) {
-        for (auto const& err_c : vf) {
-            if (sisl_unlikely(err_c.value())) {
-                auto ec = err_c.value();
-                return folly::makeFuture< std::error_code >(std::move(ec));
-            }
-        }
-        return folly::makeFuture< std::error_code >(std::error_code{});
-    });
-}
-
-folly::Future< std::error_code > BlkDataService::async_read(MultiBlkId const& blkid, uint8_t* buf, uint32_t size,
-                                                            bool part_of_batch) {
-    if (is_stopping()) return folly::makeFuture< std::error_code >(std::make_error_code(std::errc::operation_canceled));
-    incr_pending_request_num();
-    auto do_read = [this](BlkId const& bid, uint8_t* buf, uint32_t size, bool part_of_batch) {
-        m_blk_read_tracker->insert(bid);
-
-        return m_vdev->async_read(r_cast< char* >(buf), size, bid, part_of_batch).thenValue([this, bid](auto&& ec) {
-            m_blk_read_tracker->remove(bid);
-            return folly::makeFuture< std::error_code >(std::move(ec));
-        });
-    };
-
-    if (blkid.num_pieces() == 1) {
-        decr_pending_request_num();
-        return do_read(blkid.to_single_blkid(), buf, size, part_of_batch);
-    } else {
-        static thread_local std::vector< folly::Future< std::error_code > > s_futs;
-        s_futs.clear();
-
-        auto it = blkid.iterate();
-        while (auto const bid = it.next()) {
-            uint32_t sz = bid->blk_count() * m_blk_size;
-            s_futs.emplace_back(do_read(*bid, buf, sz, part_of_batch));
-            buf += sz;
-        }
-        decr_pending_request_num();
-        return collect_all_futures(s_futs);
+// Run all the per-piece tasks concurrently; the first failing piece wins (mirrors collectAllUnsafe + scan).
+// Takes the vector by value so the (move-only) tasks are owned here for the duration of the fan-out.
+static sisl::async::task< iomgr::io_result > collect_all(std::vector< sisl::async::task< iomgr::io_result > > futs) {
+    for (auto const& r : co_await sisl::async::when_all(std::move(futs))) {
+        if (sisl_unlikely(!r)) { co_return r; }
     }
+    co_return iomgr::io_result{0};
 }
 
-folly::Future< std::error_code > BlkDataService::async_read(MultiBlkId const& blkid, sisl::sg_list& sgs, uint32_t size,
-                                                            bool part_of_batch) {
-    if (is_stopping()) return folly::makeFuture< std::error_code >(std::make_error_code(std::errc::operation_canceled));
-    incr_pending_request_num();
-    // TODO: sg_iovs_t should not be passed by value. We need it pass it as const&, but that is failing because
-    // iovs.data() will then return "const iovec*", but unfortunately all the way down to iomgr, we take iovec*
-    // instead it can easily take "const iovec*". Until we change this is made as copy by value
-    auto do_read = [this](BlkId const& bid, sisl::sg_iovs_t iovs, uint32_t size, bool part_of_batch) {
-        m_blk_read_tracker->insert(bid);
-
-        return m_vdev->async_readv(iovs.data(), iovs.size(), size, bid, part_of_batch)
-            .thenValue([this, bid](auto&& ec) {
-                m_blk_read_tracker->remove(bid);
-                return folly::makeFuture< std::error_code >(std::move(ec));
-            });
-    };
-
-    if (blkid.num_pieces() == 1) {
-        decr_pending_request_num();
-        return do_read(blkid.to_single_blkid(), sgs.iovs, size, part_of_batch);
-    } else {
-        static thread_local std::vector< folly::Future< std::error_code > > s_futs;
-        s_futs.clear();
-
-        sisl::sg_iterator sg_it{sgs.iovs};
-        auto blkid_it = blkid.iterate();
-        while (auto const bid = blkid_it.next()) {
-            uint32_t const sz = bid->blk_count() * m_blk_size;
-            s_futs.emplace_back(do_read(*bid, sg_it.next_iovs(sz), sz, part_of_batch));
-        }
-        decr_pending_request_num();
-        return collect_all_futures(s_futs);
-    }
+// One read piece, bracketed in the read tracker. `bid` is taken by value (copied into the coroutine frame) so it
+// outlives the suspend at the device read -- a captured-by-reference coroutine lambda would dangle once the
+// enclosing method returned the (lazy) task.
+sisl::async::task< iomgr::io_result > BlkDataService::do_read_blk(BlkId bid, uint8_t* buf, uint32_t size,
+                                                                  bool part_of_batch) {
+    m_blk_read_tracker->insert(bid);
+    auto const r = co_await m_vdev->async_read(r_cast< char* >(buf), size, bid, part_of_batch);
+    m_blk_read_tracker->remove(bid);
+    co_return r;
 }
 
-folly::Future< std::error_code > BlkDataService::async_alloc_write(const sisl::sg_list& sgs,
-                                                                   const blk_alloc_hints& hints, MultiBlkId& out_blkids,
+sisl::async::task< iomgr::io_result > BlkDataService::do_readv_blk(BlkId bid, sisl::sg_iovs_t iovs, uint32_t size,
                                                                    bool part_of_batch) {
-    if (is_stopping()) return folly::makeFuture< std::error_code >(std::make_error_code(std::errc::operation_canceled));
+    m_blk_read_tracker->insert(bid);
+    auto const r = co_await m_vdev->async_readv(iovs.data(), iovs.size(), size, bid, part_of_batch);
+    m_blk_read_tracker->remove(bid);
+    co_return r;
+}
+
+sisl::async::task< iomgr::io_result > BlkDataService::async_read(MultiBlkId const& blkid, uint8_t* buf, uint32_t size,
+                                                                 bool part_of_batch) {
+    if (is_stopping()) co_return std::unexpected(std::make_error_condition(std::errc::operation_canceled));
+    incr_pending_request_num();
+    if (blkid.num_pieces() == 1) {
+        decr_pending_request_num();
+        co_return co_await do_read_blk(blkid.to_single_blkid(), buf, size, part_of_batch);
+    }
+
+    std::vector< sisl::async::task< iomgr::io_result > > futs;
+    auto it = blkid.iterate();
+    while (auto const bid = it.next()) {
+        uint32_t sz = bid->blk_count() * m_blk_size;
+        futs.emplace_back(do_read_blk(*bid, buf, sz, part_of_batch));
+        buf += sz;
+    }
+    decr_pending_request_num();
+    co_return co_await collect_all(std::move(futs));
+}
+
+sisl::async::task< iomgr::io_result > BlkDataService::async_read(MultiBlkId const& blkid, sisl::sg_list& sgs,
+                                                                 uint32_t size, bool part_of_batch) {
+    if (is_stopping()) co_return std::unexpected(std::make_error_condition(std::errc::operation_canceled));
+    incr_pending_request_num();
+    if (blkid.num_pieces() == 1) {
+        decr_pending_request_num();
+        co_return co_await do_readv_blk(blkid.to_single_blkid(), sgs.iovs, size, part_of_batch);
+    }
+
+    std::vector< sisl::async::task< iomgr::io_result > > futs;
+    sisl::sg_iterator sg_it{sgs.iovs};
+    auto blkid_it = blkid.iterate();
+    while (auto const bid = blkid_it.next()) {
+        uint32_t const sz = bid->blk_count() * m_blk_size;
+        futs.emplace_back(do_readv_blk(*bid, sg_it.next_iovs(sz), sz, part_of_batch));
+    }
+    decr_pending_request_num();
+    co_return co_await collect_all(std::move(futs));
+}
+
+sisl::async::task< iomgr::io_result > BlkDataService::async_alloc_write(const sisl::sg_list& sgs,
+                                                                        const blk_alloc_hints& hints,
+                                                                        MultiBlkId& out_blkids, bool part_of_batch) {
+    if (is_stopping()) co_return std::unexpected(std::make_error_condition(std::errc::operation_canceled));
     incr_pending_request_num();
     const auto status = alloc_blks(sgs.size, hints, out_blkids);
     if (status != BlkAllocStatus::SUCCESS) {
         decr_pending_request_num();
-        return folly::makeFuture< std::error_code >(std::make_error_code(std::errc::resource_unavailable_try_again));
+        co_return std::unexpected(std::make_error_condition(std::errc::resource_unavailable_try_again));
     }
-    auto ret = async_write(sgs, out_blkids, part_of_batch);
+    // Construct the write task before decr (matches the old decr-before-completion ordering); out_blkids/sgs stay
+    // alive across the await since they are this coroutine's by-reference params.
+    auto wtask = async_write(sgs, out_blkids, part_of_batch);
     decr_pending_request_num();
-    return ret;
+    co_return co_await std::move(wtask);
 }
 
-folly::Future< std::error_code > BlkDataService::async_write(const char* buf, uint32_t size, MultiBlkId const& blkid,
-                                                             bool part_of_batch) {
-    if (is_stopping()) return folly::makeFuture< std::error_code >(std::make_error_code(std::errc::operation_canceled));
+sisl::async::task< iomgr::io_result > BlkDataService::async_write(const char* buf, uint32_t size,
+                                                                  MultiBlkId const& blkid, bool part_of_batch) {
+    if (is_stopping()) co_return std::unexpected(std::make_error_condition(std::errc::operation_canceled));
     incr_pending_request_num();
     if (blkid.num_pieces() == 1) {
         // Shortcut to most common case
         decr_pending_request_num();
-        return m_vdev->async_write(buf, size, blkid.to_single_blkid(), part_of_batch);
-    } else {
-        static thread_local std::vector< folly::Future< std::error_code > > s_futs;
-        s_futs.clear();
-
-        const char* ptr = buf;
-        auto blkid_it = blkid.iterate();
-        while (auto const bid = blkid_it.next()) {
-            uint32_t sz = bid->blk_count() * m_blk_size;
-            s_futs.emplace_back(m_vdev->async_write(ptr, sz, *bid, part_of_batch));
-            ptr += sz;
-        }
-        decr_pending_request_num();
-        return collect_all_futures(s_futs);
+        co_return co_await m_vdev->async_write(buf, size, blkid.to_single_blkid(), part_of_batch);
     }
+
+    std::vector< sisl::async::task< iomgr::io_result > > futs;
+    const char* ptr = buf;
+    auto blkid_it = blkid.iterate();
+    while (auto const bid = blkid_it.next()) {
+        uint32_t sz = bid->blk_count() * m_blk_size;
+        futs.emplace_back(m_vdev->async_write(ptr, sz, *bid, part_of_batch));
+        ptr += sz;
+    }
+    decr_pending_request_num();
+    co_return co_await collect_all(std::move(futs));
 }
 
-folly::Future< std::error_code > BlkDataService::async_write(sisl::sg_list const& sgs, MultiBlkId const& blkid,
-                                                             bool part_of_batch) {
-    if (is_stopping()) return folly::makeFuture< std::error_code >(std::make_error_code(std::errc::operation_canceled));
+sisl::async::task< iomgr::io_result > BlkDataService::async_write(sisl::sg_list const& sgs, MultiBlkId const& blkid,
+                                                                  bool part_of_batch) {
+    if (is_stopping()) co_return std::unexpected(std::make_error_condition(std::errc::operation_canceled));
     incr_pending_request_num();
     // TODO: Async write should pass this by value the sgs.size parameter as well, currently vdev write routine
     // walks through again all the iovs and then getting the len to pass it down to iomgr. This defeats the purpose of
@@ -193,37 +185,41 @@ folly::Future< std::error_code > BlkDataService::async_write(sisl::sg_list const
     if (blkid.num_pieces() == 1) {
         // Shortcut to most common case
         decr_pending_request_num();
-        return m_vdev->async_writev(sgs.iovs.data(), sgs.iovs.size(), blkid.to_single_blkid(), part_of_batch);
-    } else {
-        static thread_local std::vector< folly::Future< std::error_code > > s_futs;
-        s_futs.clear();
-        sisl::sg_iterator sg_it{sgs.iovs};
-
-        auto blkid_it = blkid.iterate();
-        while (auto const bid = blkid_it.next()) {
-            const auto iovs = sg_it.next_iovs(bid->blk_count() * m_blk_size);
-            s_futs.emplace_back(m_vdev->async_writev(iovs.data(), iovs.size(), *bid, part_of_batch));
-        }
-        decr_pending_request_num();
-        return collect_all_futures(s_futs);
+        co_return co_await m_vdev->async_writev(sgs.iovs.data(), sgs.iovs.size(), blkid.to_single_blkid(),
+                                                part_of_batch);
     }
+
+    std::vector< sisl::async::task< iomgr::io_result > > futs;
+    sisl::sg_iterator sg_it{sgs.iovs};
+    auto blkid_it = blkid.iterate();
+    while (auto const bid = blkid_it.next()) {
+        const auto iovs = sg_it.next_iovs(bid->blk_count() * m_blk_size);
+        futs.emplace_back(m_vdev->async_writev(iovs.data(), iovs.size(), *bid, part_of_batch));
+    }
+    decr_pending_request_num();
+    co_return co_await collect_all(std::move(futs));
 }
 
-folly::Future< std::error_code >
+sisl::async::task< iomgr::io_result >
 BlkDataService::async_write(sisl::sg_list const& sgs, std::vector< MultiBlkId > const& blkids, bool part_of_batch) {
-    if (is_stopping()) return folly::makeFuture< std::error_code >(std::make_error_code(std::errc::operation_canceled));
+    if (is_stopping()) co_return std::unexpected(std::make_error_condition(std::errc::operation_canceled));
     incr_pending_request_num();
-    static thread_local std::vector< folly::Future< std::error_code > > s_futs;
-    s_futs.clear();
+    // The per-piece sg_lists must outlive the (lazy) async_write tasks, which only read them when the fan-out
+    // starts -- after this loop. Hold them in a frame-local vector (reserved so the by-reference tasks never see a
+    // reallocation) that lives until the co_await below completes.
+    std::vector< sisl::sg_list > piece_sgs;
+    piece_sgs.reserve(blkids.size());
+    std::vector< sisl::async::task< iomgr::io_result > > futs;
+    futs.reserve(blkids.size());
     sisl::sg_iterator sg_it{sgs.iovs};
     for (const auto& blkid : blkids) {
         auto sgs_size = blkid.blk_count() * data_service().get_blk_size();
         const auto iovs = sg_it.next_iovs(sgs_size);
-        sisl::sg_list single_sgs{sgs_size, iovs};
-        s_futs.emplace_back(async_write(single_sgs, blkid, part_of_batch));
+        piece_sgs.push_back(sisl::sg_list{sgs_size, iovs});
+        futs.emplace_back(async_write(piece_sgs.back(), blkid, part_of_batch));
     }
     decr_pending_request_num();
-    return collect_all_futures(s_futs);
+    co_return co_await collect_all(std::move(futs));
 }
 
 void BlkDataService::submit_io_batch() { m_vdev->submit_batch(); }
@@ -273,26 +269,28 @@ BlkAllocStatus BlkDataService::commit_blk(MultiBlkId const& blkid) {
     return BlkAllocStatus::SUCCESS;
 }
 
-folly::Future< std::error_code > BlkDataService::async_free_blk(MultiBlkId const& bids) {
-    if (is_stopping()) return folly::makeFuture< std::error_code >(std::make_error_code(std::errc::operation_canceled));
+sisl::async::task< iomgr::io_result > BlkDataService::async_free_blk(MultiBlkId const& bids) {
+    if (is_stopping()) co_return std::unexpected(std::make_error_condition(std::errc::operation_canceled));
     incr_pending_request_num();
-    // create blk read waiter instance;
-    folly::Promise< std::error_code > promise;
-    auto f = promise.getFuture();
 
     if (!m_vdev->is_blk_exist(bids)) {
-        promise.setValue(std::make_error_code(std::errc::resource_unavailable_try_again));
-    } else {
-        m_blk_read_tracker->wait_on(bids, [this, bids, p = std::move(promise)]() mutable {
-            {
-                auto cpg = hs()->cp_mgr().cp_guard();
-                m_vdev->free_blk(bids, s_cast< VDevCPContext* >(cpg.context(cp_consumer_t::BLK_DATA_SVC)));
-            }
-            p.setValue(std::error_code{});
-        });
+        decr_pending_request_num();
+        co_return std::unexpected(std::make_error_condition(std::errc::resource_unavailable_try_again));
     }
+
+    // The free can only happen once all pending reads on these blks drain; wait_on fires the callback then
+    // (possibly on another thread). Hand the result back through a value_awaitable kept alive by both the callback
+    // capture and this coroutine frame
+    auto aw = std::make_shared< sisl::async::value_awaitable< iomgr::io_result > >();
+    m_blk_read_tracker->wait_on(bids, [this, bids, aw]() mutable {
+        {
+            auto cpg = hs()->cp_mgr().cp_guard();
+            m_vdev->free_blk(bids, s_cast< VDevCPContext* >(cpg.context(cp_consumer_t::BLK_DATA_SVC)));
+        }
+        aw->complete(iomgr::io_result{0});
+    });
     decr_pending_request_num();
-    return f;
+    co_return co_await *aw;
 }
 
 std::error_code BlkDataService::free_blk_now(MultiBlkId const& bids) {

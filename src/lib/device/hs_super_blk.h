@@ -19,6 +19,7 @@
 
 #include <iomgr/iomgr_flip.hpp>
 #include <iomgr/iomgr.hpp>
+#include <iomgr/drive.hpp> // iomgr::drive_attributes / drive_type (moved out of iomgr.hpp in v13)
 #include <sisl/fds/sparse_vector.hpp>
 #include <homestore/homestore_decl.hpp>
 

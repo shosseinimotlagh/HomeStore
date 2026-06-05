@@ -22,7 +22,7 @@
 #include <sisl/logging/logging.h>
 #include <sisl/utility/atomic_counter.hpp>
 #include <iomgr/iomgr.hpp>
-#include <folly/futures/SharedPromise.h>
+#include <sisl/async/shared_awaitable.hpp>
 
 /*
  * These are the design requirements of this class. If we don't follow these requirements then there can be serious
@@ -69,17 +69,17 @@ ENUM(cp_status_t, uint8_t,
 class CPContext;
 class CPManager;
 
-VENUM(cp_consumer_t, uint8_t,
-      // Sealer is a special consumer that provides information regarding where the cp is up to.
-      // It will be the first one during cp switch over , as a conservative marker of everything
-      // before or equals to this point, should be in current cp, possibly some consumer are above this point which is
-      // fine. And Sealer is the last one during cp flush after all other services flushed successfully.
-      SEALER = 3,
-      HS_CLIENT = 0,       // Client of the homestore module
-      INDEX_SVC = 1,       // Index service module
-      BLK_DATA_SVC = 2,    // Block data service module
-      REPLICATION_SVC = 3, // Replication service module
-      SENTINEL = 4         // Should always be the last in this list
+ENUM(cp_consumer_t, uint8_t,
+     // Sealer is a special consumer that provides information regarding where the cp is up to.
+     // It will be the first one during cp switch over , as a conservative marker of everything
+     // before or equals to this point, should be in current cp, possibly some consumer are above this point which is
+     // fine. And Sealer is the last one during cp flush after all other services flushed successfully.
+     SEALER = 3,
+     HS_CLIENT = 0,       // Client of the homestore module
+     INDEX_SVC = 1,       // Index service module
+     BLK_DATA_SVC = 2,    // Block data service module
+     REPLICATION_SVC = 3, // Replication service module
+     SENTINEL = 4         // Should always be the last in this list
 );
 
 struct CP {
@@ -88,7 +88,8 @@ struct CP {
     CPManager* m_cp_mgr;
     cp_id_t m_cp_id;
     std::array< std::unique_ptr< CPContext >, (size_t)cp_consumer_t::SENTINEL > m_contexts;
-    folly::SharedPromise< bool > m_comp_promise;
+    // Broadcast completion for everyone who triggered this CP (assigned in CPManager::do_trigger_cp_flush).
+    std::shared_ptr< sisl::async::shared_awaitable< bool > > m_comp;
     Clock::time_point m_cp_start_time;
 #ifdef _PRERELEASE
     std::atomic< bool > m_abrupt_cp{false};

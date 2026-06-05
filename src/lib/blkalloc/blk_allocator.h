@@ -24,7 +24,6 @@
 #include <vector>
 
 #include <sisl/fds/bitset.hpp>
-#include <folly/MPMCQueue.h>
 #include <sisl/utility/enum.hpp>
 #include <sisl/utility/urcu_helper.hpp>
 #include <sisl/fds/thread_vector.hpp>
@@ -89,12 +88,12 @@ public:
     }
 };
 
-VENUM(BlkOpStatus, uint8_t,
-      NONE = 0,            // Default no status
-      SUCCESS = 1u << 0,   // Success
-      FAILED = 1u << 1,    // Generic failure
-      SPACEFULL = 1u << 2, // Space full failure
-      PARTIAL_FAILED = 1u << 3);
+ENUM(BlkOpStatus, uint8_t,
+     NONE = 0,            // Default no status
+     SUCCESS = 1u << 0,   // Success
+     FAILED = 1u << 1,    // Generic failure
+     SPACEFULL = 1u << 2, // Space full failure
+     PARTIAL_FAILED = 1u << 3);
 
 ENUM(BlkAllocatorState, uint8_t, INIT, WAITING, SWEEP_SCHEDULED, SWEEPING, EXITING, DONE);
 

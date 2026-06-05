@@ -20,6 +20,7 @@
 #include "index/wb_cache.hpp"
 #include "index/index_cp.hpp"
 #include "common/homestore_utils.hpp"
+#include "common/coro_helpers.hpp" // detail::detach (fire-and-forget the post-recovery CP flush)
 #include "common/homestore_assert.hpp"
 #include "device/virtual_dev.hpp"
 #include "device/physical_dev.hpp"
@@ -120,7 +121,7 @@ void IndexService::start() {
     }
     // Force taking cp after recovery done. This makes sure that the index table is in consistent state and dirty
     // buffer after recovery can be added to dirty list for flushing in the new cp
-    hs()->cp_mgr().trigger_cp_flush(true /* force */);
+    detail::detach(hs()->cp_mgr().trigger_cp_flush(true /* force */));
 }
 
 void IndexService::write_sb(uint32_t ordinal) {

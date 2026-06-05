@@ -37,7 +37,7 @@ private:
     std::shared_ptr< VirtualDev > m_vdev;
     sisl::SimpleCache< BlkId, BtreeNodePtr > m_cache;
     uint32_t m_node_size;
-    std::vector< iomgr::io_fiber_t > m_cp_flush_fibers;
+    std::vector< iomgr::IOReactor* > m_cp_flush_reactors;
     std::mutex m_flush_mtx;
     void* m_meta_blk;
     bool m_in_recovery{false};
@@ -59,7 +59,7 @@ public:
     bool refresh_meta_buf(shared< MetaIndexBuffer >& meta_buf, CPContext* cp_ctx) override;
 
     //////////////////// CP Related API section /////////////////////////////////
-    folly::Future< bool > async_cp_flush(IndexCPContext* context);
+    sisl::async::task< bool > async_cp_flush(IndexCPContext* context);
     IndexBufferPtr copy_buffer(const IndexBufferPtr& cur_buf, const CPContext* cp_ctx) const;
     void recover(sisl::byte_view sb) override;
     struct DagNode {

@@ -431,11 +431,8 @@ struct BtreeConcurrentTest : public BtreeTestHelper< TestType >, public ::testin
 
     void SetUp() override {
         LOGINFO("Starting iomgr with {} threads", SISL_OPTIONS["num_threads"].as< uint32_t >());
-        ioenvironment.with_iomgr(iomgr::iomgr_params{.num_threads = SISL_OPTIONS["num_threads"].as< uint32_t >(),
-                                                     .is_spdk = false,
-                                                     .num_fibers = 1 + SISL_OPTIONS["num_fibers"].as< uint32_t >(),
-                                                     .app_mem_size_mb = 0,
-                                                     .hugepage_size_mb = 0});
+        ioenvironment.with_iomgr(
+            iomgr::iomgr_params{.num_threads = SISL_OPTIONS["num_threads"].as< uint32_t >(), .app_mem_size_mb = 0});
 
         BtreeTestHelper< TestType >::SetUp();
 #ifdef _PRERELEASE

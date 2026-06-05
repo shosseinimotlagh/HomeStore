@@ -837,7 +837,7 @@ void VarsizeBlkAllocator::request_more_blks_wait(BlkAllocSegment* seg, blk_count
 bool VarsizeBlkAllocator::prepare_sweep(BlkAllocSegment* seg, bool fill_entire_cache) {
     m_sweep_segment = seg;
     m_cur_fill_session = m_fb_cache->create_cache_fill_session(fill_entire_cache);
-    if (!(m_cur_fill_session->slab_requirements.empty())) {
+    if (m_cur_fill_session->any_refill_needed()) {
         m_state = BlkAllocatorState::SWEEP_SCHEDULED;
         return true;
     } else {

@@ -14,6 +14,7 @@
  *
  *********************************************************************************/
 #pragma once
+#include <boost/container/small_vector.hpp>
 
 #include <memory>
 #include <boost/intrusive_ptr.hpp>
@@ -25,7 +26,7 @@ namespace homestore {
 
 class BtreeNode;
 using BtreeNodePtr = boost::intrusive_ptr< BtreeNode >;
-using BtreeNodeList = folly::small_vector< BtreeNodePtr, 3 >;
+using BtreeNodeList = boost::container::small_vector< BtreeNodePtr, 3 >;
 using node_initializer_t = std::function< BtreeNodePtr(const IndexBufferPtr&) >;
 
 struct CPContext;

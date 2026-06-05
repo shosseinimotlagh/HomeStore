@@ -19,8 +19,7 @@
 #include <array>
 
 #include <boost/intrusive_ptr.hpp>
-#include <folly/small_vector.h>
-#include <iomgr/fiber_lib.hpp>
+#include <boost/container/small_vector.hpp>
 
 #include "btree_req.hpp"
 #include "btree_kv.hpp"
@@ -32,7 +31,7 @@ SISL_LOGGING_DECL(btree)
 namespace homestore {
 
 using BtreeNodePtr = boost::intrusive_ptr< BtreeNode >;
-using BtreeNodeList = folly::small_vector< BtreeNodePtr, 3 >;
+using BtreeNodeList = boost::container::small_vector< BtreeNodePtr, 3 >;
 
 struct BtreeVisualizeVariables {
     uint64_t parent;
@@ -74,7 +73,7 @@ struct BTREE_FLIPS {
 template < typename K, typename V >
 class Btree {
 protected:
-    mutable iomgr::FiberManagerLib::shared_mutex m_btree_lock;
+    mutable std::shared_mutex m_btree_lock;
     BtreeLinkInfo m_root_node_info;
 
     BtreeMetrics m_metrics;
@@ -89,14 +88,13 @@ protected:
 #ifdef _PRERELEASE
     BTREE_FLIPS m_flips;
 #endif
-    // This workaround of BtreeThreadVariables is needed instead of directly declaring statics
-    // to overcome the gcc bug, pointer here: https://gcc.gnu.org/bugzilla/show_bug.cgi?id=66944
+    // iomgr v13 has no fibers (one stackless execution context per reactor thread), so per-thread storage
+    // is sufficient. The unique_ptr indirection (rather than a bare `static thread_local BtreeThreadVariables`)
+    // works around gcc bug https://gcc.gnu.org/bugzilla/show_bug.cgi?id=66944 for thread_locals in templates.
     static BtreeThreadVariables* bt_thread_vars() {
-        auto this_id(boost::this_fiber::get_id());
-        static thread_local std::map< boost::fibers::fiber::id, std::unique_ptr< BtreeThreadVariables > > fiber_map;
-        if (fiber_map.count(this_id)) { return fiber_map[this_id].get(); }
-        fiber_map[this_id] = std::make_unique< BtreeThreadVariables >();
-        return fiber_map[this_id].get();
+        static thread_local std::unique_ptr< BtreeThreadVariables > bt_vars;
+        if (!bt_vars) { bt_vars = std::make_unique< BtreeThreadVariables >(); }
+        return bt_vars.get();
     }
 
 protected:

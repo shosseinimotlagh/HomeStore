@@ -81,19 +81,21 @@ struct repl_dev_superblk {
 
 #pragma pack()
 
-template < class V = folly::Unit >
-auto make_async_error(ReplServiceError err) {
-    return folly::makeSemiFuture< ReplResult< V > >(folly::makeUnexpected(err));
+// These return a ready AsyncReplResult (= task< ReplResult< V > >). They are coroutines so a plain (non-coroutine)
+// caller returning AsyncReplResult< V > can simply `return make_async_error<>(...)` and hand the task up.
+template < class V = std::monostate >
+sisl::async::task< ReplResult< V > > make_async_error(ReplServiceError err) {
+    co_return std::unexpected(err);
 }
 
 template < class V >
-auto make_async_success(V v) {
-    return folly::makeSemiFuture< ReplResult< V > >(std::move(v));
+sisl::async::task< ReplResult< V > > make_async_success(V v) {
+    co_return ReplResult< V >{std::move(v)};
 }
 
-template < class V = folly::Unit >
-auto make_async_success() {
-    return folly::makeSemiFuture< ReplResult< folly::Unit > >(folly::Unit{});
+template < class V = std::monostate >
+sisl::async::task< ReplResult< V > > make_async_success() {
+    co_return ReplResult< V >{std::monostate{}};
 }
 
 inline uint64_t generateRandomTraceId() {

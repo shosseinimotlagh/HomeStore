@@ -33,8 +33,8 @@ void ResourceMgr::start(uint64_t total_cap) {
 void ResourceMgr::stop() {
     LOGINFO("Cancel resource manager timer.");
     m_is_stopped_ = true;
-    if (m_res_audit_timer_hdl != iomgr::null_timer_handle) { iomanager.cancel_timer(m_res_audit_timer_hdl); }
-    m_res_audit_timer_hdl = iomgr::null_timer_handle;
+    if (m_res_audit_timer_hdl != iomgr::timer_handle_t{}) { iomanager.cancel_timer(m_res_audit_timer_hdl); }
+    m_res_audit_timer_hdl = iomgr::timer_handle_t{};
 }
 
 //

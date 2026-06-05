@@ -14,6 +14,7 @@
  *
  *********************************************************************************/
 #pragma once
+#include <boost/container/small_vector.hpp>
 
 #include <memory>
 #include <boost/intrusive_ptr.hpp>
@@ -25,6 +26,7 @@
 #include <homestore/superblk_handler.hpp>
 
 #pragma once
+#include <boost/container/small_vector.hpp>
 #ifdef StoreSpecificBtreeNode
 #undef StoreSpecificBtreeNode
 #endif
@@ -80,7 +82,7 @@ struct index_table_sb {
 
 struct IndexBuffer;
 using IndexBufferPtr = std::shared_ptr< IndexBuffer >;
-using IndexBufferPtrList = folly::small_vector< IndexBufferPtr, 3 >;
+using IndexBufferPtrList = boost::container::small_vector< IndexBufferPtr, 3 >;
 
 // An Empty base class to have the IndexService not having to template and refer the IndexTable virtual class
 class IndexTableBase {

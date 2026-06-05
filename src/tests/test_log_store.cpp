@@ -29,6 +29,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <shared_mutex>
 #include <random> // std::default_random_engine
 #include <stdexcept>
 #include <string>
@@ -37,15 +38,14 @@
 #include <vector>
 
 #include <sisl/fds/buffer.hpp>
-#include <folly/Synchronized.h>
 #include <iomgr/io_environment.hpp>
-#include <iomgr/http_server.hpp>
 #include <iomgr/iomgr_flip.hpp>
 #include <sisl/logging/logging.h>
 #include <sisl/options/options.h>
 #include <gtest/gtest.h>
 
 #include <homestore/homestore.hpp>
+#include "common/coro_helpers.hpp" // detail::detach_then
 #include <homestore/logstore_service.hpp>
 
 #include "logstore/log_dev.hpp"
@@ -145,7 +145,10 @@ public:
         ASSERT_LT(m_log_store->get_contiguous_completed_seq_num(-1), start_lsn + nparallel_count + nholes);
         for (const auto lsn : lsns) {
             if (nholes) {
-                m_hole_lsns.wlock()->insert(std::make_pair<>(lsn, false));
+                {
+                    std::unique_lock lg{m_hole_lsns_mtx};
+                    m_hole_lsns.insert(std::make_pair<>(lsn, false));
+                }
                 --nholes;
             } else {
                 bool io_memory{false};
@@ -170,7 +173,6 @@ public:
 
     void iterate_validate(const bool expect_all_completed = false) {
         const auto trunc_upto = m_log_store->truncated_upto();
-        const auto& hole_end = m_hole_lsns.rlock()->end();
         const auto upto =
             expect_all_completed ? m_cur_lsn.load() - 1 : m_log_store->get_contiguous_completed_seq_num(-1);
 
@@ -178,32 +180,31 @@ public:
         bool hole_expected{false};
     start_iterate:
         try {
-            auto hole_entry = m_hole_lsns.rlock()->find(idx);
-            if ((hole_entry != hole_end) && !hole_entry->second) { // Hole entry exists and not filled
+            auto hole_entry = hole_state(idx);
+            if (hole_entry && !*hole_entry) { // Hole entry exists and not filled
                 ASSERT_THROW(m_log_store->read_sync(idx), std::out_of_range)
                     << "Expected std::out_of_range exception for read of hole lsn=" << m_log_store->get_store_id()
                     << ":" << idx << " but not thrown";
                 hole_expected = true;
             } else {
-                m_log_store->foreach (
-                    idx,
-                    [upto, hole_end, &idx, &hole_expected, &hole_entry, this](const int64_t seq_num,
-                                                                              const log_buffer& b) -> bool {
-                        if ((hole_entry != hole_end) && hole_entry->second) { // Hole entry exists, but filled
-                            EXPECT_EQ(b.size(), 0ul);
-                        } else {
-                            auto const* tl = r_cast< test_log_data const* >(b.bytes());
-                            EXPECT_EQ(tl->total_size(), b.size());
-                            validate_data(tl, seq_num);
-                        }
-                        ++idx;
-                        hole_entry = m_hole_lsns.rlock()->find(idx);
-                        if ((hole_entry != hole_end) && !hole_entry->second) { // Hole entry exists and not filled
-                            hole_expected = true;
-                            return false;
-                        }
-                        return (seq_num + 1 < upto) ? true : false;
-                    });
+                m_log_store->foreach (idx,
+                                      [upto, &idx, &hole_expected, &hole_entry, this](const int64_t seq_num,
+                                                                                      const log_buffer& b) -> bool {
+                                          if (hole_entry && *hole_entry) { // Hole entry exists, but filled
+                                              EXPECT_EQ(b.size(), 0ul);
+                                          } else {
+                                              auto const* tl = r_cast< test_log_data const* >(b.bytes());
+                                              EXPECT_EQ(tl->total_size(), b.size());
+                                              validate_data(tl, seq_num);
+                                          }
+                                          ++idx;
+                                          hole_entry = hole_state(idx);
+                                          if (hole_entry && !*hole_entry) { // Hole entry exists and not filled
+                                              hole_expected = true;
+                                              return false;
+                                          }
+                                          return (seq_num + 1 < upto) ? true : false;
+                                      });
             }
         } catch (const std::exception& e) {
             if (!expect_all_completed) {
@@ -233,12 +234,11 @@ public:
                 << " but not thrown";
         }
 
-        const auto& hole_end = m_hole_lsns.rlock()->end();
         const auto upto =
             expect_all_completed ? m_cur_lsn.load() - 1 : m_log_store->get_contiguous_completed_seq_num(-1);
         for (auto i = m_log_store->truncated_upto() + 1; i < upto; ++i) {
-            const auto hole_entry = m_hole_lsns.rlock()->find(i);
-            if ((hole_entry != hole_end) && (!hole_entry->second)) { // Hole entry exists and not filled
+            const auto hole_entry = hole_state(i);
+            if (hole_entry && !*hole_entry) { // Hole entry exists and not filled
                 ASSERT_THROW(m_log_store->read_sync(i), std::out_of_range)
                     << "Expected std::out_of_range exception for read of hole lsn=" << m_log_store->get_store_id()
                     << ":" << i << " but not thrown";
@@ -246,7 +246,7 @@ public:
                 try {
                     const auto b = m_log_store->read_sync(i);
 
-                    if ((hole_entry != hole_end) && (hole_entry->second)) { // Hole entry exists, but filled
+                    if (hole_entry && *hole_entry) { // Hole entry exists, but filled
                         ASSERT_EQ(b.size(), 0ul)
                             << "Expected null entry for lsn=" << m_log_store->get_store_id() << ":" << i;
                     } else {
@@ -277,7 +277,9 @@ public:
 
     void fill_hole_and_validate() {
         const auto start = m_log_store->truncated_upto();
-        m_hole_lsns.withWLock([&](auto& holes_list) {
+        {
+            std::unique_lock lg{m_hole_lsns_mtx};
+            auto& holes_list = m_hole_lsns;
             try {
                 for (auto& hole_entry : holes_list) {
                     if (!hole_entry.second) { // Not filled already
@@ -296,7 +298,7 @@ public:
                 }
 
             } catch (std::exception& e) { LOGFATAL("Caught exception e {}", e.what()); }
-        });
+        }
     }
 
     void recovery_validate() {
@@ -405,7 +407,14 @@ private:
     std::atomic< logstore_seq_num_t > m_truncated_upto_lsn = -1;
     std::atomic< logstore_seq_num_t > m_cur_lsn = 0;
     std::shared_ptr< HomeLogStore > m_log_store;
-    folly::Synchronized< std::map< logstore_seq_num_t, bool > > m_hole_lsns;
+    std::map< logstore_seq_num_t, bool > m_hole_lsns;
+    mutable std::shared_mutex m_hole_lsns_mtx;
+    // Locked lookup: nullopt if `lsn` is not a hole, else the hole's filled-flag.
+    std::optional< bool > hole_state(logstore_seq_num_t lsn) const {
+        std::shared_lock lg{m_hole_lsns_mtx};
+        auto it = m_hole_lsns.find(lsn);
+        return (it == m_hole_lsns.end()) ? std::nullopt : std::optional< bool >{it->second};
+    }
     int64_t m_n_recovered_lsns = 0;
     int64_t m_n_recovered_truncated_lsns = 0;
     logdev_id_t m_logdev_id;
@@ -456,9 +465,10 @@ public:
                 for (uint32_t i{0}; i < n_log_stores; ++i) {
                     SampleLogStoreClient* client = m_log_store_clients[i].get();
                     logstore_service().open_logdev(client->m_logdev_id, flush_mode_t::EXPLICIT);
-                    logstore_service()
-                        .open_log_store(client->m_logdev_id, client->m_store_id, false /* append_mode */)
-                        .thenValue([i, this, client](auto log_store) { client->set_log_store(log_store); });
+                    homestore::detail::detach_then(
+                        logstore_service().open_log_store(client->m_logdev_id, client->m_store_id,
+                                                          false /* append_mode */),
+                        [i, this, client](auto log_store) { client->set_log_store(log_store); });
                 }
             });
             m_helper.restart_homestore();
@@ -800,8 +810,10 @@ protected:
 
     void validate_num_stores() {
         size_t actual_valid_ids{0};
-        size_t actual_garbage_ids{0};
-        size_t exp_garbage_store_count{0};
+        // Accumulated for the disabled cross-check below (ASSERT_EQ is commented out because random
+        // logstore->logdev assignment leaves some logdevs empty); kept to document the invariant.
+        [[maybe_unused]] size_t actual_garbage_ids{0};
+        [[maybe_unused]] size_t exp_garbage_store_count{0};
 
         for (auto& logdev : logstore_service().get_all_logdevs()) {
             auto fid = logdev->get_id();

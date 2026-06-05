@@ -13,6 +13,7 @@
  *
  *********************************************************************************/
 #pragma once
+#include <sisl/async/task.hpp>
 #include <vector>
 #include <string>
 #include "hs_super_blk.h"
@@ -29,14 +30,15 @@
 #include <sisl/metrics/metrics.hpp>
 #include <sisl/logging/logging.h>
 #include <homestore/homestore_decl.hpp>
+#include <iomgr/drive.hpp> // iomgr::drive_handle + async/query free functions (v13)
 
 #include "hs_super_blk.h"
 SISL_LOGGING_DECL(device)
 
 namespace homestore {
-class PhysicalDevMetrics : public sisl::MetricsGroupWrapper {
+class PhysicalDevMetrics : public sisl::MetricsGroup {
 public:
-    explicit PhysicalDevMetrics(const std::string& devname) : sisl::MetricsGroupWrapper{"PhysicalDev", devname} {
+    explicit PhysicalDevMetrics(const std::string& devname) : sisl::MetricsGroup{"PhysicalDev", devname} {
         REGISTER_COUNTER(drive_sync_write_count, "Drive sync write count");
         REGISTER_COUNTER(drive_sync_read_count, "Drive sync read count");
         REGISTER_COUNTER(drive_async_write_count, "Drive async write count");
@@ -124,8 +126,7 @@ struct Stream {
 
 class PhysicalDev {
 private:
-    iomgr::io_device_ptr m_iodev;
-    iomgr::DriveInterface* m_drive_iface; // Interface to do IO
+    iomgr::drive_handle m_drive; // RAII handle to the open drive (iomgr v13); closes on last release
     PhysicalDevMetrics m_metrics;
     std::string m_devname;                              // Physical device path
     HSDevType m_dev_type;                               // Device type
@@ -196,20 +197,20 @@ public:
 
     ///////////// Pointer Getters ///////////////////////
     PhysicalDevMetrics& metrics() { return m_metrics; }
-    iomgr::DriveInterface* drive_iface() const { return m_drive_iface; }
     uint32_t pdev_id() const { return m_pdev_info.pdev_id; }
     const std::string& get_devname() const { return m_devname; }
 
     /////////////////////////////////////// IO Methods //////////////////////////////////////////
-    folly::Future< std::error_code > async_write(const char* data, uint32_t size, uint64_t offset,
-                                                 bool part_of_batch = false);
-    folly::Future< std::error_code > async_writev(const iovec* iov, int iovcnt, uint32_t size, uint64_t offset,
-                                                  bool part_of_batch = false);
-    folly::Future< std::error_code > async_read(char* data, uint32_t size, uint64_t offset, bool part_of_batch = false);
-    folly::Future< std::error_code > async_readv(iovec* iov, int iovcnt, uint32_t size, uint64_t offset,
-                                                 bool part_of_batch = false);
-    folly::Future< std::error_code > async_write_zero(uint64_t size, uint64_t offset);
-    folly::Future< std::error_code > queue_fsync();
+    sisl::async::task< iomgr::io_result > async_write(const char* data, uint32_t size, uint64_t offset,
+                                                      bool part_of_batch = false);
+    sisl::async::task< iomgr::io_result > async_writev(const iovec* iov, int iovcnt, uint32_t size, uint64_t offset,
+                                                       bool part_of_batch = false);
+    sisl::async::task< iomgr::io_result > async_read(char* data, uint32_t size, uint64_t offset,
+                                                     bool part_of_batch = false);
+    sisl::async::task< iomgr::io_result > async_readv(iovec* iov, int iovcnt, uint32_t size, uint64_t offset,
+                                                      bool part_of_batch = false);
+    sisl::async::task< iomgr::io_result > async_write_zero(uint64_t size, uint64_t offset);
+    sisl::async::task< iomgr::io_result > queue_fsync();
 
     std::error_code sync_write(const char* data, uint32_t size, uint64_t offset);
     std::error_code sync_writev(const iovec* iov, int iovcnt, uint32_t size, uint64_t offset);

@@ -15,15 +15,15 @@
 #pragma once
 #include <functional>
 
-#include <folly/small_vector.h>
+#include <boost/container/small_vector.hpp>
 #include <sisl/cache/simple_hashmap.hpp>
 #include <sisl/fds/utils.hpp>
 #include <sisl/metrics/metrics.hpp>
-#include <folly/Function.h>
+#include <functional>
 #include <homestore/blk.h>
 
 namespace homestore {
-typedef folly::Function< void(void) > after_remove_cb_t;
+typedef std::move_only_function< void(void) > after_remove_cb_t;
 
 struct blk_track_waiter {
     blk_track_waiter(after_remove_cb_t&& cb) : m_cb{std::move(cb)} {
@@ -86,12 +86,12 @@ typedef std::shared_ptr< blk_track_waiter > blk_track_waiter_ptr;
 struct BlkTrackRecord {
     BlkId m_key; // aligned key
     int64_t m_ref_cnt{0};
-    folly::small_vector< blk_track_waiter_ptr, 8 > m_waiters; // multiple waiters can wait on same record
+    boost::container::small_vector< blk_track_waiter_ptr, 8 > m_waiters; // multiple waiters can wait on same record
 };
 
 class BlkReadTrackerMetrics : public sisl::MetricsGroup {
 public:
-    explicit BlkReadTrackerMetrics() : sisl::MetricsGroupWrapper("BlkReadTracker", "DataSvc") {
+    explicit BlkReadTrackerMetrics() : sisl::MetricsGroup("BlkReadTracker", "DataSvc") {
 #ifdef _PRERELEASE
         REGISTER_COUNTER(blktrack_pending_blk_read_map_sz, "Size of pending blk read map", sisl::_publish_as::publish_as_gauge);
         REGISTER_COUNTER(blktrack_erase_blk_rescheduled, "Erase blk rescheduled due to concurrent rw");

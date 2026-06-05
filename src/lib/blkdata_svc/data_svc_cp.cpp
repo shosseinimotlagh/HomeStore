@@ -25,15 +25,11 @@ std::unique_ptr< CPContext > DataSvcCPCallbacks::on_switchover_cp(CP* cur_cp, CP
     return m_vdev->create_cp_context(new_cp);
 }
 
-folly::Future< bool > DataSvcCPCallbacks::cp_flush(CP* cp) {
-    // Pick a CP Manager blocking IO fiber to execute the cp flush of vdev
-    // iomanager.run_on_forget(hs()->cp_mgr().pick_blocking_io_fiber(), [this, cp]() {
+sisl::async::task< bool > DataSvcCPCallbacks::cp_flush(CP* cp) {
     auto cp_ctx = s_cast< VDevCPContext* >(cp->context(cp_consumer_t::BLK_DATA_SVC));
     m_vdev->cp_flush(cp_ctx); // this is a blocking io call
     cp_ctx->complete(true);
-    //});
-
-    return folly::makeFuture< bool >(true);
+    co_return true;
 }
 
 void DataSvcCPCallbacks::cp_cleanup(CP* cp) {}

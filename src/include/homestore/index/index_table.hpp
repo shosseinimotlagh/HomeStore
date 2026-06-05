@@ -23,6 +23,7 @@
 #include <homestore/index_service.hpp>
 #include <homestore/fault_cmt_service.hpp>
 #include <homestore/checkpoint/cp_mgr.hpp>
+#include "common/coro_helpers.hpp" // detail::sync_get (block on the forced CP flush; transitional path)
 #include <homestore/index/wb_cache_base.hpp>
 #include <homestore/btree/detail/btree_internal.hpp>
 #include <iomgr/iomgr_flip.hpp>
@@ -146,7 +147,7 @@ public:
         // If the process crashes after this point, recovery will not replay the
         // old journal (CP is complete), so repair_index_node will never be called
         // for an ordinal whose superblock no longer exists.
-        cp_mgr().trigger_cp_flush(true /* force */).get();
+        detail::sync_get(cp_mgr().trigger_cp_flush(true /* force */));
         m_sb.destroy();
         m_sb_buffer->m_valid = false;
         decr_pending_request_num();
@@ -307,7 +308,7 @@ protected:
         node->set_checksum();
         auto prev_state = idx_node->m_idx_buf->m_state.exchange(index_buf_state_t::DIRTY);
         LOGTRACEMOD(wbcache, "write_node_impl: node_id={} cp_id={} prev_state={} -> DIRTY", node->node_id(),
-                    cp_ctx->id(), static_cast<int>(prev_state));
+                    cp_ctx->id(), static_cast< int >(prev_state));
         idx_node->m_idx_buf->m_node_level = node->level();
         if (prev_state == index_buf_state_t::CLEAN) {
             // It was clean before, dirtying it first time, add it to the wb_cache list to flush

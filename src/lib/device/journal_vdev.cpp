@@ -28,6 +28,7 @@
 #include "replication/repl_dev/raft_repl_dev.h"
 #include "device/chunk.h"
 #include "device/device.h"
+#include "common/coro_helpers.hpp" // detail::detach (fire-and-forget the journal-exceed CP flush)
 #include "device/physical_dev.hpp"
 #include "device/journal_vdev.hpp"
 #include "common/error.h"
@@ -58,7 +59,7 @@ JournalVirtualDev::JournalVirtualDev(DeviceManager& dmgr, const vdev_info& vinfo
 
     resource_mgr().register_journal_vdev_exceed_cb([this]([[maybe_unused]] int64_t dirty_buf_count, bool critical) {
         // either it is critical or non-critical, call cp_flush;
-        hs()->cp_mgr().trigger_cp_flush(false /* force */);
+        detail::detach(hs()->cp_mgr().trigger_cp_flush(false /* force */));
 
         if (critical) {
             LOGINFO("Critical journal vdev size threshold reached. Triggering truncate.");
@@ -325,13 +326,13 @@ auto JournalVirtualDev::Descriptor::process_pwrite_offset(size_t len, off_t offs
 }
 
 /////////////////////////////// Write Section //////////////////////////////////
-folly::Future< std::error_code > JournalVirtualDev::Descriptor::async_append(const uint8_t* buf, size_t size) {
+sisl::async::task< iomgr::io_result > JournalVirtualDev::Descriptor::async_append(const uint8_t* buf, size_t size) {
     if (!validate_append_size(size)) {
-        return folly::makeFuture< std::error_code >(std::make_error_code(std::errc::no_space_on_device));
+        co_return std::unexpected(std::make_error_condition(std::errc::no_space_on_device));
     } else {
         auto const [chunk, _, offset_in_chunk] = process_pwrite_offset(size, m_seek_cursor);
         m_seek_cursor += size;
-        return m_vdev.async_write(r_cast< const char* >(buf), size, chunk, offset_in_chunk);
+        co_return co_await m_vdev.async_write(r_cast< const char* >(buf), size, chunk, offset_in_chunk);
     }
 }
 
@@ -348,17 +349,17 @@ folly::Future< std::error_code > JournalVirtualDev::Descriptor::async_append(con
  * @param cb : callback after write is completed, can be null
  *
  */
-folly::Future< std::error_code > JournalVirtualDev::Descriptor::async_pwrite(const uint8_t* buf, size_t size,
-                                                                             off_t offset) {
+sisl::async::task< iomgr::io_result > JournalVirtualDev::Descriptor::async_pwrite(const uint8_t* buf, size_t size,
+                                                                                  off_t offset) {
     HS_REL_ASSERT_LE(size, m_reserved_sz, "Write size: larger then reserved size is not allowed!");
     m_reserved_sz -= size; // update reserved size
 
     auto const [chunk, _, offset_in_chunk] = process_pwrite_offset(size, offset);
-    return m_vdev.async_write(r_cast< const char* >(buf), size, chunk, offset_in_chunk);
+    co_return co_await m_vdev.async_write(r_cast< const char* >(buf), size, chunk, offset_in_chunk);
 }
 
-folly::Future< std::error_code > JournalVirtualDev::Descriptor::async_pwritev(const iovec* iov, int iovcnt,
-                                                                              off_t offset) {
+sisl::async::task< iomgr::io_result > JournalVirtualDev::Descriptor::async_pwritev(const iovec* iov, int iovcnt,
+                                                                                   off_t offset) {
     auto const size = VirtualDev::get_len(iov, iovcnt);
 
     // if size is smaller than reserved size, it means write will never be overlapping start offset;
@@ -367,7 +368,7 @@ folly::Future< std::error_code > JournalVirtualDev::Descriptor::async_pwritev(co
 
     m_reserved_sz -= size;
     auto const [chunk, _, offset_in_chunk] = process_pwrite_offset(size, offset);
-    return m_vdev.async_writev(iov, iovcnt, chunk, offset_in_chunk);
+    co_return co_await m_vdev.async_writev(iov, iovcnt, chunk, offset_in_chunk);
 }
 
 std::error_code JournalVirtualDev::Descriptor::sync_pwrite(const uint8_t* buf, size_t size, off_t offset) {

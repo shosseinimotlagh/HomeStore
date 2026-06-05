@@ -14,7 +14,9 @@
  *
  *********************************************************************************/
 #pragma once
+#include <fmt/ranges.h>
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cstdint>
@@ -168,7 +170,7 @@ struct formatter< homestore::blk_cache_refill_status > {
 
     template < typename FormatContext >
     auto format(const homestore::blk_cache_refill_status& s, FormatContext& ctx) {
-        return fmt::v10::format_to(ctx.out(), "{}/{}", s.slab_refilled_count, s.slab_required_count);
+        return fmt::format_to(ctx.out(), "{}/{}", s.slab_refilled_count, s.slab_required_count);
     }
 };
 } // namespace fmt
@@ -194,6 +196,14 @@ struct blk_cache_fill_session {
 
     blk_cache_fill_session(const size_t num_slabs, const bool fill_entire_cache) : session_id{gen_session_id()} {
         slab_requirements.reserve(num_slabs);
+    }
+
+    // True if at least one slab still needs refilling. Equivalent to the old "!slab_requirements.empty()" check,
+    // which worked only because create_cache_fill_session used to skip slabs that needed nothing -- it now pushes
+    // one slot per slab (so slab_requirements[slab_idx] aligns with the slab index), making empty() meaningless.
+    [[nodiscard]] bool any_refill_needed() const {
+        return std::any_of(slab_requirements.cbegin(), slab_requirements.cend(),
+                           [](const blk_cache_refill_status& s) { return s.need_refill(); });
     }
 
     void urgent_need_atleast(const blk_num_t wait_count) {

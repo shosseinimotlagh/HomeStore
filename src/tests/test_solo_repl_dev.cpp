@@ -29,6 +29,7 @@
 
 #include <homestore/blk.h>
 #include <homestore/homestore.hpp>
+#include "common/coro_helpers.hpp" // detail::sync_get
 #include <homestore/homestore_decl.hpp>
 #include <homestore/replication_service.hpp>
 #include <homestore/replication/repl_dev.h>
@@ -187,8 +188,8 @@ public:
                .vdev_size_type = vdev_size_type_t::VDEV_SIZE_DYNAMIC}}});
         m_uuid1 = hs_utils::gen_random_uuid();
         m_uuid2 = hs_utils::gen_random_uuid();
-        m_repl_dev1 = hs()->repl_service().create_repl_dev(m_uuid1, {}).get().value();
-        m_repl_dev2 = hs()->repl_service().create_repl_dev(m_uuid2, {}).get().value();
+        m_repl_dev1 = detail::sync_get(hs()->repl_service().create_repl_dev(m_uuid1, {})).value();
+        m_repl_dev2 = detail::sync_get(hs()->repl_service().create_repl_dev(m_uuid2, {})).value();
     }
 
     shared< ReplDev > repl_dev1() { return m_repl_dev1; }
@@ -265,10 +266,11 @@ public:
         RELEASE_ASSERT(!err, "Error during alloc_blks");
         RELEASE_ASSERT(!blkids.empty(), "Empty blkids");
 
-        rdev->async_write(blkids, req->write_sgs).thenValue([this, rdev, blkids, data_size, req](auto&& err) {
-            RELEASE_ASSERT(!err, "Error during async_write");
-            rdev->async_write_journal(blkids, *req->header, req->key ? *req->key : sisl::blob{}, data_size, req);
-        });
+        detail::detach_then(
+            rdev->async_write(blkids, req->write_sgs), [this, rdev, blkids, data_size, req](iomgr::io_result const& r) {
+                RELEASE_ASSERT(bool(r), "Error during async_write");
+                rdev->async_write_journal(blkids, *req->header, req->key ? *req->key : sisl::blob{}, data_size, req);
+            });
         return req;
     }
 
@@ -289,9 +291,10 @@ public:
                 auto read_sgs = HSTestHelper::create_sgs(size, size);
                 LOGDEBUG("[{}] Validating replay of lsn={} blkid = {}", boost::uuids::to_string(rdev.group_id()), lsn,
                          blkid.to_string());
-                rdev.async_read(blkid, read_sgs, size)
-                    .thenValue([this, io_count, total_io, hdr = *jhdr, read_sgs, lsn, blkid, &rdev](auto&& err) {
-                        RELEASE_ASSERT(!err, "Error during async_read");
+                detail::detach_then(
+                    rdev.async_read(blkid, read_sgs, size),
+                    [this, io_count, total_io, hdr = *jhdr, read_sgs, lsn, blkid, &rdev](iomgr::io_result const& r) {
+                        RELEASE_ASSERT(bool(r), "Error during async_read");
                         // HS_REL_ASSERT_EQ(hdr.data_size, read_sgs.size,
                         //                  "journal hdr data size mismatch with actual size");
 
@@ -316,8 +319,8 @@ public:
         for (const auto& blkid : req->written_blkids) {
             uint32_t size = blkid.blk_count() * g_block_size;
             auto read_sgs = HSTestHelper::create_sgs(size, size);
-            auto err = rdev->async_read(blkid, read_sgs, size).get();
-            RELEASE_ASSERT(!err, "Error during async_read");
+            auto r = detail::sync_get(rdev->async_read(blkid, read_sgs, size));
+            RELEASE_ASSERT(bool(r), "Error during async_read");
             for (auto const& iov : read_sgs.iovs) {
                 HSTestHelper::validate_data_buf(uintptr_cast(iov.iov_base), iov.iov_len, hdr->data_pattern);
                 iomanager.iobuf_free(uintptr_cast(iov.iov_base));
@@ -342,9 +345,10 @@ public:
 
                 auto sgs_size = blkid.blk_count() * g_block_size;
                 auto read_sgs = HSTestHelper::create_sgs(sgs_size, sgs_size);
-                rdev.async_read(blkid, read_sgs, read_sgs.size)
-                    .thenValue([this, io_count, blkid, &rdev, sgs_size, read_sgs, req](auto&& err) {
-                        RELEASE_ASSERT(!err, "Error during async_read");
+                detail::detach_then(
+                    rdev.async_read(blkid, read_sgs, read_sgs.size),
+                    [this, io_count, blkid, &rdev, sgs_size, read_sgs, req](iomgr::io_result const& r) {
+                        RELEASE_ASSERT(bool(r), "Error during async_read");
 
                         LOGINFO("[{}] Write complete with lsn={} for size={} blkid={}",
                                 boost::uuids::to_string(rdev.group_id()), req->lsn(), sgs_size, blkid.to_string());
@@ -367,7 +371,9 @@ public:
         }
     }
 
-    void trigger_cp_flush() { homestore::hs()->cp_mgr().trigger_cp_flush(true /* force */).get(); }
+    void trigger_cp_flush() {
+        homestore::detail::sync_get(homestore::hs()->cp_mgr().trigger_cp_flush(true /* force */));
+    }
     void truncate_and_verify(shared< ReplDev > repl_dev) {
         auto solo_dev = std::dynamic_pointer_cast< SoloReplDev >(repl_dev);
         // Truncate and verify the CP LSN's

@@ -13,6 +13,8 @@
  * specific language governing permissions and limitations under the License.
  *
  *********************************************************************************/
+#include <queue>
+
 #include <boost/uuid/random_generator.hpp>
 #include "homestore_utils.hpp"
 #include "homestore_assert.hpp"

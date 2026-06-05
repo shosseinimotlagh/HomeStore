@@ -21,12 +21,7 @@
 #include <sisl/fds/buffer.hpp>
 #include <sisl/logging/logging.h>
 
-#include <folly/Expected.h>
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wuninitialized"
-#pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
-#include <folly/futures/Future.h>
-#pragma GCC diagnostic pop
+#include <sisl/async/task.hpp>
 #include <homestore/homestore.hpp>
 #include <homestore/replication_service.hpp>
 #include <homestore/replication/repl_dev.h>
@@ -93,7 +88,7 @@ public:
 
     AsyncReplResult< shared< ReplDev > > create_repl_dev(group_id_t group_id,
                                                          std::set< replica_id_t > const& members) override;
-    folly::SemiFuture< ReplServiceError > remove_repl_dev(group_id_t group_id) override;
+    sisl::async::task< ReplServiceError > remove_repl_dev(group_id_t group_id) override;
     void load_repl_dev(sisl::byte_view const& buf, void* meta_cookie) override;
     AsyncReplResult<> replace_member(group_id_t group_id, std::string& task_id, const replica_member_info& member_out,
                                      const replica_member_info& member_in, uint32_t commit_quorum = 0,
@@ -121,7 +116,7 @@ public:
     virtual ~SoloReplServiceCPHandler() = default;
 
     std::unique_ptr< CPContext > on_switchover_cp(CP* cur_cp, CP* new_cp) override;
-    folly::Future< bool > cp_flush(CP* cp) override;
+    sisl::async::task< bool > cp_flush(CP* cp) override;
     void cp_cleanup(CP* cp) override;
     int cp_progress_percent() override;
 };

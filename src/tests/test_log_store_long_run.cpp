@@ -37,15 +37,14 @@
 #include <vector>
 
 #include <sisl/fds/buffer.hpp>
-#include <folly/Synchronized.h>
 #include <iomgr/io_environment.hpp>
-#include <iomgr/http_server.hpp>
 #include <iomgr/iomgr_flip.hpp>
 #include <sisl/logging/logging.h>
 #include <sisl/options/options.h>
 #include <gtest/gtest.h>
 
 #include <homestore/homestore.hpp>
+#include "common/coro_helpers.hpp" // detail::detach_then
 #include <homestore/logstore_service.hpp>
 
 #include "logstore/log_dev.hpp"
@@ -295,9 +294,10 @@ public:
                 for (uint32_t i{0}; i < n_log_stores; ++i) {
                     SampleLogStoreClient* client = m_log_store_clients[i].get();
                     logstore_service().open_logdev(client->m_logdev_id, flush_mode_t::EXPLICIT);
-                    logstore_service()
-                        .open_log_store(client->m_logdev_id, client->m_store_id, false /* append_mode */)
-                        .thenValue([i, this, client](auto log_store) { client->set_log_store(log_store); });
+                    homestore::detail::detach_then(
+                        logstore_service().open_log_store(client->m_logdev_id, client->m_store_id,
+                                                          false /* append_mode */),
+                        [i, this, client](auto log_store) { client->set_log_store(log_store); });
                 }
             });
             m_helper.restart_homestore();

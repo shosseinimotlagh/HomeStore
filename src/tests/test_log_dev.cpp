@@ -37,6 +37,7 @@
 #include "common/homestore_assert.hpp"
 #include "logstore/log_dev.hpp"
 #include "test_common/homestore_test_common.hpp"
+#include "common/coro_helpers.hpp" // detail::detach_then
 
 using namespace homestore;
 
@@ -294,10 +295,11 @@ TEST_F(LogDevTest, Rollback) {
         std::promise< bool > p;
         auto starting_cb = [&]() {
             logstore_service().open_logdev(logdev_id, flush_mode_t::EXPLICIT);
-            logstore_service().open_log_store(logdev_id, store_id, false /* append_mode */).thenValue([&](auto store) {
-                log_store = store;
-                p.set_value(true);
-            });
+            homestore::detail::detach_then(
+                logstore_service().open_log_store(logdev_id, store_id, false /* append_mode */), [&](auto store) {
+                    log_store = store;
+                    p.set_value(true);
+                });
         };
         start_homestore(true /* restart */, starting_cb);
         p.get_future().get();
@@ -432,10 +434,11 @@ TEST_F(LogDevTest, TruncateAfterRestart) {
         std::promise< bool > p;
         auto starting_cb = [&]() {
             logstore_service().open_logdev(logdev_id, flush_mode_t::EXPLICIT);
-            logstore_service().open_log_store(logdev_id, store_id, false /* append_mode */).thenValue([&](auto store) {
-                log_store = store;
-                p.set_value(true);
-            });
+            homestore::detail::detach_then(
+                logstore_service().open_log_store(logdev_id, store_id, false /* append_mode */), [&](auto store) {
+                    log_store = store;
+                    p.set_value(true);
+                });
         };
         start_homestore(true /* restart */, starting_cb);
         p.get_future().get();
@@ -649,10 +652,11 @@ TEST_F(LogDevTest, TruncateLogsAfterFlushAndRestart) {
         std::promise< bool > p;
         auto starting_cb = [&]() {
             logstore_service().open_logdev(logdev_id, flush_mode_t::EXPLICIT);
-            logstore_service().open_log_store(logdev_id, store_id, false /* append_mode */).thenValue([&](auto store) {
-                log_store = store;
-                p.set_value(true);
-            });
+            homestore::detail::detach_then(
+                logstore_service().open_log_store(logdev_id, store_id, false /* append_mode */), [&](auto store) {
+                    log_store = store;
+                    p.set_value(true);
+                });
         };
         start_homestore(true /* restart */, starting_cb);
         p.get_future().get();

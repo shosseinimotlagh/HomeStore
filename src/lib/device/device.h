@@ -19,17 +19,20 @@
 
 #include <homestore/crc.h>
 #include <iomgr/iomgr.hpp>
+#include <iomgr/drive.hpp> // iomgr::drive_attributes / drive_type (moved out of iomgr.hpp in v13)
+#include <future>          // std::promise (one-shot ChunkPool halt signal)
+#include <list>            // std::list (ChunkPool m_pool
 #include <sisl/fds/sparse_vector.hpp>
 #include <homestore/homestore_decl.hpp>
 #include "device/hs_super_blk.h"
 
 namespace homestore {
 
-VENUM(vdev_multi_pdev_opts_t, uint8_t, // Indicates the style of vdev when multiple pdevs are available
-      ALL_PDEV_STRIPED = 0,            // vdev data is striped across all pdevs
-      ALL_PDEV_MIRRORED = 1,           // vdev data is mirrored on all pdevs
-      SINGLE_FIRST_PDEV = 2,           // vdev data is placed only on the first pdev
-      SINGLE_ANY_PDEV = 3,             // vdev data is placed on only 1 pdev, but any of the pdev
+ENUM(vdev_multi_pdev_opts_t, uint8_t, // Indicates the style of vdev when multiple pdevs are available
+     ALL_PDEV_STRIPED = 0,            // vdev data is striped across all pdevs
+     ALL_PDEV_MIRRORED = 1,           // vdev data is mirrored on all pdevs
+     SINGLE_FIRST_PDEV = 2,           // vdev data is placed only on the first pdev
+     SINGLE_ANY_PDEV = 3,             // vdev data is placed on only 1 pdev, but any of the pdev
 );
 
 #pragma pack(1)
@@ -256,7 +259,7 @@ private:
     std::mutex m_pool_mutex;
     std::thread m_producer_thread;
     bool m_run_pool{false};
-    folly::Promise< folly::Unit > m_pool_halt;
+    std::promise< void > m_pool_halt; // signalled by the producer thread once it observes a halt request
 };
 
 } // namespace homestore

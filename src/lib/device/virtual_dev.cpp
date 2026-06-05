@@ -28,6 +28,7 @@
 #include <type_traits>
 #include <vector>
 
+#include <sisl/async/when_all.hpp> // sisl::async::when_all (collectAllUnsafe replacement)
 #include <sisl/fds/buffer.hpp>
 #include <sisl/metrics/metrics.hpp>
 #include <sisl/logging/logging.h>
@@ -152,22 +153,20 @@ void VirtualDev::remove_chunk(cshared< Chunk >& chunk) {
     m_chunk_selector->remove_chunk(chunk);
 }
 
-folly::Future< std::error_code > VirtualDev::async_format() {
-    static thread_local std::vector< folly::Future< std::error_code > > s_futs;
-    s_futs.clear();
-
+sisl::async::task< iomgr::io_result > VirtualDev::async_format() {
+    std::vector< sisl::async::task< iomgr::io_result > > futs;
+    futs.reserve(m_all_chunks.size());
     for (auto& [_, chunk] : m_all_chunks) {
         auto* pdev = chunk->physical_dev_mutable();
         LOGINFO("writing zero for chunk: {}, size: {}, offset: {}", chunk->chunk_id(), in_bytes(chunk->size()),
                 chunk->start_offset());
-        s_futs.emplace_back(pdev->async_write_zero(chunk->size(), chunk->start_offset()));
+        futs.emplace_back(pdev->async_write_zero(chunk->size(), chunk->start_offset()));
     }
-    return folly::collectAllUnsafe(s_futs).thenTry([](auto&& t) {
-        for (const auto& err_c : t.value()) {
-            if (sisl_unlikely(err_c.value())) { return folly::makeFuture< std::error_code >(err_c); }
-        }
-        return folly::makeFuture< std::error_code >(std::error_code{});
-    });
+    // when_all waits for every child (no short-circuit) and returns results in order, matching collectAllUnsafe.
+    for (auto const& r : co_await sisl::async::when_all(std::move(futs))) {
+        if (sisl_unlikely(!r)) { co_return r; } // first failing chunk wins
+    }
+    co_return iomgr::io_result{0};
 }
 
 bool VirtualDev::is_blk_alloced(BlkId const& blkid) const {
@@ -388,19 +387,19 @@ uint64_t VirtualDev::get_len(const iovec* iov, int iovcnt) {
 // for all writes functions, we don't expect to get invalid dev_offset, since we will never allocate blkid from missing
 // chunk(missing pdev);
 ////////////////////////// async write section //////////////////////////////////
-folly::Future< std::error_code > VirtualDev::async_write(const char* buf, uint32_t size, BlkId const& bid,
-                                                         bool part_of_batch) {
+sisl::async::task< iomgr::io_result > VirtualDev::async_write(const char* buf, uint32_t size, BlkId const& bid,
+                                                              bool part_of_batch) {
     HS_DBG_ASSERT_EQ(bid.is_multi(), false, "async_write needs individual pieces of blkid - not MultiBlkid");
 
 #ifdef _PRERELEASE
-    if (hs()->crash_simulator().is_crashed()) { return folly::makeFuture< std::error_code >(std::error_code()); }
+    if (hs()->crash_simulator().is_crashed()) { co_return iomgr::io_result{size}; }
 #endif
 
     Chunk* chunk;
     uint64_t const dev_offset = to_dev_offset(bid, &chunk);
     if (sisl_unlikely(dev_offset == INVALID_DEV_OFFSET)) {
         // TODO: define a new error code for missing pdev case;
-        return folly::makeFuture< std::error_code >(std::make_error_code(std::errc::resource_unavailable_try_again));
+        co_return std::unexpected(std::make_error_condition(std::errc::resource_unavailable_try_again));
     }
     auto* pdev = chunk->physical_dev_mutable();
 
@@ -409,17 +408,17 @@ folly::Future< std::error_code > VirtualDev::async_write(const char* buf, uint32
     if (sisl_unlikely(!hs_utils::mod_aligned_sz(dev_offset, pdev->align_size()))) {
         COUNTER_INCREMENT(m_metrics, unalign_writes, 1);
     }
-    return pdev->async_write(buf, size, dev_offset, part_of_batch);
+    co_return co_await pdev->async_write(buf, size, dev_offset, part_of_batch);
 }
 
-folly::Future< std::error_code > VirtualDev::async_write(const char* buf, uint32_t size, cshared< Chunk >& chunk,
-                                                         uint64_t offset_in_chunk) {
+sisl::async::task< iomgr::io_result > VirtualDev::async_write(const char* buf, uint32_t size, cshared< Chunk >& chunk,
+                                                              uint64_t offset_in_chunk) {
 #ifdef _PRERELEASE
-    if (hs()->crash_simulator().is_crashed()) { return folly::makeFuture< std::error_code >(std::error_code()); }
+    if (hs()->crash_simulator().is_crashed()) { co_return iomgr::io_result{size}; }
 #endif
 
     if (sisl_unlikely(!is_chunk_available(chunk))) {
-        return folly::makeFuture< std::error_code >(std::make_error_code(std::errc::resource_unavailable_try_again));
+        co_return std::unexpected(std::make_error_condition(std::errc::resource_unavailable_try_again));
     }
     auto const dev_offset = chunk->start_offset() + offset_in_chunk;
     auto* pdev = chunk->physical_dev_mutable();
@@ -429,20 +428,20 @@ folly::Future< std::error_code > VirtualDev::async_write(const char* buf, uint32
     if (sisl_unlikely(!hs_utils::mod_aligned_sz(dev_offset, pdev->align_size()))) {
         COUNTER_INCREMENT(m_metrics, unalign_writes, 1);
     }
-    return pdev->async_write(buf, size, dev_offset, false /* part_of_batch */);
+    co_return co_await pdev->async_write(buf, size, dev_offset, false /* part_of_batch */);
 }
 
-folly::Future< std::error_code > VirtualDev::async_writev(const iovec* iov, const int iovcnt, BlkId const& bid,
-                                                          bool part_of_batch) {
+sisl::async::task< iomgr::io_result > VirtualDev::async_writev(const iovec* iov, const int iovcnt, BlkId const& bid,
+                                                               bool part_of_batch) {
     HS_DBG_ASSERT_EQ(bid.is_multi(), false, "async_writev needs individual pieces of blkid - not MultiBlkid");
 #ifdef _PRERELEASE
-    if (hs()->crash_simulator().is_crashed()) { return folly::makeFuture< std::error_code >(std::error_code()); }
+    if (hs()->crash_simulator().is_crashed()) { co_return iomgr::io_result{get_len(iov, iovcnt)}; }
 #endif
 
     Chunk* chunk;
     uint64_t const dev_offset = to_dev_offset(bid, &chunk);
     if (sisl_unlikely(dev_offset == INVALID_DEV_OFFSET)) {
-        return folly::makeFuture< std::error_code >(std::make_error_code(std::errc::resource_unavailable_try_again));
+        co_return std::unexpected(std::make_error_condition(std::errc::resource_unavailable_try_again));
     }
     auto const size = get_len(iov, iovcnt);
     auto* pdev = chunk->physical_dev_mutable();
@@ -452,17 +451,17 @@ folly::Future< std::error_code > VirtualDev::async_writev(const iovec* iov, cons
     if (sisl_unlikely(!hs_utils::mod_aligned_sz(dev_offset, pdev->align_size()))) {
         COUNTER_INCREMENT(m_metrics, unalign_writes, 1);
     }
-    return pdev->async_writev(iov, iovcnt, size, dev_offset, part_of_batch);
+    co_return co_await pdev->async_writev(iov, iovcnt, size, dev_offset, part_of_batch);
 }
 
-folly::Future< std::error_code > VirtualDev::async_writev(const iovec* iov, const int iovcnt, cshared< Chunk >& chunk,
-                                                          uint64_t offset_in_chunk) {
+sisl::async::task< iomgr::io_result > VirtualDev::async_writev(const iovec* iov, const int iovcnt,
+                                                               cshared< Chunk >& chunk, uint64_t offset_in_chunk) {
 #ifdef _PRERELEASE
-    if (hs()->crash_simulator().is_crashed()) { return folly::makeFuture< std::error_code >(std::error_code()); }
+    if (hs()->crash_simulator().is_crashed()) { co_return iomgr::io_result{get_len(iov, iovcnt)}; }
 #endif
 
     if (sisl_unlikely(!is_chunk_available(chunk))) {
-        return folly::makeFuture< std::error_code >(std::make_error_code(std::errc::resource_unavailable_try_again));
+        co_return std::unexpected(std::make_error_condition(std::errc::resource_unavailable_try_again));
     }
     auto const dev_offset = chunk->start_offset() + offset_in_chunk;
     auto const size = get_len(iov, iovcnt);
@@ -473,7 +472,7 @@ folly::Future< std::error_code > VirtualDev::async_writev(const iovec* iov, cons
     if (sisl_unlikely(!hs_utils::mod_aligned_sz(dev_offset, pdev->align_size()))) {
         COUNTER_INCREMENT(m_metrics, unalign_writes, 1);
     }
-    return pdev->async_writev(iov, iovcnt, size, dev_offset, false /* part_of_batch */);
+    co_return co_await pdev->async_writev(iov, iovcnt, size, dev_offset, false /* part_of_batch */);
 }
 
 ////////////////////////// sync write section //////////////////////////////////
@@ -561,28 +560,28 @@ std::error_code VirtualDev::sync_writev(const iovec* iov, int iovcnt, cshared< C
 // for read, chunk might be missing in case of pdev is gone(for example , breakfix), so we need to check if chunk is
 // loaded before proceeding with read;
 ////////////////////////////////// async read section ///////////////////////////////////////////////
-folly::Future< std::error_code > VirtualDev::async_read(char* buf, uint64_t size, BlkId const& bid,
-                                                        bool part_of_batch) {
+sisl::async::task< iomgr::io_result > VirtualDev::async_read(char* buf, uint64_t size, BlkId const& bid,
+                                                             bool part_of_batch) {
     HS_DBG_ASSERT_EQ(bid.is_multi(), false, "async_read needs individual pieces of blkid - not MultiBlkid");
 
     Chunk* pchunk;
     uint64_t const dev_offset = to_dev_offset(bid, &pchunk);
     if (sisl_unlikely(dev_offset == INVALID_DEV_OFFSET)) {
-        return folly::makeFuture< std::error_code >(std::make_error_code(std::errc::resource_unavailable_try_again));
+        co_return std::unexpected(std::make_error_condition(std::errc::resource_unavailable_try_again));
     }
-    return pchunk->physical_dev_mutable()->async_read(buf, size, dev_offset, part_of_batch);
+    co_return co_await pchunk->physical_dev_mutable()->async_read(buf, size, dev_offset, part_of_batch);
 }
 
-folly::Future< std::error_code > VirtualDev::async_readv(iovec* iovs, int iovcnt, uint64_t size, BlkId const& bid,
-                                                         bool part_of_batch) {
+sisl::async::task< iomgr::io_result > VirtualDev::async_readv(iovec* iovs, int iovcnt, uint64_t size, BlkId const& bid,
+                                                              bool part_of_batch) {
     HS_DBG_ASSERT_EQ(bid.is_multi(), false, "async_readv needs individual pieces of blkid - not MultiBlkid");
 
     Chunk* pchunk;
     uint64_t const dev_offset = to_dev_offset(bid, &pchunk);
     if (sisl_unlikely(dev_offset == INVALID_DEV_OFFSET)) {
-        return folly::makeFuture< std::error_code >(std::make_error_code(std::errc::resource_unavailable_try_again));
+        co_return std::unexpected(std::make_error_condition(std::errc::resource_unavailable_try_again));
     }
-    return pchunk->physical_dev_mutable()->async_readv(iovs, iovcnt, size, dev_offset, part_of_batch);
+    co_return co_await pchunk->physical_dev_mutable()->async_readv(iovs, iovcnt, size, dev_offset, part_of_batch);
 }
 
 ////////////////////////////////////////// sync read section ////////////////////////////////////////////
@@ -639,28 +638,27 @@ std::error_code VirtualDev::sync_readv(iovec* iov, int iovcnt, cshared< Chunk >&
     return pdev->sync_readv(iov, iovcnt, size, dev_offset);
 }
 
-folly::Future< std::error_code > VirtualDev::queue_fsync_pdevs() {
+sisl::async::task< iomgr::io_result > VirtualDev::queue_fsync_pdevs() {
     HS_DBG_ASSERT_EQ(HS_DYNAMIC_CONFIG(device->direct_io_mode), false, "Not expect to do fsync in DIRECT_IO_MODE.");
 
     assert(m_pdevs.size() > 0);
     if (m_pdevs.size() == 1) {
         auto* pdev = *(m_pdevs.begin());
         HS_LOG(TRACE, device, "Flushing pdev {}", pdev->get_devname());
-        return pdev->queue_fsync();
-    } else {
-        static thread_local std::vector< folly::Future< std::error_code > > s_futs;
-        s_futs.clear();
-        for (auto* pdev : m_pdevs) {
-            HS_LOG(TRACE, device, "Flushing pdev {}", pdev->get_devname());
-            s_futs.emplace_back(pdev->queue_fsync());
-        }
-        return folly::collectAllUnsafe(s_futs).thenTry([](auto&& t) {
-            for (const auto& err_c : t.value()) {
-                if (sisl_unlikely(err_c.value())) { return folly::makeFuture< std::error_code >(err_c); }
-            }
-            return folly::makeFuture< std::error_code >(std::error_code{});
-        });
+        co_return co_await pdev->queue_fsync();
     }
+
+    std::vector< sisl::async::task< iomgr::io_result > > futs;
+    futs.reserve(m_pdevs.size());
+    for (auto* pdev : m_pdevs) {
+        HS_LOG(TRACE, device, "Flushing pdev {}", pdev->get_devname());
+        futs.emplace_back(pdev->queue_fsync());
+    }
+    // when_all waits for every child (no short-circuit) and returns results in order, matching collectAllUnsafe.
+    for (auto const& r : co_await sisl::async::when_all(std::move(futs))) {
+        if (sisl_unlikely(!r)) { co_return r; } // first failing pdev wins
+    }
+    co_return iomgr::io_result{0};
 }
 
 void VirtualDev::submit_batch() {

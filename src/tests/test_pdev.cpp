@@ -78,9 +78,8 @@ protected:
 
 public:
     void setup_device_manager() {
-        auto const is_spdk = SISL_OPTIONS["spdk"].as< bool >();
-
-        ioenvironment.with_iomgr(iomgr::iomgr_params{.num_threads = 1, .is_spdk = is_spdk});
+        // iomgr v13 is io_uring-only; the spdk option/param no longer exists.
+        ioenvironment.with_iomgr(iomgr::iomgr_params{.num_threads = 1});
         m_dmgr = std::make_unique< homestore::DeviceManager >(
             m_dev_infos, [this](const homestore::vdev_info&, bool load_existing) -> shared< homestore::VirtualDev > {
                 return nullptr;

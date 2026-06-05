@@ -142,7 +142,7 @@ public:
     std::mutex m_flush_buffer_mtx;
     sisl::ConcurrentInsertVector< IndexBufferPtr >::iterator m_dirty_buf_it;
 
-    iomgr::FiberManagerLib::mutex m_txn_journal_mtx;
+    std::mutex m_txn_journal_mtx;
     sisl::io_blob_safe m_txn_journal_buf;
 
 public:
@@ -185,7 +185,7 @@ public:
 
 public:
     std::unique_ptr< CPContext > on_switchover_cp(CP* cur_cp, CP* new_cp) override;
-    folly::Future< bool > cp_flush(CP* cp) override;
+    sisl::async::task< bool > cp_flush(CP* cp) override;
     void cp_cleanup(CP* cp) override;
     int cp_progress_percent() override;
 

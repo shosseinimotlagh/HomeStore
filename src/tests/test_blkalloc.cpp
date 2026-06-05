@@ -29,8 +29,10 @@
 #include <gtest/gtest.h>
 #include <boost/dynamic_bitset.hpp>
 #include <sisl/fds/bitword.hpp>
-#include <folly/ConcurrentSkipList.h>
-#include <folly/concurrency/ConcurrentHashMap.h>
+#include <memory>
+#include <optional>
+#include <set>
+#include <boost/unordered/concurrent_flat_map.hpp>
 #include <sisl/logging/logging.h>
 #include <sisl/options/options.h>
 #include <iomgr/iomgr_flip.hpp>
@@ -50,14 +52,40 @@ static thread_local std::random_device g_rd{};
 static thread_local std::default_random_engine g_re{g_rd()};
 static std::mutex s_print_mutex;
 
-using BlkMapT = folly::ConcurrentHashMap< blk_num_t, blk_count_t >;
-using BlkListT = folly::ConcurrentSkipList< blk_num_t >;
-using BlkListAccessorT = BlkListT::Accessor;
+using BlkMapT = boost::concurrent_flat_map< blk_num_t, blk_count_t >;
+// a std::set guarded by a mutex. Exposes only what the test uses. first_ge() replaces the lower_bound()/end()/
+// *it pattern by returning a value copy, so the existing "erase the found block, retry on contention" logic
+// still holds. The mutex is held via shared_ptr so the tracker stays movable/copyable (it lives in a vector).
+class BlkList {
+public:
+    bool add(blk_num_t v) {
+        std::lock_guard lg{*m_mtx};
+        return m_set.insert(v).second;
+    }
+    bool erase(blk_num_t v) {
+        std::lock_guard lg{*m_mtx};
+        return m_set.erase(v) > 0;
+    }
+    size_t size() const {
+        std::lock_guard lg{*m_mtx};
+        return m_set.size();
+    }
+    // First element >= lb, or nullopt; returns a value copy (no escaping iterator).
+    std::optional< blk_num_t > first_ge(blk_num_t lb) const {
+        std::lock_guard lg{*m_mtx};
+        auto const it = m_set.lower_bound(lb);
+        return (it == m_set.end()) ? std::nullopt : std::optional< blk_num_t >{*it};
+    }
+
+private:
+    std::shared_ptr< std::mutex > m_mtx{std::make_shared< std::mutex >()};
+    std::set< blk_num_t > m_set;
+};
+using BlkListAccessorT = BlkList;
 using size_generator_t = std::function< blk_count_t(void) >;
 
 struct AllocedBlkTracker {
-    AllocedBlkTracker(const uint64_t quota) :
-            m_alloced_blk_list{BlkListT::create(8)}, m_alloced_blk_map{quota}, m_max_quota{quota} {}
+    AllocedBlkTracker(const uint64_t quota) : m_alloced_blk_list{}, m_alloced_blk_map{quota}, m_max_quota{quota} {}
 
     void adjust_limits(const uint8_t hi_limit_pct) {
         m_lo_limit = m_alloced_blk_list.size();
@@ -86,14 +114,16 @@ static uint32_t round_count(const uint32_t count) {
 struct BlkAllocatorTest {
     std::atomic< int64_t > m_alloced_count{0};
     std::vector< AllocedBlkTracker > m_slab_alloced_blks;
+    // NOTE: m_total_count must be declared (and thus initialized) BEFORE m_rand_blk_generator, since members
+    // initialize in declaration order and m_rand_blk_generator's range is derived from m_total_count.
+    const uint32_t m_total_count;
     std::uniform_int_distribution< uint32_t > m_rand_blk_generator;
     bool m_track_slabs{false};
     size_t m_num_slabs{0};
 
-    const uint32_t m_total_count;
     BlkAllocatorTest() :
-            m_rand_blk_generator{1, m_total_count},
-            m_total_count{round_count(SISL_OPTIONS["num_blks"].as< uint32_t >())} {
+            m_total_count{round_count(SISL_OPTIONS["num_blks"].as< uint32_t >())},
+            m_rand_blk_generator{1, m_total_count} {
         m_slab_alloced_blks.emplace_back(m_total_count);
     }
     BlkAllocatorTest(const BlkAllocatorTest&) = delete;
@@ -150,7 +180,7 @@ struct BlkAllocatorTest {
         const slab_idx_t slab_idx{m_track_slabs ? nblks_to_idx(bid.blk_count()) : static_cast< slab_idx_t >(0)};
         if (track_block_group) {
             // add blocks as group to each slab
-            if (!blk_map(slab_idx).insert(blk_num, bid.blk_count()).second) {
+            if (!blk_map(slab_idx).try_emplace(blk_num, bid.blk_count())) {
                 {
                     std::scoped_lock< std::mutex > lock{s_print_mutex};
                     std::cout << "Duplicate alloc of blk=" << blk_num << std::endl;
@@ -241,20 +271,21 @@ struct BlkAllocatorTest {
             if (blk_list(idx).size() > 0) {
                 // find a block to free
                 do {
-                    const auto it{blk_list(idx).lower_bound(rand_num)};
-                    if (it != blk_list(idx).end()) {
-                        if (blk_list(idx).erase(*it)) {
-                            start_blk_num = *it;
+                    const auto found{blk_list(idx).first_ge(rand_num)};
+                    if (found) {
+                        if (blk_list(idx).erase(*found)) {
+                            start_blk_num = *found;
                             if (track_block_group) {
-                                const auto map_it{blk_map(idx).find(start_blk_num)};
-                                const blk_count_t group_size{map_it->second};
+                                blk_count_t group_size{0};
+                                blk_map(idx).cvisit(start_blk_num,
+                                                    [&group_size](auto const& e) { group_size = e.second; });
                                 n_blks = std::min(group_size, pref_nblks);
                                 blk_map(idx).erase(start_blk_num);
                                 if (n_blks < group_size) {
                                     // add back to right slab
                                     const blk_count_t remain_blocks{static_cast< blk_count_t >(group_size - n_blks)};
                                     const auto new_idx = nblks_to_idx(remain_blocks);
-                                    blk_map(new_idx).insert(start_blk_num + n_blks, remain_blocks);
+                                    blk_map(new_idx).try_emplace(start_blk_num + n_blks, remain_blocks);
                                     blk_list(new_idx).add(start_blk_num + n_blks);
                                 }
                             } else {
@@ -301,13 +332,13 @@ struct BlkAllocatorTest {
         // find a block to free
         uint32_t rand_num{m_rand_blk_generator(g_re)};
         do {
-            const auto it{blk_list(0).lower_bound(rand_num)};
-            if (it != blk_list(0).end()) {
-                start_blk_num = *it;
+            const auto found{blk_list(0).first_ge(rand_num)};
+            if (found) {
+                start_blk_num = *found;
                 if (blk_list(0).erase(start_blk_num)) {
                     if (track_block_group) {
-                        const auto map_it{blk_map(0).find(start_blk_num)};
-                        const blk_count_t group_size{map_it->second};
+                        blk_count_t group_size{0};
+                        blk_map(0).cvisit(start_blk_num, [&group_size](auto const& e) { group_size = e.second; });
                         n_blks = std::min(group_size, pref_nblks);
                         if (round_nblks && (n_blks > 2)) {
                             n_blks = static_cast< blk_count_t >(1) << sisl::logBase2(n_blks);
@@ -316,7 +347,7 @@ struct BlkAllocatorTest {
                         if (n_blks < group_size) {
                             // add remaining back
                             const blk_count_t remain_blocks{static_cast< blk_count_t >(group_size - n_blks)};
-                            blk_map(0).insert(start_blk_num + n_blks, remain_blocks);
+                            blk_map(0).try_emplace(start_blk_num + n_blks, remain_blocks);
                             blk_list(0).add(start_blk_num + n_blks);
                         }
                     } else {

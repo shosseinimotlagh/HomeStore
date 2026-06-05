@@ -18,6 +18,7 @@
 #include <homestore/logstore_service.hpp>
 #include <boost/uuid/uuid.hpp>
 #include "common/homestore_assert.hpp"
+#include "common/coro_helpers.hpp" // detail::sync_get
 #include "replication/service/generic_repl_svc.h"
 #include "replication/service/raft_repl_service.h"
 #include "replication/repl_dev/solo_repl_dev.h"
@@ -54,7 +55,7 @@ GenericReplService::~GenericReplService() {
 ReplResult< shared< ReplDev > > GenericReplService::get_repl_dev(group_id_t group_id) const {
     std::shared_lock lg(m_rd_map_mtx);
     if (auto it = m_rd_map.find(group_id); it != m_rd_map.end()) { return it->second; }
-    return folly::makeUnexpected(ReplServiceError::SERVER_NOT_FOUND);
+    return std::unexpected(ReplServiceError::SERVER_NOT_FOUND);
 }
 
 void GenericReplService::iterate_repl_devs(std::function< void(cshared< ReplDev >&) > const& cb) {
@@ -79,7 +80,7 @@ hs_stats GenericReplService::get_cap_stats() const {
 
 ///////////////////// SoloReplService specializations and CP Callbacks /////////////////////////////
 SoloReplService::SoloReplService(cshared< ReplApplication >& repl_app) : GenericReplService{repl_app} {}
-SoloReplService::~SoloReplService(){};
+SoloReplService::~SoloReplService() {};
 
 void SoloReplService::start() {
     for (auto const& [buf, mblk] : m_sb_bufs) {
@@ -144,10 +145,10 @@ AsyncReplResult< shared< ReplDev > > SoloReplService::create_repl_dev(group_id_t
     return make_async_success< shared< ReplDev > >(rdev);
 }
 
-folly::SemiFuture< ReplServiceError > SoloReplService::remove_repl_dev(group_id_t group_id) {
+sisl::async::task< ReplServiceError > SoloReplService::remove_repl_dev(group_id_t group_id) {
     // RD_LOGI("Removing repl dev for group_id={}", boost::uuids::to_string(group_id));
     auto rdev = get_repl_dev(group_id);
-    if (rdev.hasError()) { return folly::makeSemiFuture(rdev.error()); }
+    if (!rdev) co_return rdev.error();
 
     auto rdev_ptr = rdev.value();
 
@@ -170,7 +171,7 @@ folly::SemiFuture< ReplServiceError > SoloReplService::remove_repl_dev(group_id_
     // 5. now destroy the upper layer's listener instance;
     m_repl_app->destroy_repl_dev_listener(group_id);
 
-    return folly::makeSemiFuture(ReplServiceError::OK);
+    co_return ReplServiceError::OK;
 }
 
 void SoloReplService::load_repl_dev(sisl::byte_view const& buf, void* meta_cookie) {
@@ -218,7 +219,7 @@ AsyncReplResult<> SoloReplService::clean_replace_member_task(group_id_t group_id
 }
 
 ReplResult< std::vector< replace_member_task > > SoloReplService::list_replace_member_tasks(uint64_t trace_id) const {
-    return folly::makeUnexpected(ReplServiceError::NOT_IMPLEMENTED);
+    return std::unexpected(ReplServiceError::NOT_IMPLEMENTED);
 }
 
 ReplaceMemberStatus SoloReplService::get_replace_member_status(group_id_t group_id, std::string& task_id,
@@ -230,7 +231,7 @@ ReplaceMemberStatus SoloReplService::get_replace_member_status(group_id_t group_
 }
 
 ReplServiceError SoloReplService::destroy_repl_dev(group_id_t group_id, uint64_t trace_id) {
-    return remove_repl_dev(group_id).get();
+    return detail::sync_get(remove_repl_dev(group_id));
 }
 
 void SoloReplService::trigger_snapshot_creation(group_id_t group_id, repl_lsn_t compact_lsn, bool wait_for_commit) {}
@@ -239,11 +240,11 @@ std::unique_ptr< CPContext > SoloReplServiceCPHandler::on_switchover_cp(CP* cur_
     return std::make_unique< CPContext >(new_cp);
 }
 
-folly::Future< bool > SoloReplServiceCPHandler::cp_flush(CP* cp) {
+sisl::async::task< bool > SoloReplServiceCPHandler::cp_flush(CP* cp) {
     repl_service().iterate_repl_devs([cp](cshared< ReplDev >& repl_dev) {
         if (repl_dev) { dp_cast< SoloReplDev >(repl_dev)->cp_flush(cp); }
     });
-    return folly::makeFuture< bool >(true);
+    co_return true;
 }
 
 void SoloReplServiceCPHandler::cp_cleanup(CP* cp) {

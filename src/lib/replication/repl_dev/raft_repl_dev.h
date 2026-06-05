@@ -1,6 +1,8 @@
 #pragma once
 
 #include <string>
+#include <shared_mutex>
+#include <boost/unordered/concurrent_flat_map.hpp>
 
 #include <libnuraft/ptr.hxx>
 #include <nuraft_mesg/nuraft_mesg.hpp>
@@ -92,8 +94,8 @@ public:
         REGISTER_HISTOGRAM(rreq_data_write_latency_us, "rreq data write latency in us", "rreq_data_op_latency",
                            {"op", "write"}, HistogramBucketsType(OpLatecyBuckets));
         REGISTER_HISTOGRAM_WITH_CARDINALITY_REDUCTION(rreq_push_data_latency_us, "rreq data write latency in us",
-                                                              "rreq_data_op_latency", {"op", "push"},
-                                                              HistogramBucketsType(OpLatecyBuckets));
+                                                      "rreq_data_op_latency", {"op", "push"},
+                                                      HistogramBucketsType(OpLatecyBuckets));
         // latency from follower->originator->follower, not including actual data write on follower;
         REGISTER_HISTOGRAM(rreq_data_fetch_latency_us, "rreq data fetch latency in us", "rreq_data_op_latency",
                            {"op", "fetch"}, HistogramBucketsType(OpLatecyBuckets));
@@ -103,26 +105,24 @@ public:
                            {"op", "write"}, HistogramBucketsType(OpLatecyBuckets));
 
         REGISTER_HISTOGRAM_WITH_CARDINALITY_REDUCTION(rreq_pieces_per_write, "Number of individual pieces per write",
-                                                              HistogramBucketsType(SteppedUpto32Buckets));
+                                                      HistogramBucketsType(SteppedUpto32Buckets));
 
         // In the identical layout chunk, the blk num of the follower and leader is expected to be the same.
         // However, due to the concurrency between the data channel and the raft channel, there might be some
         // allocation differences on the same lsn. When a leader switch occurs, these differences could become garbage.
         // This metric can partially reflect the potential amount of garbage.
         REGISTER_HISTOGRAM_WITH_CARDINALITY_REDUCTION(blk_diff_with_proposer,
-                                                              "allocated blk num diff on the same lsn with proposer "
-                                                              "when chunk usage >= 0.9",
-                                                              HistogramBucketsType(ExponentialOfTwoBuckets));
+                                                      "allocated blk num diff on the same lsn with proposer "
+                                                      "when chunk usage >= 0.9",
+                                                      HistogramBucketsType(ExponentialOfTwoBuckets));
 
         // Raft channel metrics
-        REGISTER_HISTOGRAM_WITH_CARDINALITY_REDUCTION(raft_end_of_append_batch_latency_us,
-                                                              "Raft end_of_append_batch latency in us",
-                                                              "raft_logstore_append_latency",
-                                                              {"op", "end_of_append_batch"},
-                                                              HistogramBucketsType(OpLatecyBuckets));
+        REGISTER_HISTOGRAM_WITH_CARDINALITY_REDUCTION(
+            raft_end_of_append_batch_latency_us, "Raft end_of_append_batch latency in us",
+            "raft_logstore_append_latency", {"op", "end_of_append_batch"}, HistogramBucketsType(OpLatecyBuckets));
         REGISTER_HISTOGRAM_WITH_CARDINALITY_REDUCTION(data_channel_wait_latency_us, "Data channel wait latency in us",
-                                                              "raft_logstore_append_latency", {"op", "wait_for_data"},
-                                                              HistogramBucketsType(OpLatecyBuckets));
+                                                      "raft_logstore_append_latency", {"op", "wait_for_data"},
+                                                      HistogramBucketsType(OpLatecyBuckets));
 
         register_me_to_farm();
     }
@@ -154,7 +154,7 @@ public:
     sisl::io_blob_safe serialize() override {
         // Dump the context from nuraft buffer to the io blob.
         auto snp_buf = snapshot_->serialize();
-        sisl::io_blob_safe blob{s_cast< size_t >(snp_buf->size())};
+        sisl::io_blob_safe blob{uint32_cast(snp_buf->size())};
         std::memcpy(blob.bytes(), snp_buf->data_begin(), snp_buf->size());
         return blob;
     }
@@ -180,8 +180,8 @@ class RaftReplDev : public ReplDev,
 private:
     shared< RaftStateMachine > m_state_machine;
     RaftReplService& m_repl_svc;
-    folly::ConcurrentHashMap< repl_key, repl_req_ptr_t, repl_key::Hasher > m_repl_key_req_map;
-    nuraft_mesg::Manager& m_msg_mgr;
+    boost::concurrent_flat_map< repl_key, repl_req_ptr_t, repl_key::Hasher > m_repl_key_req_map;
+    nuraft_mesg::manager& m_msg_mgr;
     group_id_t m_group_id;      // Replication Group id
     std::string m_rdev_name;    // Short name for the group for easy debugging
     std::string m_identify_str; // combination of rdev_name:group_id
@@ -192,10 +192,10 @@ private:
     sisl::urcu_scoped_ptr< repl_dev_stage_t > m_stage;
 
     std::mutex m_config_mtx;
-    superblk< raft_repl_dev_superblk > m_rd_sb;        // Superblk where we store the state machine etc
-    json_superblk m_raft_config_sb;                    // Raft Context and Config data information stored
-    mutable folly::SharedMutexWritePriority m_sb_lock; // Lock to protect staged sb and persisting sb
-    raft_repl_dev_superblk m_sb_in_mem;                // Cached version which is used to read and for staging
+    superblk< raft_repl_dev_superblk > m_rd_sb; // Superblk where we store the state machine etc
+    json_superblk m_raft_config_sb;             // Raft Context and Config data information stored
+    mutable std::shared_mutex m_sb_lock;        // Lock to protect staged sb and persisting sb
+    raft_repl_dev_superblk m_sb_in_mem;         // Cached version which is used to read and for staging
 
     std::atomic< repl_lsn_t > m_commit_upto_lsn{0}; // LSN which was lastly committed, to track flushes
     std::atomic< repl_lsn_t > m_compact_lsn{0};     // LSN upto which it was compacted, it is used to track where to
@@ -214,9 +214,9 @@ private:
     std::atomic< uint64_t > m_next_dsn{0}; // Data Sequence Number that will keep incrementing for each data entry
 
     iomgr::timer_handle_t m_wait_data_timer_hdl{
-        iomgr::null_timer_handle}; // non-recurring timer doesn't need to be cancelled on shutdown;
+        iomgr::timer_handle_t{}}; // non-recurring timer doesn't need to be cancelled on shutdown;
     Clock::time_point m_destroyed_time;
-    folly::Promise< ReplServiceError > m_destroy_promise;
+    sisl::async::value_awaitable< ReplServiceError > m_destroy_promise;
     RaftReplDevMetrics m_metrics;
 
     static std::atomic< uint64_t > s_next_group_ordinal;
@@ -264,7 +264,7 @@ public:
     ReplResult< replace_member_task > get_ongoing_replace_member_task(uint64_t trace_id = 0) const;
     std::string get_replace_member_task_id() const { return {m_rd_sb->replace_member_task.task_id}; }
 
-    folly::SemiFuture< ReplServiceError > destroy_group();
+    sisl::async::task< ReplServiceError > destroy_group();
 
     //////////////// All ReplDev overrides/implementation ///////////////////////
     virtual std::error_code alloc_blks(uint32_t size, const blk_alloc_hints& hints,
@@ -272,11 +272,11 @@ public:
         RD_REL_ASSERT(false, "NOT SUPPORTED");
         return std::make_error_code(std::errc::operation_not_supported);
     }
-    virtual folly::Future< std::error_code > async_write(const std::vector< MultiBlkId >& blkids,
-                                                         sisl::sg_list const& value, bool part_of_batch = false,
-                                                         trace_id_t tid = 0) override {
+    virtual sisl::async::task< iomgr::io_result > async_write(const std::vector< MultiBlkId >& blkids,
+                                                              sisl::sg_list const& value, bool part_of_batch = false,
+                                                              trace_id_t tid = 0) override {
         RD_REL_ASSERT(false, "NOT SUPPORTED");
-        return folly::makeFuture< std::error_code >(std::make_error_code(std::errc::operation_not_supported));
+        co_return std::unexpected(std::make_error_condition(std::errc::operation_not_supported));
     }
 
     virtual void async_write_journal(const std::vector< MultiBlkId >& blkids, sisl::blob const& header,
@@ -287,9 +287,10 @@ public:
 
     void async_alloc_write(sisl::blob const& header, sisl::blob const& key, sisl::sg_list const& value,
                            repl_req_ptr_t ctx, bool part_of_batch = false, trace_id_t tid = 0) override;
-    folly::Future< std::error_code > async_read(MultiBlkId const& blkid, sisl::sg_list& sgs, uint32_t size,
-                                                bool part_of_batch = false, trace_id_t tid = 0) override;
-    folly::Future< std::error_code > async_free_blks(int64_t lsn, MultiBlkId const& blkid, trace_id_t tid = 0) override;
+    sisl::async::task< iomgr::io_result > async_read(MultiBlkId const& blkid, sisl::sg_list& sgs, uint32_t size,
+                                                     bool part_of_batch = false, trace_id_t tid = 0) override;
+    sisl::async::task< iomgr::io_result > async_free_blks(int64_t lsn, MultiBlkId const& blkid,
+                                                          trace_id_t tid = 0) override;
     AsyncReplResult<> become_leader() override;
     bool is_leader() const override;
     replica_id_t get_leader_id() const override;
@@ -357,7 +358,7 @@ public:
     repl_req_ptr_t applier_create_req(repl_key const& rkey, journal_type_t code, sisl::blob const& user_header,
                                       sisl::blob const& key, uint32_t data_size, bool is_data_channel,
                                       int64_t lsn = -1 /*init lsn*/);
-    folly::Future< folly::Unit > notify_after_data_written(std::vector< repl_req_ptr_t >* rreqs);
+    sisl::async::task< void > notify_after_data_written(std::vector< repl_req_ptr_t >* rreqs);
     void check_and_fetch_remote_data(std::vector< repl_req_ptr_t > rreqs);
     void cp_flush(CP* cp, cshared< ReplDevCPContext > ctx);
     cshared< ReplDevCPContext > get_cp_ctx(CP* cp);
@@ -484,12 +485,15 @@ protected:
 private:
     shared< nuraft::log_store > data_journal() { return m_data_journal; }
     void push_data_to_all_followers(repl_req_ptr_t rreq, sisl::sg_list const& data);
+    sisl::async::task< void > push_data_coro(repl_req_ptr_t rreq, std::set< replica_id_t > peers);
     void on_push_data_received(intrusive< sisl::GenericRpcData >& rpc_data);
     void on_fetch_data_received(intrusive< sisl::GenericRpcData >& rpc_data);
     void fetch_data_from_remote(std::vector< repl_req_ptr_t > rreqs);
+    sisl::async::task< void > fetch_data_coro(shared< flatbuffers::FlatBufferBuilder > builder,
+                                              nuraft_mesg::svr_id_t originator, std::vector< repl_req_ptr_t > rreqs);
     void handle_fetch_data_response(sisl::GenericClientResponse response, std::vector< repl_req_ptr_t > rreqs);
     bool is_resync_mode();
-    repl_data_rpc_error_code nuraft_to_hs_error(nuraft::cmd_result_code const& nuraft_err);
+    repl_data_rpc_error_code nuraft_to_hs_error(std::error_condition const& cond);
     nuraft_mesg::destination_t hs_to_nuraft_dest(repl_dest_t dest);
 
     /**

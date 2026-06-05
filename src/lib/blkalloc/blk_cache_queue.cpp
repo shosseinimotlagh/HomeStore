@@ -263,9 +263,12 @@ BlkAllocStatus FreeBlkCacheQueue::merge_down(const slab_idx_t slab_idx, const bl
 
 std::shared_ptr< blk_cache_fill_session > FreeBlkCacheQueue::create_cache_fill_session(const bool fill_entire_cache) {
     const auto ptr{std::make_shared< blk_cache_fill_session >(m_slab_queues.size(), fill_entire_cache)};
+    // One slot per slab, indexed by slab_idx (see try_fill_cache, which indexes slab_requirements[slab_idx]).
+    // A slab that needs nothing still gets a slot (slab_required_count == 0); need_refill()/is_refill_done()
+    // treat that as "already done", so the consumer simply skips it.
     for (auto& sq : m_slab_queues) {
         const auto needed_count{sq->open_session(ptr->session_id, fill_entire_cache)};
-        if (needed_count > 0) { ptr->slab_requirements.push_back(blk_cache_refill_status{needed_count, 0}); }
+        ptr->slab_requirements.push_back(blk_cache_refill_status{needed_count, 0});
     }
     return ptr;
 }
@@ -300,7 +303,7 @@ SlabCacheQueue::SlabCacheQueue(const blk_count_t slab_size, const std::vector< b
                                const float refill_pct, BlkAllocMetrics* parent_metrics) :
         m_slab_size{slab_size}, m_metrics{m_slab_size, this, parent_metrics} {
     for (auto& limit : level_limits) {
-        auto ptr{std::make_unique< folly::MPMCQueue< blk_cache_entry > >(limit)};
+        auto ptr{std::make_unique< BoundedMPMCQueue< blk_cache_entry > >(limit)};
         m_level_queues.push_back(std::move(ptr));
         m_total_capacity += limit;
     }

@@ -234,17 +234,17 @@ std::basic_ostream< charT, traits >& operator<<(std::basic_ostream< charT, trait
 }
 
 ///////////////////// Other common Blkd definitions /////////////////////
-VENUM(BlkAllocStatus, uint32_t,
-      BLK_ALLOC_NONE = 0,        // No Action taken
-      SUCCESS = 1ul << 0,        // Success
-      FAILED = 1ul << 1,         // Failed to alloc/free
-      REQ_MORE = 1ul << 2,       // Indicate that we need more
-      SPACE_FULL = 1ul << 3,     // Space is full
-      INVALID_DEV = 1ul << 4,    // Invalid Device provided for alloc
-      PARTIAL = 1ul << 5,        // In case of multiple blks, only partial is alloced/freed
-      INVALID_THREAD = 1ul << 6, // Not possible to alloc in this thread
-      INVALID_INPUT = 1ul << 7,  // Invalid input
-      TOO_MANY_PIECES = 1ul << 8 // Allocation results in more pieces than passed on
+ENUM(BlkAllocStatus, uint32_t,
+     BLK_ALLOC_NONE = 0,        // No Action taken
+     SUCCESS = 1ul << 0,        // Success
+     FAILED = 1ul << 1,         // Failed to alloc/free
+     REQ_MORE = 1ul << 2,       // Indicate that we need more
+     SPACE_FULL = 1ul << 3,     // Space is full
+     INVALID_DEV = 1ul << 4,    // Invalid Device provided for alloc
+     PARTIAL = 1ul << 5,        // In case of multiple blks, only partial is alloced/freed
+     INVALID_THREAD = 1ul << 6, // Not possible to alloc in this thread
+     INVALID_INPUT = 1ul << 7,  // Invalid input
+     TOO_MANY_PIECES = 1ul << 8 // Allocation results in more pieces than passed on
 );
 
 struct blk_alloc_hints {

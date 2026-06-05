@@ -5,11 +5,8 @@
 #include <boost/intrusive_ptr.hpp>
 #include <boost/smart_ptr/intrusive_ref_counter.hpp>
 #include <flatbuffers/flatbuffers.h>
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wuninitialized"
-#pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
-#include <folly/futures/Future.h>
-#pragma GCC diagnostic pop
+#include <sisl/async/task.hpp>
+#include <sisl/async/value_awaitable.hpp>
 #include <sisl/fds/buffer.hpp>
 #include <sisl/fds/utils.hpp>
 #include <sisl/grpc/generic_service.hpp>
@@ -44,30 +41,30 @@ ENUM(repl_data_rpc_error_code, uint8_t, SUCCESS, TIMEOUT, SERVER_NOT_FOUND, CANC
      TERM_MISMATCH, BAD_REQUEST, FAILED, UNKNOWN, NOT_SUPPORTED);
 
 template < typename T >
-using DataRpcAsyncResult = folly::SemiFuture< Result< T, repl_data_rpc_error_code > >;
+using DataRpcAsyncResult = sisl::async::task< Result< T, repl_data_rpc_error_code > >;
 
-using NullDataRpcAsyncResult = AsyncResult< folly::Unit, repl_data_rpc_error_code >;
+using NullDataRpcAsyncResult = AsyncResult< std::monostate, repl_data_rpc_error_code >;
 
-VENUM(repl_req_state_t, uint32_t,
-      INIT = 0,               // Initial state
-      BLK_ALLOCATED = 1 << 0, // Local block is allocated
-      DATA_RECEIVED = 1 << 1, // Data has been received and being written to the storage
-      DATA_WRITTEN = 1 << 2,  // Data has been written to the storage
-      LOG_RECEIVED = 1 << 3,  // Log is received and waiting for data
-      LOG_FLUSHED = 1 << 4,   // Log has been flushed
-      ERRORED = 1 << 5,       // Error has happened and cleaned up
-      DATA_COMMITTED = 1 << 6 // Data has already been committed, used in duplication handling, will skip commit_blk
+ENUM(repl_req_state_t, uint32_t,
+     INIT = 0,               // Initial state
+     BLK_ALLOCATED = 1 << 0, // Local block is allocated
+     DATA_RECEIVED = 1 << 1, // Data has been received and being written to the storage
+     DATA_WRITTEN = 1 << 2,  // Data has been written to the storage
+     LOG_RECEIVED = 1 << 3,  // Log is received and waiting for data
+     LOG_FLUSHED = 1 << 4,   // Log has been flushed
+     ERRORED = 1 << 5,       // Error has happened and cleaned up
+     DATA_COMMITTED = 1 << 6 // Data has already been committed, used in duplication handling, will skip commit_blk
 )
 
-VENUM(journal_type_t, uint16_t,
-      HS_DATA_LINKED = 0,           // Linked data where each entry will store physical blkid where data reside
-      HS_DATA_INLINED = 1,          // Data is inlined in the header of journal entry
-      HS_CTRL_DESTROY = 2,          // Control message to destroy the repl_dev
-      HS_CTRL_START_REPLACE = 3,    // Control message to start replace a member
-      HS_CTRL_COMPLETE_REPLACE = 4, // Control message to complete replace a member,
-      HS_CTRL_UPDATE_TRUNCATION_BOUNDARY = 5, // Control message to update truncation boundary
-      HS_CTRL_REMOVE_MEMBER = 6,              // Control message to remove a member from the group
-      HS_CTRL_CLEAN_REPLACE_TASK = 7,         // Control message to clean replace member task
+ENUM(journal_type_t, uint16_t,
+     HS_DATA_LINKED = 0,                     // Linked data where each entry will store physical blkid where data reside
+     HS_DATA_INLINED = 1,                    // Data is inlined in the header of journal entry
+     HS_CTRL_DESTROY = 2,                    // Control message to destroy the repl_dev
+     HS_CTRL_START_REPLACE = 3,              // Control message to start replace a member
+     HS_CTRL_COMPLETE_REPLACE = 4,           // Control message to complete replace a member,
+     HS_CTRL_UPDATE_TRUNCATION_BOUNDARY = 5, // Control message to update truncation boundary
+     HS_CTRL_REMOVE_MEMBER = 6,              // Control message to remove a member from the group
+     HS_CTRL_CLEAN_REPLACE_TASK = 7,         // Control message to clean replace member task
 )
 
 ENUM(repl_dev_stage_t, uint8_t, INIT, ACTIVE, UNREADY, DESTROYING, DESTROYED, PERMANENT_DESTROYED);
@@ -249,9 +246,9 @@ public:
     // IMPORTANT: Avoid declaring variables public, since this structure carries various entries and try to work in
     // lockless way. As a result, we keep only those which are considered thread safe and others are accessed with
     // methods.
-    folly::Promise< folly::Unit > m_data_received_promise; // Promise to be fulfilled when data is received
-    folly::Promise< folly::Unit > m_data_written_promise;  // Promise to be fulfilled when data is written
-    sisl::io_blob_list_t m_pkts;                           // Pkts used for sending data
+    sisl::async::value_awaitable< std::monostate > m_data_received_promise; // Fulfilled when data is received
+    sisl::async::value_awaitable< std::monostate > m_data_written_promise;  // Fulfilled when data is written
+    sisl::io_blob_list_t m_pkts;                                            // Pkts used for sending data
     std::mutex m_state_mtx;
 
 private:
@@ -441,10 +438,10 @@ public:
     // @param blkid - original blkid of the log entry
     // @param sgs - sgs to be filled with data
     // @param lsn - lsn of the log entry
-    virtual folly::Future< std::error_code > on_fetch_data(const int64_t lsn, const sisl::blob& header,
-                                                           const MultiBlkId& blkid, sisl::sg_list& sgs) {
+    virtual sisl::async::task< iomgr::io_result > on_fetch_data(const int64_t lsn, const sisl::blob& header,
+                                                                const MultiBlkId& blkid, sisl::sg_list& sgs) {
         // default implementation is reading by blkid directly
-        return data_service().async_read(blkid, sgs, sgs.size);
+        co_return co_await data_service().async_read(blkid, sgs, sgs.size);
     }
 
     /// @brief ask upper layer to handle no_space_left event
@@ -485,9 +482,9 @@ public:
     /// at the end
     /// @return A Future with std::error_code to notify if it has successfully write the data or any error code in case
     /// of failure
-    virtual folly::Future< std::error_code > async_write(const std::vector< MultiBlkId >& blkids,
-                                                         sisl::sg_list const& value, bool part_of_batch = false,
-                                                         trace_id_t tid = 0) = 0;
+    virtual sisl::async::task< iomgr::io_result > async_write(const std::vector< MultiBlkId >& blkids,
+                                                              sisl::sg_list const& value, bool part_of_batch = false,
+                                                              trace_id_t tid = 0) = 0;
 
     /// @brief Creates a log/journal entry with <header, key, blkid> and calls the on_commit listener callback.
     /// @param blkids - List of blkid's where data was written.
@@ -532,15 +529,15 @@ public:
     /// the end
     /// @return A Future with std::error_code to notify if it has successfully read the data or any error code in case
     /// of failure
-    virtual folly::Future< std::error_code > async_read(MultiBlkId const& blkid, sisl::sg_list& sgs, uint32_t size,
-                                                        bool part_of_batch = false, trace_id_t tid = 0) = 0;
+    virtual sisl::async::task< iomgr::io_result > async_read(MultiBlkId const& blkid, sisl::sg_list& sgs, uint32_t size,
+                                                             bool part_of_batch = false, trace_id_t tid = 0) = 0;
 
     /// @brief After data is replicated and on_commit to the listener is called. the blkids can be freed.
     ///
     /// @param lsn - LSN of the old blkids that is being freed
     /// @param blkids - blkids to be freed.
-    virtual folly::Future< std::error_code > async_free_blks(int64_t lsn, MultiBlkId const& blkid,
-                                                             trace_id_t tid = 0) = 0;
+    virtual sisl::async::task< iomgr::io_result > async_free_blks(int64_t lsn, MultiBlkId const& blkid,
+                                                                  trace_id_t tid = 0) = 0;
 
     /// @brief Try to switch the current replica where this method called to become a leader.
     /// @return True if it is successful, false otherwise.

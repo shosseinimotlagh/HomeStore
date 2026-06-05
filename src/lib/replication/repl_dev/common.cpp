@@ -136,7 +136,7 @@ ReplServiceError repl_req_ctx::alloc_local_blks(cshared< ReplDevListener >& list
     DEBUG_ASSERT(has_linked_data(), "Trying to allocate a block for non-inlined block");
 
     auto const hints_result = listener->get_blk_alloc_hints(m_header, data_size, repl_req_ptr_t(this));
-    if (hints_result.hasError()) { return hints_result.error(); }
+    if (!hints_result) { return hints_result.error(); }
 
     if (hints_result.value().committed_blk_id.has_value()) {
         // if the committed_blk_id is already present, use it and skip allocation and commitment
@@ -147,8 +147,8 @@ ReplServiceError repl_req_ctx::alloc_local_blks(cshared< ReplDevListener >& list
         add_state(repl_req_state_t::DATA_RECEIVED);
         add_state(repl_req_state_t::DATA_WRITTEN);
         add_state(repl_req_state_t::DATA_COMMITTED);
-        m_data_received_promise.setValue();
-        m_data_written_promise.setValue();
+        m_data_received_promise.complete({});
+        m_data_written_promise.complete({});
         return ReplServiceError::OK;
     }
 
@@ -192,7 +192,7 @@ bool repl_req_ctx::save_pushed_data(intrusive< sisl::GenericRpcData > const& pus
 
     m_pushed_data = pushed_data;
     m_data = data;
-    m_data_received_promise.setValue();
+    m_data_received_promise.complete({});
     return true;
 }
 
@@ -209,7 +209,7 @@ bool repl_req_ctx::save_fetched_data(sisl::GenericClientResponse const& fetched_
 
     m_fetched_data = fetched_data;
     m_data = data;
-    m_data_received_promise.setValue();
+    m_data_received_promise.complete({});
     return true;
 }
 

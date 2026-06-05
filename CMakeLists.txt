@@ -8,8 +8,13 @@ set_property(GLOBAL PROPERTY USE_FOLDERS ON) # turn on folder hierarchies
 
 include (cmake/Flags.cmake)
 
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 23) # iomgr v13 (coroutines + stdexec) requires C++23
 enable_testing()
+
+# sisl v14 removed its 15 cast-shorthand macros (r_cast/s_cast/uint64_cast/...); homestore still uses
+# them across ~600 sites. Force-include a compat header that restores them until those sites are
+# expanded to real C++ cast keywords. Remove this once that modernization is done.
+add_compile_options(-include ${CMAKE_CURRENT_SOURCE_DIR}/src/lib/common/sisl_cast_compat.hpp)
 
 include (cmake/test_mode.cmake)
 
@@ -66,7 +71,7 @@ if((${CMAKE_CXX_COMPILER_ID} STREQUAL "GNU") OR (${CMAKE_CXX_COMPILER_ID} STREQU
     
     # add warning options
     add_flags("-Wall -Wextra -Werror")
-    add_flags("-Wno-empty-body -Wno-array-bounds -Wno-cast-function-type")
+    add_flags("-Wno-empty-body -Wno-array-bounds -Wno-cast-function-type -Wno-stringop-overflow")
     add_flags("-Wno-unused-parameter -Wno-unused-variable -Wno-maybe-uninitialized -Wno-unused-function")
     
     # add C++ only warning options
@@ -104,6 +109,7 @@ else()
 endif()
 
 add_flags("-g")
+
 add_subdirectory(src)
 
 # build info

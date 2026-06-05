@@ -67,9 +67,8 @@ protected:
 
 public:
     void setup_device_manager() {
-        auto const is_spdk = SISL_OPTIONS["spdk"].as< bool >();
-
-        ioenvironment.with_iomgr(iomgr::iomgr_params{.num_threads = 1, .is_spdk = is_spdk});
+        // iomgr v13 is io_uring-only (the spdk option no longer exists).
+        ioenvironment.with_iomgr(iomgr::iomgr_params{.num_threads = 1});
         m_dmgr = std::make_unique< homestore::DeviceManager >(
             m_dev_infos, [this](const homestore::vdev_info& vinfo, bool load_existing) {
                 vdev_info vinfo_tmp = vinfo;
@@ -310,9 +309,9 @@ TEST_F(DeviceMgrTest, ReplaceTwoDevicesAtOnce) {
     if (std::filesystem::exists(fpath1)) { std::filesystem::remove(fpath1); }
 
     auto fpath2 = m_data_dev_names[1];
-    m_data_dev_names.erase(m_data_dev_names.end());
+    m_data_dev_names.erase(m_data_dev_names.begin() + 1);
     auto dinfo2 = m_dev_infos[1];
-    m_dev_infos.erase(m_dev_infos.end());
+    m_dev_infos.erase(m_dev_infos.begin() + 1);
     LOGINFO("Step 3a: Remove device to simulate device failure, file={}", fpath2);
     if (std::filesystem::exists(fpath2)) { std::filesystem::remove(fpath2); }
 
@@ -391,9 +390,9 @@ TEST_F(DeviceMgrTest, ReplaceTwoDevicesOneByOne) {
     if (std::filesystem::exists(fpath1)) { std::filesystem::remove(fpath1); }
 
     auto fpath2 = m_data_dev_names[1];
-    m_data_dev_names.erase(m_data_dev_names.end());
+    m_data_dev_names.erase(m_data_dev_names.begin() + 1);
     auto dinfo2 = m_dev_infos[1];
-    m_dev_infos.erase(m_dev_infos.end());
+    m_dev_infos.erase(m_dev_infos.begin() + 1);
     LOGINFO("Step 3a: Remove device to simulate device failure, file={}", fpath2);
     if (std::filesystem::exists(fpath2)) { std::filesystem::remove(fpath2); }
 

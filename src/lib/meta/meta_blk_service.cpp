@@ -13,6 +13,7 @@
  * specific language governing permissions and limitations under the License.
  *
  *********************************************************************************/
+#include <span>
 #include <array>
 #include <cstdint>
 #include <cstring>
@@ -680,8 +681,9 @@ void MetaBlkService::write_meta_blk_internal(meta_blk* mblk, const uint8_t* cont
             std::memset(voidptr_cast(m_compress_info.bytes()), 0, max_dst_size);
 
             size_t compressed_size = max_dst_size;
-            const auto ret = sisl::Compress::compress(r_cast< const char* >(context_data),
-                                                      r_cast< char* >(m_compress_info.bytes()), sz, &compressed_size);
+            const auto ret = sisl::Compress::compress(
+                std::span< const char >{r_cast< const char* >(context_data), sz},
+                std::span< char >{r_cast< char* >(m_compress_info.bytes()), max_dst_size}, compressed_size);
             if (ret != 0) {
                 LOGERROR("hs_compress_default indicates a failure trying to compress the data, ret: {}", ret);
                 HS_REL_ASSERT(false, "failed to compress");
@@ -1174,9 +1176,10 @@ void MetaBlkService::recover_meta_block(meta_blk* mblk) {
                 auto decompressed_buf{hs_utils::make_byte_array(mblk->hdr.h.src_context_sz, true /* aligned */,
                                                                 sisl::buftag::compression, align_size())};
                 size_t decompressed_size = mblk->hdr.h.src_context_sz;
-                const auto ret{sisl::Compress::decompress(r_cast< const char* >(buf->cbytes()),
-                                                          r_cast< char* >(decompressed_buf->bytes()),
-                                                          mblk->hdr.h.compressed_sz, &decompressed_size)};
+                const auto ret{sisl::Compress::decompress(
+                    std::span< const char >{r_cast< const char* >(buf->cbytes()), mblk->hdr.h.compressed_sz},
+                    std::span< char >{r_cast< char* >(decompressed_buf->bytes()), decompressed_size},
+                    decompressed_size)};
                 if (ret != 0) {
                     LOGERROR("[type={}], negative result: {} from decompress trying to decompress the "
                              "data. compressed_sz: {}, src_context_sz: {}",

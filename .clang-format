@@ -16,8 +16,8 @@ AlignConsecutiveDeclarations: false
 AlignEscapedNewlines: Right
 AlignOperands:   false
 AlignTrailingComments: true
-AllowShortIfStatementsOnASingleLine: true
 AllowShortBlocksOnASingleLine: true
+AllowShortIfStatementsOnASingleLine: true
 AllowShortCaseLabelsOnASingleLine: false
 # AllowShortFunctionsOnASingleLine: InlineOnly
 # AllowShortLoopsOnASingleLine: false

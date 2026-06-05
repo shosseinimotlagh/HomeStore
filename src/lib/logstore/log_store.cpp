@@ -95,17 +95,17 @@ logstore_seq_num_t HomeLogStore::append_async(const sisl::io_blob& b, void* cook
 logstore_seq_num_t HomeLogStore::write_and_flush(logstore_seq_num_t seq_num, const sisl::io_blob& b) {
     if (is_stopping()) return 0;
     incr_pending_request_num();
-    if (sisl_unlikely(iomanager.am_i_sync_io_capable() == false) && hs()->has_fc_service()) {
+    if (sisl_unlikely(iomanager.am_i_io_reactor() == false) && hs()->has_fc_service()) {
         auto uuid = m_logdev->get_parent_id();
         auto const reason = fmt::format("parent_uuid: {}, Write and flush is a blocking IO, which can't run in this "
                                         "thread, please reschedule to a fiber",
                                         boost::uuids::to_string(uuid));
         hs()->fc_service().trigger_fc(FaultContainmentEvent::ENTER, static_cast< void* >(&uuid), reason);
         return 0;
-    } else {
-        HS_LOG_ASSERT(iomanager.am_i_sync_io_capable(),
-                      "Write and flush is a blocking IO, which can't run in this thread, please reschedule to a fiber");
     }
+    // No reactor-affinity requirement anymore: the blocking flush funnels through iomgr::sync_wait, which runs
+    // on iomgr's dedicated sync reactor, so write_and_flush is safe on any thread (v13 has no fibers). The
+    // fault-containment hook above is retained for production FC behavior.
     if (seq_num > m_next_lsn.load(std::memory_order_relaxed)) m_next_lsn.store(seq_num + 1, std::memory_order_relaxed);
     auto ret = write_async(seq_num, b, nullptr /* cookie */, nullptr /* cb */);
     m_logdev->flush_under_guard();
@@ -116,8 +116,8 @@ logstore_seq_num_t HomeLogStore::write_and_flush(logstore_seq_num_t seq_num, con
 log_buffer HomeLogStore::read_sync(logstore_seq_num_t seq_num) {
     if (is_stopping()) return log_buffer{};
     incr_pending_request_num();
-    HS_LOG_ASSERT(iomanager.am_i_sync_io_capable(),
-                  "Read sync is a blocking IO, which can't run in this thread, please reschedule to a fiber");
+    // No reactor-affinity requirement anymore: the blocking drive read funnels through iomgr::sync_wait, which
+    // runs on iomgr's dedicated sync reactor, so read_sync is safe to call from any thread (v13 has no fibers).
 
     // If seq_num has not been flushed yet, but issued, then we flush them before reading
     auto const s = m_records.status(seq_num);

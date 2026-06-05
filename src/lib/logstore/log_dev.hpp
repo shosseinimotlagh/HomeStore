@@ -30,7 +30,10 @@
 #include <sisl/fds/id_reserver.hpp>
 #include <sisl/fds/stream_tracker.hpp>
 #include <sisl/fds/buffer.hpp>
-#include <folly/futures/SharedPromise.h>
+#include <sisl/async/task.hpp>             // sisl::async::task
+#include <sisl/async/shared_awaitable.hpp> // open_log_store completion
+#include <sisl/async/value_awaitable.hpp>  // stop_timer completion
+#include <shared_mutex>
 #include <fmt/format.h>
 #include <sisl/logging/logging.h>
 #include <boost/uuid/nil_generator.hpp>
@@ -110,7 +113,7 @@ struct log_record {
     bool is_inlineable(const uint64_t flush_size_multiple) const {
         // Need inlining if size is smaller or size/buffer is not in dma'ble boundary.
         return (is_size_inlineable(data.size(), flush_size_multiple) ||
-                ((r_cast< const uintptr_t >(data.cbytes()) % flush_size_multiple) != 0) || !data.is_aligned());
+                ((r_cast< uintptr_t >(data.cbytes()) % flush_size_multiple) != 0) || !data.is_aligned());
     }
 
     static bool is_size_inlineable(const size_t sz, const uint64_t flush_size_multiple) {
@@ -569,7 +572,8 @@ struct logstore_info {
     bool append_mode;
     log_found_cb_t log_found_cb{nullptr};
     log_replay_done_cb_t log_replay_done_cb{nullptr};
-    folly::SharedPromise< std::shared_ptr< HomeLogStore > > promise{};
+    std::shared_ptr< sisl::async::shared_awaitable< std::shared_ptr< HomeLogStore > > > promise{
+        std::make_shared< sisl::async::shared_awaitable< std::shared_ptr< HomeLogStore > > >()};
 };
 
 static std::string const logdev_sb_meta_name{"Logdev_sb"};
@@ -702,9 +706,9 @@ public:
     /// @param append_mode Is this log store is append mode or not. If append mode, write_async call fails and only
     /// append_async calls succeed.
     /// @return future< shared< HomeLogStore > > : Future which will be set with the log store once it is opened
-    folly::Future< shared< HomeLogStore > > open_log_store(logstore_id_t store_id, bool append_mode,
-                                                           log_found_cb_t log_found_cb = nullptr,
-                                                           log_replay_done_cb_t log_replay_done_cb = nullptr);
+    sisl::async::task< shared< HomeLogStore > > open_log_store(logstore_id_t store_id, bool append_mode,
+                                                               log_found_cb_t log_found_cb = nullptr,
+                                                               log_replay_done_cb_t log_replay_done_cb = nullptr);
 
     /// @brief Remove the log store and its associated resources
     /// @param store_id Store id that was created/opened
@@ -724,7 +728,7 @@ public:
 
 private:
     void start_timer();
-    folly::Future< int > stop_timer();
+    sisl::async::task< int > stop_timer();
 
     bool is_ready() const { return m_is_ready.load(); }
 
@@ -783,7 +787,7 @@ private:
     flush_mode_t m_flush_mode;
     uuid_t m_parent_id; // uuid of the parent container of this logdev(if any), controlled by user;
 
-    folly::SharedMutexWritePriority m_store_map_mtx;
+    mutable std::shared_mutex m_store_map_mtx; // locked in const status/dump methods
     std::unordered_map< logstore_id_t, logstore_info > m_id_logstore_map;
     std::unordered_map< logstore_id_t, uint64_t > m_unopened_store_io;
     std::unordered_set< logstore_id_t > m_unopened_store_id;
@@ -804,13 +808,13 @@ private:
     LogGroup m_log_group_pool[max_log_group];
     uint32_t m_log_group_idx{0};
     // Timer handle
-    iomgr::timer_handle_t m_flush_timer_hdl{iomgr::null_timer_handle};
+    iomgr::timer_handle_t m_flush_timer_hdl{iomgr::timer_handle_t{}};
 
     // if we support inline flush mode, we might schedule flush operation in the same thread(for exampel, in the
     // callback of the append_async we schedule another flush.), so we need the lock to be locked for multitimes in the
     // same thread.
-    iomgr::FiberManagerLib::mutex m_flush_mtx;
-    folly::SharedMutexWritePriority m_stream_tracker_mtx;
+    std::mutex m_flush_mtx;
+    std::shared_mutex m_stream_tracker_mtx;
 
     // Note that, this is used for tracking pending callbacks to avoid stopping logdev before all callbacks are done
     // if any one want to use async cbs, please make sure to incr/decr this counter properly

@@ -22,6 +22,7 @@
 #include <homestore/homestore.hpp>
 #include <homestore/meta_service.hpp>
 #include <homestore/checkpoint/cp_mgr.hpp>
+#include "common/coro_helpers.hpp" // detail::sync_get / detach_then
 #include <homestore/checkpoint/cp.hpp>
 #include "test_common/homestore_test_common.hpp"
 
@@ -62,7 +63,6 @@ private:
 
     std::array< std::pair< uint64_t, uint64_t >, max_values > m_cur_values;
     std::atomic< uint64_t > m_next_val{0};
-    folly::Promise< bool > m_comp_promise;
 };
 
 class TestCPCallbacks : public CPCallbacks {
@@ -71,10 +71,10 @@ public:
         return std::make_unique< TestCPContext >(new_cp);
     }
 
-    folly::Future< bool > cp_flush(CP* cp) override {
+    sisl::async::task< bool > cp_flush(CP* cp) override {
         auto ctx = s_cast< TestCPContext* >(cp->context(cp_consumer_t::HS_CLIENT));
         ctx->validate(cp->id());
-        return folly::makeFuture< bool >(true);
+        co_return true;
     }
 
     void cp_cleanup(CP* cp) override {}
@@ -135,9 +135,9 @@ public:
         };
 
         if (wait) {
-            on_complete(std::move(fut).get());
+            on_complete(homestore::detail::sync_get(std::move(fut)));
         } else {
-            std::move(fut).thenValue(on_complete);
+            homestore::detail::detach_then(std::move(fut), on_complete);
         }
     }
 

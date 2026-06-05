@@ -14,6 +14,7 @@
  *********************************************************************************/
 #pragma once
 
+#include <sisl/async/value_awaitable.hpp>
 #include <homestore/replication/repl_decls.h>
 #include <homestore/logstore_service.hpp>
 
@@ -230,7 +231,7 @@ private:
     shared< HomeLogStore > m_log_store;
     nuraft::ptr< nuraft::log_entry > m_dummy_log_entry;
     store_lsn_t m_last_durable_lsn{-1};
-    folly::Future< folly::Unit > m_log_store_future;
+    sisl::async::value_awaitable< std::monostate > m_log_store_ready;
 
     // raft log entry cache related members
     std::shared_mutex m_mutex;

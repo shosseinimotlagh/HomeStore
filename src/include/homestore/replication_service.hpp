@@ -14,10 +14,10 @@ class ReplDev;
 class ReplDevListener;
 struct hs_stats;
 
-VENUM(repl_impl_type, uint8_t,
-      server_side,     // Completely homestore controlled replication
-      client_assisted, // Client assisting in replication
-      solo             // For single node - no replication
+ENUM(repl_impl_type, uint8_t,
+     server_side,     // Completely homestore controlled replication
+     client_assisted, // Client assisting in replication
+     solo             // For single node - no replication
 );
 
 class ReplApplication;
@@ -39,7 +39,7 @@ public:
     /// resources are not released until garbage collection of repl devices kick in.
     /// @param group_id Group ID to be removed
     /// @return A Future which gets called after schedule to release (before garbage collection is kicked in)
-    virtual folly::SemiFuture< ReplServiceError > remove_repl_dev(group_id_t group_id) = 0;
+    virtual sisl::async::task< ReplServiceError > remove_repl_dev(group_id_t group_id) = 0;
 
     /// @brief Replace one of the members with a new one.
     /// @param group_id Group where the replace member happens

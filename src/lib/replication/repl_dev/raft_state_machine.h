@@ -3,7 +3,7 @@
 #include <vector>
 #include <functional>
 #include <iomgr/iomgr.hpp>
-#include <folly/concurrency/ConcurrentHashMap.h>
+#include <boost/unordered/concurrent_flat_map.hpp>
 #include <sisl/utility/enum.hpp>
 #include <nuraft_mesg/mesg_state_mgr.hpp>
 #include <homestore/replication/repl_decls.h>
@@ -91,16 +91,13 @@ class StateMachineStore;
 // 0 is for HS, 1 is for Application.
 static constexpr uint64_t snp_obj_id_type_app = 1ULL << 63;
 
-using AsyncNotify = folly::SemiFuture< folly::Unit >;
-using AsyncNotifier = folly::Promise< folly::Unit >;
-
 class RaftReplDev;
 class RaftStateMachine : public nuraft::state_machine {
 private:
-    folly::ConcurrentHashMap< int64_t /*lsn*/, repl_req_ptr_t > m_lsn_req_map;
+    boost::concurrent_flat_map< int64_t /*lsn*/, repl_req_ptr_t > m_lsn_req_map;
     RaftReplDev& m_rd;
     nuraft::ptr< nuraft::buffer > m_success_ptr; // Preallocate the success return to raft
-    // iomgr::timer_handle_t m_wait_blkid_write_timer_hdl{iomgr::null_timer_handle};
+    // iomgr::timer_handle_t m_wait_blkid_write_timer_hdl{iomgr::timer_handle_t{}};
     bool m_resync_mode{false};
     int64_t next_batch_size_hint{0};
 

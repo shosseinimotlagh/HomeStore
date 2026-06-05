@@ -56,9 +56,9 @@ public:
 
     virtual std::error_code alloc_blks(uint32_t data_size, const blk_alloc_hints& hints,
                                        std::vector< MultiBlkId >& out_blkids) override;
-    virtual folly::Future< std::error_code > async_write(const std::vector< MultiBlkId >& blkids,
-                                                         sisl::sg_list const& value, bool part_of_batch = false,
-                                                         trace_id_t tid = 0) override;
+    virtual sisl::async::task< iomgr::io_result > async_write(const std::vector< MultiBlkId >& blkids,
+                                                              sisl::sg_list const& value, bool part_of_batch = false,
+                                                              trace_id_t tid = 0) override;
     virtual void async_write_journal(const std::vector< MultiBlkId >& blkids, sisl::blob const& header,
                                      sisl::blob const& key, uint32_t data_size, repl_req_ptr_t ctx,
                                      trace_id_t tid = 0) override;
@@ -66,10 +66,11 @@ public:
     void async_alloc_write(sisl::blob const& header, sisl::blob const& key, sisl::sg_list const& value,
                            repl_req_ptr_t ctx, bool part_of_batch = false, trace_id_t tid = 0) override;
 
-    folly::Future< std::error_code > async_read(MultiBlkId const& bid, sisl::sg_list& sgs, uint32_t size,
-                                                bool part_of_batch = false, trace_id_t tid = 0) override;
+    sisl::async::task< iomgr::io_result > async_read(MultiBlkId const& bid, sisl::sg_list& sgs, uint32_t size,
+                                                     bool part_of_batch = false, trace_id_t tid = 0) override;
 
-    folly::Future< std::error_code > async_free_blks(int64_t lsn, MultiBlkId const& blkid, trace_id_t tid = 0) override;
+    sisl::async::task< iomgr::io_result > async_free_blks(int64_t lsn, MultiBlkId const& blkid,
+                                                          trace_id_t tid = 0) override;
 
     AsyncReplResult<> become_leader() override { return make_async_error(ReplServiceError::OK); }
     bool is_leader() const override { return true; }
@@ -78,9 +79,7 @@ public:
         return std::vector< peer_info >{
             peer_info{.id_ = m_group_id, .replication_idx_ = 0, .last_succ_resp_us_ = 0, .priority_ = 1}};
     }
-    std::vector< replica_id_t > get_replication_quorum() override {
-        return std::vector< replica_id_t >{m_group_id};
-    }
+    std::vector< replica_id_t > get_replication_quorum() override { return std::vector< replica_id_t >{m_group_id}; }
     void reconcile_leader() override {}
     void yield_leadership(bool immediate_yield, replica_id_t candidate) override {}
     bool is_ready_for_traffic() const override { return true; }
@@ -134,13 +133,13 @@ public:
 
     NullDataRpcAsyncResult data_request_unidirectional(repl_dest_t const& dest, std::string const& request_name,
                                                        sisl::io_blob_list_t const& cli_buf) override {
-        return folly::makeUnexpected(repl_data_rpc_error_code::NOT_SUPPORTED);
+        co_return std::unexpected(repl_data_rpc_error_code::NOT_SUPPORTED);
     }
 
     DataRpcAsyncResult< sisl::GenericClientResponse >
     data_request_bidirectional(repl_dest_t const& dest, std::string const& request_name,
                                sisl::io_blob_list_t const& cli_buf) override {
-        return folly::makeUnexpected(repl_data_rpc_error_code::NOT_SUPPORTED);
+        co_return std::unexpected(repl_data_rpc_error_code::NOT_SUPPORTED);
     }
 
 private:

@@ -55,15 +55,15 @@ typedef std::map< uint64_t, meta_blk_ovf_hdr* > ovf_hdr_map_t;          // ovf_b
 typedef std::map< meta_sub_type, MetaSubRegInfo > client_info_map_t;    // client information map;
 typedef std::unordered_map< meta_sub_type, std::vector< meta_sub_type > > subtype_graph_t;
 
-class MetablkMetrics : public sisl::MetricsGroupWrapper {
+class MetablkMetrics : public sisl::MetricsGroup {
 public:
-    explicit MetablkMetrics(const char* inst_name) : sisl::MetricsGroupWrapper{"MetaService", inst_name} {
+    explicit MetablkMetrics(const char* inst_name) : sisl::MetricsGroup{"MetaService", inst_name} {
         REGISTER_COUNTER(compress_success_cnt, "compression successful cnt");
         REGISTER_COUNTER(compress_backoff_memory_cnt, "compression back-off cnt because of exceending memory limit")
         REGISTER_COUNTER(compress_backoff_ratio_cnt, "compression back-off cnt because of exceeding ratio limit");
 
         REGISTER_HISTOGRAM_WITH_CARDINALITY_REDUCTION(compress_ratio_percent, "compression ration percentage",
-                                                              HistogramBucketsType(PercentileBuckets));
+                                                      HistogramBucketsType(PercentileBuckets));
         register_me_to_farm();
     }
 

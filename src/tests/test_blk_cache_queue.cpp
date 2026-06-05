@@ -74,7 +74,7 @@ protected:
         LOGINFO("Filling cache with {} slabs and {} entries per slab", m_nslabs, m_count_per_slab);
 
         const auto fill_session{m_fb_cache->create_cache_fill_session(true /* fill_entire_cache */)};
-        if (!(fill_session->slab_requirements.empty())) {
+        if (fill_session->any_refill_needed()) {
             uint32_t blk_id{0};
             for (const auto& slab_cfg : m_cfg.m_per_slab_cfg) {
                 for (blk_num_t i{0}; i < slab_cfg.max_entries; ++i) {

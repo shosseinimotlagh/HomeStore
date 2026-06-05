@@ -14,6 +14,9 @@
  *
  *********************************************************************************/
 #pragma once
+#include <iomgr/io_op.hpp>     // iomgr::io_result (create_vdev result)
+#include <sisl/async/task.hpp> // sisl::async::task
+#include <shared_mutex>
 
 #include <atomic>
 #include <array>
@@ -132,9 +135,9 @@ public:
      * @param on_open_cb: Callback to be called once log store is opened.
      * @return std::shared_ptr< HomeLogStore >
      */
-    folly::Future< shared< HomeLogStore > > open_log_store(logdev_id_t logdev_id, logstore_id_t store_id,
-                                                           bool append_mode, log_found_cb_t log_found_cb = nullptr,
-                                                           log_replay_done_cb_t log_replay_done_cb = nullptr);
+    sisl::async::task< shared< HomeLogStore > > open_log_store(logdev_id_t logdev_id, logstore_id_t store_id,
+                                                               bool append_mode, log_found_cb_t log_found_cb = nullptr,
+                                                               log_replay_done_cb_t log_replay_done_cb = nullptr);
 
     /**
      * @brief Close the log store instance and free-up the resources
@@ -160,7 +163,7 @@ public:
      */
     void device_truncate();
 
-    folly::Future< std::error_code > create_vdev(uint64_t size, HSDevType devType, uint32_t chunk_size);
+    sisl::async::task< iomgr::io_result > create_vdev(uint64_t size, HSDevType devType, uint32_t chunk_size);
     std::shared_ptr< VirtualDev > open_vdev(const vdev_info& vinfo, bool load_existing);
     std::shared_ptr< JournalVirtualDev > get_vdev() const { return m_logdev_vdev; }
     std::vector< std::shared_ptr< LogDev > > get_all_logdevs();
@@ -173,7 +176,7 @@ public:
 
     uint32_t used_size() const;
     uint32_t total_size() const;
-    iomgr::io_fiber_t flush_thread() { return m_flush_fiber; }
+    iomgr::IOReactor* flush_reactor() { return m_flush_reactor; }
 
     void delete_unopened_logdevs();
 
@@ -189,10 +192,10 @@ private:
 
 private:
     std::unordered_map< logdev_id_t, std::shared_ptr< LogDev > > m_id_logdev_map;
-    folly::SharedMutexWritePriority m_logdev_map_mtx;
+    std::shared_mutex m_logdev_map_mtx;
 
     std::shared_ptr< JournalVirtualDev > m_logdev_vdev;
-    iomgr::io_fiber_t m_flush_fiber;
+    iomgr::IOReactor* m_flush_reactor{nullptr};
     LogStoreServiceMetrics m_metrics;
     std::unordered_set< logdev_id_t > m_unopened_logdev;
     superblk< logstore_service_super_block > m_sb;

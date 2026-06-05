@@ -195,10 +195,10 @@ using bnodeid_t = uint64_t;
 static constexpr bnodeid_t empty_bnodeid = std::numeric_limits< bnodeid_t >::max();
 static constexpr uint16_t bt_init_crc_16 = 0x8005;
 
-VENUM(btree_node_type, uint32_t, FIXED = 0, VAR_VALUE = 1, VAR_KEY = 2, VAR_OBJECT = 3, PREFIX = 4, COMPACT = 5)
+ENUM(btree_node_type, uint32_t, FIXED = 0, VAR_VALUE = 1, VAR_KEY = 2, VAR_OBJECT = 3, PREFIX = 4, COMPACT = 5)
 
 #ifdef USE_STORE_TYPE
-VENUM(btree_store_type, uint8_t, MEM = 0, SSD = 1)
+ENUM(btree_store_type, uint8_t, MEM = 0, SSD = 1)
 #endif
 
 ENUM(btree_status_t, uint32_t, success, not_found, retry, has_more, node_read_failed, already_exists, filtered_out,
@@ -315,33 +315,29 @@ public:
         REGISTER_COUNTER(btree_num_pc_gen_mismatch, "Number of gen mismatches to recover");
 
         REGISTER_HISTOGRAM_WITH_CARDINALITY_REDUCTION(btree_int_node_occupancy, "Interior node occupancy",
-                                                              "btree_node_occupancy", {"node_type", "interior"},
-                                                              HistogramBucketsType(PercentileBuckets));
+                                                      "btree_node_occupancy", {"node_type", "interior"},
+                                                      HistogramBucketsType(PercentileBuckets));
         REGISTER_HISTOGRAM_WITH_CARDINALITY_REDUCTION(btree_leaf_node_occupancy, "Leaf node occupancy",
-                                                              "btree_node_occupancy", {"node_type", "leaf"},
-                                                              HistogramBucketsType(PercentileBuckets));
+                                                      "btree_node_occupancy", {"node_type", "leaf"},
+                                                      HistogramBucketsType(PercentileBuckets));
         REGISTER_COUNTER(btree_retry_count, "number of retries");
         REGISTER_COUNTER(write_err_cnt, "number of errors in write");
         REGISTER_COUNTER(query_err_cnt, "number of errors in query");
         REGISTER_COUNTER(btree_write_ops_count, "number of btree operations");
         REGISTER_COUNTER(btree_query_ops_count, "number of btree operations");
         REGISTER_COUNTER(btree_remove_ops_count, "number of btree operations");
-        REGISTER_HISTOGRAM_WITH_CARDINALITY_REDUCTION(btree_exclusive_time_in_int_node,
-                                                              "Exclusive time spent (Write locked) on interior node (ns)",
-                                                              "btree_exclusive_time_in_node", {"node_type", "interior"},
-                                                              HistogramBucketsType(OpLatecyBuckets));
-        REGISTER_HISTOGRAM_WITH_CARDINALITY_REDUCTION(btree_exclusive_time_in_leaf_node,
-                                                              "Exclusive time spent (Write locked) on leaf node (ns)",
-                                                              "btree_exclusive_time_in_node", {"node_type", "leaf"},
-                                                              HistogramBucketsType(OpLatecyBuckets));
-        REGISTER_HISTOGRAM_WITH_CARDINALITY_REDUCTION(btree_inclusive_time_in_int_node,
-                                                              "Inclusive time spent (Read locked) on interior node (ns)",
-                                                              "btree_inclusive_time_in_node", {"node_type", "interior"},
-                                                              HistogramBucketsType(OpLatecyBuckets));
-        REGISTER_HISTOGRAM_WITH_CARDINALITY_REDUCTION(btree_inclusive_time_in_leaf_node,
-                                                              "Inclusive time spent (Read locked) on leaf node (ns)",
-                                                              "btree_inclusive_time_in_node", {"node_type", "leaf"},
-                                                              HistogramBucketsType(OpLatecyBuckets));
+        REGISTER_HISTOGRAM_WITH_CARDINALITY_REDUCTION(
+            btree_exclusive_time_in_int_node, "Exclusive time spent (Write locked) on interior node (ns)",
+            "btree_exclusive_time_in_node", {"node_type", "interior"}, HistogramBucketsType(OpLatecyBuckets));
+        REGISTER_HISTOGRAM_WITH_CARDINALITY_REDUCTION(
+            btree_exclusive_time_in_leaf_node, "Exclusive time spent (Write locked) on leaf node (ns)",
+            "btree_exclusive_time_in_node", {"node_type", "leaf"}, HistogramBucketsType(OpLatecyBuckets));
+        REGISTER_HISTOGRAM_WITH_CARDINALITY_REDUCTION(
+            btree_inclusive_time_in_int_node, "Inclusive time spent (Read locked) on interior node (ns)",
+            "btree_inclusive_time_in_node", {"node_type", "interior"}, HistogramBucketsType(OpLatecyBuckets));
+        REGISTER_HISTOGRAM_WITH_CARDINALITY_REDUCTION(
+            btree_inclusive_time_in_leaf_node, "Inclusive time spent (Read locked) on leaf node (ns)",
+            "btree_inclusive_time_in_node", {"node_type", "leaf"}, HistogramBucketsType(OpLatecyBuckets));
 
         register_me_to_farm();
     }

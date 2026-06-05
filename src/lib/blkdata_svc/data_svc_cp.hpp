@@ -27,7 +27,7 @@ public:
 
 public:
     std::unique_ptr< CPContext > on_switchover_cp(CP* cur_cp, CP* new_cp) override;
-    folly::Future< bool > cp_flush(CP* cp) override;
+    sisl::async::task< bool > cp_flush(CP* cp) override;
     void cp_cleanup(CP* cp) override;
     int cp_progress_percent() override;
 

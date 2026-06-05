@@ -17,7 +17,6 @@
 #pragma once
 #include <iostream>
 #include <queue>
-#include <iomgr/fiber_lib.hpp>
 
 #include <sisl/utility/atomic_counter.hpp>
 #include <sisl/utility/enum.hpp>
@@ -31,7 +30,7 @@ ENUM(locktype_t, uint8_t, NONE, READ, WRITE)
 
 #pragma pack(1)
 struct transient_hdr_t {
-    mutable iomgr::FiberManagerLib::shared_mutex lock;
+    mutable std::shared_mutex lock;
     sisl::atomic_counter< uint16_t > upgraders{0};
 
     /* these variables are accessed without taking lock and are not expected to change after init */

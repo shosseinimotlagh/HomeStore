@@ -21,7 +21,6 @@
 
 #include <sisl/logging/logging.h>
 #include <iomgr/iomgr.hpp>
-#include <folly/futures/SharedPromise.h>
 
 namespace homestore {
 class CPManager;

@@ -24,6 +24,7 @@
 // #include <flip/flip.hpp>
 #include <sisl/logging/logging.h>
 #include <sisl/fds/buffer.hpp>
+#include <fmt/ranges.h> // fmt::join (fmt 11+ split ranges/join out of the core header)
 
 #include <homestore/btree/btree.hpp>
 #include <homestore/btree/detail/btree_common.ipp>

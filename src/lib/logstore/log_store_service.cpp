@@ -64,7 +64,8 @@ void LogStoreService::on_meta_blk_found(const sisl::byte_view& buf, void* meta_c
     HS_REL_ASSERT_EQ(m_sb->version, logstore_service_sb_version, "Invalid version of log service metablk");
 }
 
-folly::Future< std::error_code > LogStoreService::create_vdev(uint64_t size, HSDevType devType, uint32_t chunk_size) {
+sisl::async::task< iomgr::io_result > LogStoreService::create_vdev(uint64_t size, HSDevType devType,
+                                                                   uint32_t chunk_size) {
     const auto atomic_page_size = hs()->device_mgr()->atomic_page_size(devType);
 
     hs_vdev_context hs_ctx;
@@ -94,7 +95,7 @@ folly::Future< std::error_code > LogStoreService::create_vdev(uint64_t size, HSD
                                                         .multi_pdev_opts = vdev_multi_pdev_opts_t::ALL_PDEV_STRIPED,
                                                         .context_data = hs_ctx.to_blob()});
 
-    return vdev->async_format();
+    co_return co_await vdev->async_format();
 }
 
 std::shared_ptr< VirtualDev > LogStoreService::open_vdev(const vdev_info& vinfo, bool load_existing) {
@@ -132,7 +133,7 @@ void LogStoreService::stop() {
 }
 
 LogStoreService::~LogStoreService() {
-    folly::SharedMutexWritePriority::WriteHolder holder(m_logdev_map_mtx);
+    std::unique_lock< std::shared_mutex > holder(m_logdev_map_mtx);
     m_id_logdev_map.clear();
 }
 
@@ -145,7 +146,7 @@ logdev_id_t LogStoreService::get_next_logdev_id() {
 logdev_id_t LogStoreService::create_new_logdev(flush_mode_t flush_mode, uuid_t pid) {
     if (is_stopping()) return 0;
     incr_pending_request_num();
-    folly::SharedMutexWritePriority::WriteHolder holder(m_logdev_map_mtx);
+    std::unique_lock< std::shared_mutex > holder(m_logdev_map_mtx);
     logdev_id_t logdev_id = get_next_logdev_id();
     auto logdev = create_new_logdev_internal(logdev_id, flush_mode, pid);
     logdev->start(true /* format */, m_logdev_vdev);
@@ -159,7 +160,7 @@ void LogStoreService::destroy_log_dev(logdev_id_t logdev_id) {
     if (is_stopping()) return;
     HS_LOG(INFO, logstore, "Destroying logdev {}", logdev_id);
     incr_pending_request_num();
-    folly::SharedMutexWritePriority::WriteHolder holder(m_logdev_map_mtx);
+    std::unique_lock< std::shared_mutex > holder(m_logdev_map_mtx);
     const auto it = m_id_logdev_map.find(logdev_id);
     if (it == m_id_logdev_map.end()) {
         LOGERROR("Logdev not found to destroy {}", logdev_id);
@@ -201,7 +202,7 @@ std::shared_ptr< LogDev > LogStoreService::create_new_logdev_internal(logdev_id_
 }
 
 void LogStoreService::open_logdev(logdev_id_t logdev_id, flush_mode_t flush_mode, uuid_t pid) {
-    folly::SharedMutexWritePriority::WriteHolder holder(m_logdev_map_mtx);
+    std::unique_lock< std::shared_mutex > holder(m_logdev_map_mtx);
     const auto it = m_id_logdev_map.find(logdev_id);
     if (it == m_id_logdev_map.end()) {
         auto logdev = std::make_shared< LogDev >(logdev_id, flush_mode, pid);
@@ -216,7 +217,7 @@ std::vector< std::shared_ptr< LogDev > > LogStoreService::get_all_logdevs() {
     std::vector< std::shared_ptr< LogDev > > res;
     if (is_stopping()) return res;
     incr_pending_request_num();
-    folly::SharedMutexWritePriority::ReadHolder holder(m_logdev_map_mtx);
+    std::shared_lock< std::shared_mutex > holder(m_logdev_map_mtx);
 
     for (auto& [id, logdev] : m_id_logdev_map) {
         res.push_back(logdev);
@@ -226,7 +227,7 @@ std::vector< std::shared_ptr< LogDev > > LogStoreService::get_all_logdevs() {
 }
 
 std::shared_ptr< LogDev > LogStoreService::get_logdev(logdev_id_t id) {
-    folly::SharedMutexWritePriority::ReadHolder holder(m_logdev_map_mtx);
+    std::shared_lock< std::shared_mutex > holder(m_logdev_map_mtx);
     const auto it = m_id_logdev_map.find(id);
     HS_REL_ASSERT((it != m_id_logdev_map.end()), "logdev id {} doesnt exists", id);
     return it->second;
@@ -238,7 +239,7 @@ void LogStoreService::logdev_super_blk_found(const sisl::byte_view& buf, void* m
     HS_REL_ASSERT_EQ(sb->get_magic(), logdev_superblk::LOGDEV_SB_MAGIC, "Invalid logdev metablk, magic mismatch");
     HS_REL_ASSERT_EQ(sb->get_version(), logdev_superblk::LOGDEV_SB_VERSION, "Invalid version of logdev metablk");
     {
-        folly::SharedMutexWritePriority::WriteHolder holder(m_logdev_map_mtx);
+        std::unique_lock< std::shared_mutex > holder(m_logdev_map_mtx);
         std::shared_ptr< LogDev > logdev;
         auto id = sb->logdev_id;
         auto flush_mode = sb->flush_mode;
@@ -270,7 +271,7 @@ void LogStoreService::rollback_super_blk_found(const sisl::byte_view& buf, void*
     HS_REL_ASSERT_EQ(rollback_sb->get_version(), rollback_superblk::ROLLBACK_SB_VERSION,
                      "Rollback sb version mismatch");
     {
-        folly::SharedMutexWritePriority::WriteHolder holder(m_logdev_map_mtx);
+        std::unique_lock< std::shared_mutex > holder(m_logdev_map_mtx);
         std::shared_ptr< LogDev > logdev;
         auto id = rollback_sb->logdev_id;
         HS_LOG(DEBUG, logstore, "Log dev rollback superblk found logdev={}", id);
@@ -285,7 +286,7 @@ void LogStoreService::rollback_super_blk_found(const sisl::byte_view& buf, void*
 std::shared_ptr< HomeLogStore > LogStoreService::create_new_log_store(logdev_id_t logdev_id, bool append_mode) {
     if (is_stopping()) return nullptr;
     incr_pending_request_num();
-    folly::SharedMutexWritePriority::WriteHolder holder(m_logdev_map_mtx);
+    std::unique_lock< std::shared_mutex > holder(m_logdev_map_mtx);
     COUNTER_INCREMENT(m_metrics, logstores_count, 1);
     const auto it = m_id_logdev_map.find(logdev_id);
     HS_REL_ASSERT((it != m_id_logdev_map.end()), "logdev id {} doesnt exist", logdev_id);
@@ -294,10 +295,11 @@ std::shared_ptr< HomeLogStore > LogStoreService::create_new_log_store(logdev_id_
     return ret;
 }
 
-folly::Future< shared< HomeLogStore > > LogStoreService::open_log_store(logdev_id_t logdev_id, logstore_id_t store_id,
-                                                                        bool append_mode, log_found_cb_t log_found_cb,
-                                                                        log_replay_done_cb_t log_replay_done_cb) {
-    folly::SharedMutexWritePriority::ReadHolder holder(m_logdev_map_mtx);
+sisl::async::task< shared< HomeLogStore > > LogStoreService::open_log_store(logdev_id_t logdev_id,
+                                                                            logstore_id_t store_id, bool append_mode,
+                                                                            log_found_cb_t log_found_cb,
+                                                                            log_replay_done_cb_t log_replay_done_cb) {
+    std::shared_lock< std::shared_mutex > holder(m_logdev_map_mtx);
     const auto it = m_id_logdev_map.find(logdev_id);
     HS_REL_ASSERT((it != m_id_logdev_map.end()), "logdev id {} doesnt exist", logdev_id);
     COUNTER_INCREMENT(m_metrics, logstores_count, 1);
@@ -308,7 +310,7 @@ void LogStoreService::remove_log_store(logdev_id_t logdev_id, logstore_id_t stor
     if (is_stopping()) return;
     HS_LOG(INFO, logstore, "Removing logstore {} from logdev {}", store_id, logdev_id);
     incr_pending_request_num();
-    folly::SharedMutexWritePriority::WriteHolder holder(m_logdev_map_mtx);
+    std::unique_lock< std::shared_mutex > holder(m_logdev_map_mtx);
     const auto it = m_id_logdev_map.find(logdev_id);
     if (it == m_id_logdev_map.end()) {
         HS_LOG(WARN, logstore, "logdev id {} doesnt exist", logdev_id);
@@ -324,7 +326,7 @@ void LogStoreService::device_truncate() {
     // TODO: make device_truncate_under_lock return future and do collectAllFutures;
     if (is_stopping()) return;
     incr_pending_request_num();
-    folly::SharedMutexWritePriority::ReadHolder holder(m_logdev_map_mtx);
+    std::shared_lock< std::shared_mutex > holder(m_logdev_map_mtx);
     for (auto& [id, logdev] : m_id_logdev_map) {
         HS_LOG(DEBUG, logstore, "Truncating logdev {}", id);
         logdev->truncate();
@@ -348,11 +350,11 @@ void LogStoreService::start_threads() {
     };
     auto ctx = std::make_shared< Context >();
 
-    m_flush_fiber = nullptr;
-    iomanager.create_reactor("log_flush_thread", iomgr::TIGHT_LOOP | iomgr::ADAPTIVE_LOOP, 1 /* num_fibers */,
+    m_flush_reactor = nullptr;
+    iomanager.create_reactor("log_flush_thread", iomgr::TIGHT_LOOP | iomgr::ADAPTIVE_LOOP,
                              [this, ctx](bool is_started) {
                                  if (is_started) {
-                                     m_flush_fiber = iomanager.iofiber_self();
+                                     m_flush_reactor = iomanager.this_reactor();
                                      {
                                          std::unique_lock< std::mutex > lk{ctx->mtx};
                                          ++(ctx->thread_cnt);
@@ -417,13 +419,13 @@ LogStoreServiceMetrics::LogStoreServiceMetrics() : sisl::MetricsGroup("LogStores
     REGISTER_HISTOGRAM(logdev_flush_size_distribution, "Distribution of flush data size",
                        HistogramBucketsType(ExponentialOfTwoBuckets));
     REGISTER_HISTOGRAM_WITH_CARDINALITY_REDUCTION(logdev_flush_records_distribution,
-                                                          "Distribution of num records to flush",
-                                                          HistogramBucketsType(LinearUpto128Buckets));
+                                                  "Distribution of num records to flush",
+                                                  HistogramBucketsType(LinearUpto128Buckets));
     REGISTER_HISTOGRAM_WITH_CARDINALITY_REDUCTION(logstore_record_size, "Distribution of log record size",
-                                                          HistogramBucketsType(ExponentialOfTwoBuckets));
+                                                  HistogramBucketsType(ExponentialOfTwoBuckets));
     REGISTER_HISTOGRAM_WITH_CARDINALITY_REDUCTION(logdev_post_flush_processing_latency,
-                                                          "Logdev post flush processing (including callbacks) latency",
-                                                          HistogramBucketsType(OpLatecyBuckets));
+                                                  "Logdev post flush processing (including callbacks) latency",
+                                                  HistogramBucketsType(OpLatecyBuckets));
     REGISTER_HISTOGRAM(logdev_flush_time_us, "time elapsed since last flush time in us",
                        HistogramBucketsType(OpLatecyBuckets));
 

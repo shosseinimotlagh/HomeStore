@@ -2,13 +2,12 @@
 #include <iostream>
 #include <string>
 
-#include <folly/small_vector.h>
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wuninitialized"
-#pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
-#include <folly/futures/Future.h>
-#pragma GCC diagnostic pop
+#include <expected>
+#include <variant>
 
+#include <boost/container/small_vector.hpp>
+
+#include <sisl/async/task.hpp>
 #include <sisl/logging/logging.h>
 #include <homestore/homestore_decl.hpp>
 #include <homestore/blk.h>
@@ -20,7 +19,7 @@ SISL_LOGGING_DECL(replication)
 
 namespace homestore {
 // clang-format off
-VENUM(ReplServiceError, int32_t,
+ENUM(ReplServiceError, int32_t,
       OK = 0,         // Everything OK
       CANCELLED = -1, // Request was cancelled
       TIMEOUT = -2,
@@ -46,7 +45,7 @@ VENUM(ReplServiceError, int32_t,
       UNREADY_STATE = -20006,
       FAILED = -32768);
 
-VENUM(ReplaceMemberStatus, int32_t,
+ENUM(ReplaceMemberStatus, int32_t,
       COMPLETED = 0,
       IN_PROGRESS = 1,
       NOT_LEADER = 2,
@@ -56,18 +55,18 @@ VENUM(ReplaceMemberStatus, int32_t,
 // clang-format on
 
 template < typename V, typename E >
-using Result = folly::Expected< V, E >;
+using Result = std::expected< V, E >;
 
-template < class V >
+template < class V = std::monostate >
 using ReplResult = Result< V, ReplServiceError >;
 
 template < class V, class E >
-using AsyncResult = folly::SemiFuture< Result< V, E > >;
+using AsyncResult = sisl::async::task< Result< V, E > >;
 
-template < class V = folly::Unit >
+template < class V = std::monostate >
 using AsyncReplResult = AsyncResult< V, ReplServiceError >;
 
-using blkid_list_t = folly::small_vector< BlkId, 4 >;
+using blkid_list_t = boost::container::small_vector< BlkId, 4 >;
 
 // Fully qualified domain pba, unique pba id across replica set
 struct RemoteBlkId {
@@ -79,7 +78,7 @@ struct RemoteBlkId {
     bool operator==(RemoteBlkId const& o) const { return (server_id == o.server_id) && (blkid == o.blkid); }
 };
 
-using remote_blkid_list_t = folly::small_vector< RemoteBlkId, 4 >;
+using remote_blkid_list_t = boost::container::small_vector< RemoteBlkId, 4 >;
 
 using replica_id_t = uuid_t;
 using group_id_t = uuid_t;

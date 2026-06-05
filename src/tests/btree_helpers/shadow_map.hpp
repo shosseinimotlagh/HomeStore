@@ -9,7 +9,7 @@ private:
     std::map< K, V > m_map;
     RangeScheduler m_range_scheduler;
     uint32_t m_max_keys;
-    using mutex = iomgr::FiberManagerLib::shared_mutex;
+    using mutex = std::shared_mutex;
     mutex m_mutex;
     // #define SHOWM(X) cout << #X " = " << (X) << endl
     //     void testPrint(std::map< uint32_t, std::string >& m_map, int i) {

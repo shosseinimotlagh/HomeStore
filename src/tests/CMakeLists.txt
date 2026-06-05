@@ -12,7 +12,6 @@ can_build_nonio_tests(build_nonio_tests)
 if (${build_nonio_tests})
     link_directories(${spdk_LIB_DIRS} ${dpdk_LIB_DIRS})
 
-    # Ignoring sign-compare only for this test file because it uses folly concurrent_skip_list which violates this check.
     set_source_files_properties(test_blkalloc.cpp PROPERTIES COMPILE_OPTIONS "-Wno-sign-compare" )
     add_executable(test_blkalloc)
     target_sources(test_blkalloc PRIVATE test_blkalloc.cpp $<TARGET_OBJECTS:hs_blkalloc>)

@@ -14,17 +14,18 @@
  *
  *********************************************************************************/
 #include <homestore/blk.h>
+#include <bit>
 #include "common/homestore_assert.hpp"
 
 namespace homestore {
 BlkId::BlkId(uint64_t id_int) {
-    *r_cast< uint64_t* >(&s) = id_int;
+    s = std::bit_cast< serialized >(id_int);
     DEBUG_ASSERT_EQ(is_multi(), 0, "MultiBlkId is set on BlkId constructor");
 }
 
 BlkId::BlkId(blk_num_t blk_num, blk_count_t nblks, chunk_num_t chunk_num) : s{0x0, blk_num, nblks, chunk_num} {}
 
-uint64_t BlkId::to_integer() const { return *r_cast< const uint64_t* >(&s); }
+uint64_t BlkId::to_integer() const { return std::bit_cast< uint64_t >(s); }
 
 sisl::blob BlkId::serialize() const { return sisl::blob{r_cast< uint8_t const* >(&s), sizeof(serialized)}; }
 
@@ -32,7 +33,7 @@ uint32_t BlkId::serialized_size() const { return sizeof(BlkId); }
 uint32_t BlkId::expected_serialized_size() { return sizeof(BlkId); }
 
 void BlkId::deserialize(sisl::blob const& b, bool copy) {
-    serialized* other = r_cast< serialized const* >(b.cbytes());
+    serialized const* other = r_cast< serialized const* >(b.cbytes());
     s = *other;
 }
 
@@ -99,7 +100,7 @@ uint32_t MultiBlkId::serialized_size() const {
 }
 
 void MultiBlkId::deserialize(sisl::blob const& b, bool copy) {
-    MultiBlkId* other = r_cast< MultiBlkId const* >(b.cbytes());
+    MultiBlkId const* other = r_cast< MultiBlkId const* >(b.cbytes());
     s = other->s;
     if (b.size() == sizeof(BlkId)) {
         n_addln_piece = 0;

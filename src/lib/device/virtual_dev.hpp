@@ -25,6 +25,8 @@
 #include <type_traits>
 #include <vector>
 
+#include <sisl/async/task.hpp>
+#include <iomgr/io_op.hpp> // iomgr::io_result (the device-surface error type)
 #include <sisl/metrics/metrics.hpp>
 #include <sisl/logging/logging.h>
 #include <sisl/utility/obj_life_counter.hpp>
@@ -42,9 +44,9 @@ class PhysicalDev;
 class Chunk;
 class BlkAllocator;
 
-class VirtualDevMetrics : public sisl::MetricsGroupWrapper {
+class VirtualDevMetrics : public sisl::MetricsGroup {
 public:
-    explicit VirtualDevMetrics(const char* const inst_name) : sisl::MetricsGroupWrapper{"VirtualDev", inst_name} {
+    explicit VirtualDevMetrics(const char* const inst_name) : sisl::MetricsGroup{"VirtualDev", inst_name} {
         REGISTER_COUNTER(vdev_read_count, "vdev total read cnt");
         REGISTER_COUNTER(vdev_write_count, "vdev total write cnt");
         REGISTER_COUNTER(vdev_truncate_count, "vdev total truncate cnt");
@@ -55,7 +57,7 @@ public:
         REGISTER_COUNTER(random_chunk_allocation_cnt,
                          "random chunk allocation count"); // ideally it should be zero for hdd
         REGISTER_HISTOGRAM_WITH_CARDINALITY_REDUCTION(blk_alloc_latency, "Blk allocation latency", "blk_alloc_latency",
-                                                              {}, HistogramBucketsType(OpLatecyBuckets));
+                                                      {}, HistogramBucketsType(OpLatecyBuckets));
         register_me_to_farm();
     }
 
@@ -134,7 +136,7 @@ public:
     /// @brief Formats the vdev asynchronously by zeroing the entire vdev. It will use underlying physical device
     /// capabilities to zero them if fast zero is possible, otherwise will zero block by block
     /// @param cb Callback after formatting is completed.
-    virtual folly::Future< std::error_code > async_format();
+    virtual sisl::async::task< iomgr::io_result > async_format();
 
     /////////////////////// Block Allocation related methods /////////////////////////////
     /// @brief This method allocates contigous blocks in the vdev
@@ -186,11 +188,11 @@ public:
     /// @param part_of_batch : Is this write part of batch io. If true, caller is expected to call submit_batch at
     /// the end of the batch, otherwise this write request will not be queued.
     /// @return future< bool > Future result of success or failure
-    folly::Future< std::error_code > async_write(const char* buf, uint32_t size, BlkId const& bid,
-                                                 bool part_of_batch = false);
+    sisl::async::task< iomgr::io_result > async_write(const char* buf, uint32_t size, BlkId const& bid,
+                                                      bool part_of_batch = false);
 
-    folly::Future< std::error_code > async_write(const char* buf, uint32_t size, cshared< Chunk >& chunk,
-                                                 uint64_t offset_in_chunk);
+    sisl::async::task< iomgr::io_result > async_write(const char* buf, uint32_t size, cshared< Chunk >& chunk,
+                                                      uint64_t offset_in_chunk);
 
     /// @brief Asynchornously write the buffer to the device on a given blkid from vector of buffer
     /// @param iov : Vector of buffer to write data from
@@ -199,12 +201,12 @@ public:
     /// @param part_of_batch : Is this write part of batch io. If true, caller is expected to call submit_batch at
     /// the end of the batch, otherwise this write request will not be queued.
     /// @return future< bool > Future result of success or failure
-    folly::Future< std::error_code > async_writev(const iovec* iov, int iovcnt, BlkId const& bid,
-                                                  bool part_of_batch = false);
+    sisl::async::task< iomgr::io_result > async_writev(const iovec* iov, int iovcnt, BlkId const& bid,
+                                                       bool part_of_batch = false);
 
     // TODO: This needs to be removed once Journal starting to use AppendBlkAllocator
-    folly::Future< std::error_code > async_writev(const iovec* iov, const int iovcnt, cshared< Chunk >& chunk,
-                                                  uint64_t offset_in_chunk);
+    sisl::async::task< iomgr::io_result > async_writev(const iovec* iov, const int iovcnt, cshared< Chunk >& chunk,
+                                                       uint64_t offset_in_chunk);
 
     /// @brief Synchronously write the buffer to the blkid
     /// @param buf : Buffer to write data from
@@ -235,7 +237,8 @@ public:
     /// @param part_of_batch : Is this read part of batch io. If true, caller is expected to call submit_batch at
     /// the end of the batch, otherwise this read request will not be queued.
     /// @return future< bool > Future result of success or failure
-    folly::Future< std::error_code > async_read(char* buf, uint64_t size, BlkId const& bid, bool part_of_batch = false);
+    sisl::async::task< iomgr::io_result > async_read(char* buf, uint64_t size, BlkId const& bid,
+                                                     bool part_of_batch = false);
 
     /// @brief Asynchronously read the data for a given BlkId to the vector of buffers
     /// @param iov : Vector of buffer to write read to
@@ -245,8 +248,8 @@ public:
     /// @param part_of_batch : Is this read part of batch io. If true, caller is expected to call submit_batch at
     /// the end of the batch, otherwise this read request will not be queued.
     /// @return future< bool > Future result of success or failure
-    folly::Future< std::error_code > async_readv(iovec* iovs, int iovcnt, uint64_t size, BlkId const& bid,
-                                                 bool part_of_batch = false);
+    sisl::async::task< iomgr::io_result > async_readv(iovec* iovs, int iovcnt, uint64_t size, BlkId const& bid,
+                                                      bool part_of_batch = false);
 
     /// @brief Synchronously read the data for a given BlkId.
     /// @param buf : Buffer to read data to
@@ -272,7 +275,7 @@ public:
 
     /// @brief Fsync the underlying physical devices that vdev is sitting on asynchornously
     /// @return future< bool > Future result with bool to indicate when fsync is actually executed
-    folly::Future< std::error_code > queue_fsync_pdevs();
+    sisl::async::task< iomgr::io_result > queue_fsync_pdevs();
 
     /// @brief Submit the batch of IOs previously queued as part of async read/write APIs.
     void submit_batch();

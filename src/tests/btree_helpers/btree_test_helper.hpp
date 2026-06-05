@@ -36,7 +36,7 @@ struct BtreeTestHelper {
     using T = TestType;
     using K = typename TestType::KeyType;
     using V = typename TestType::ValueType;
-    using mutex = iomgr::FiberManagerLib::shared_mutex;
+    using mutex = std::shared_mutex;
     using op_func_t = std::function< void(void) >;
 
     BtreeTestHelper() : m_shadow_map{SISL_OPTIONS["num_entries"].as< uint32_t >()} {}
@@ -52,10 +52,12 @@ struct BtreeTestHelper {
         if (m_is_multi_threaded) {
             std::mutex mtx;
             m_run_time = SISL_OPTIONS["run_time"].as< uint32_t >();
+            // iomgr v13 has no fibers; parallelism comes from the worker reactor pool. Collect one handle
+            // per worker reactor (broadcast to all workers, each records its own reactor) and dispatch
+            // distinct chunks of work to each, mirroring the old per-fiber fan-out.
             iomanager.run_on_wait(iomgr::reactor_regex::all_worker, [this, &mtx]() {
-                auto fv = iomanager.sync_io_capable_fibers();
                 std::unique_lock lg(mtx);
-                m_fibers.insert(m_fibers.end(), fv.begin(), fv.end());
+                m_reactors.push_back(iomanager.this_reactor());
             });
         }
 
@@ -77,7 +79,7 @@ protected:
     uint32_t m_run_time{0};
 
     std::map< std::string, op_func_t > m_operations;
-    std::vector< iomgr::io_fiber_t > m_fibers;
+    std::vector< iomgr::IOReactor* > m_reactors;
     std::mutex m_test_done_mtx;
     std::condition_variable m_test_done_cv;
     std::random_device m_re;
@@ -107,7 +109,7 @@ public:
             return;
         }
 
-        const auto n_fibers = std::min(preload_size, (uint32_t)m_fibers.size());
+        const auto n_fibers = std::min(preload_size, (uint32_t)m_reactors.size());
         const auto chunk_size = preload_size / n_fibers;
         const auto last_chunk_size = preload_size % chunk_size ?: chunk_size;
         auto test_count = n_fibers;
@@ -116,42 +118,43 @@ public:
             const auto start_range = i * chunk_size;
             const auto end_range = start_range + ((i == n_fibers - 1) ? last_chunk_size : chunk_size) - 1;
             auto fiber_id = i;
-            iomanager.run_on_forget(m_fibers[i], [this, start_range, end_range, &test_count, fiber_id, preload_size]() {
-                double progress_interval =
-                    (double)(end_range - start_range) / 20; // 5% of the total number of iterations
-                double progress_thresh = progress_interval; // threshold for progress interval
-                double elapsed_time, progress_percent, last_progress_time = 0;
-                auto m_start_time = Clock::now();
+            iomanager.run_on_forget(
+                m_reactors[i], [this, start_range, end_range, &test_count, fiber_id, preload_size]() {
+                    double progress_interval =
+                        (double)(end_range - start_range) / 20; // 5% of the total number of iterations
+                    double progress_thresh = progress_interval; // threshold for progress interval
+                    double elapsed_time, progress_percent, last_progress_time = 0;
+                    auto m_start_time = Clock::now();
 
-                for (uint32_t i = start_range; i < end_range; i++) {
-                    put(i, btree_put_type::INSERT);
-                    if (fiber_id == 0) {
-                        elapsed_time = get_elapsed_time_sec(m_start_time);
-                        progress_percent = (double)(i - start_range) / (end_range - start_range) * 100;
+                    for (uint32_t i = start_range; i < end_range; i++) {
+                        put(i, btree_put_type::INSERT);
+                        if (fiber_id == 0) {
+                            elapsed_time = get_elapsed_time_sec(m_start_time);
+                            progress_percent = (double)(i - start_range) / (end_range - start_range) * 100;
 
-                        // check progress every 5% of the total number of iterations or every 30 seconds
-                        bool print_time = false;
-                        if (i >= progress_thresh) {
-                            progress_thresh += progress_interval;
-                            print_time = true;
-                        }
-                        if (elapsed_time - last_progress_time > 30) {
-                            last_progress_time = elapsed_time;
-                            print_time = true;
-                        }
-                        if (print_time) {
-                            LOGINFO("Progress: iterations completed ({:.2f}%)- Elapsed time: {:.0f} seconds- "
-                                    "populated entries: {} ({:.2f}%)",
-                                    progress_percent, elapsed_time, m_shadow_map.size(),
-                                    m_shadow_map.size() * 100.0 / preload_size);
+                            // check progress every 5% of the total number of iterations or every 30 seconds
+                            bool print_time = false;
+                            if (i >= progress_thresh) {
+                                progress_thresh += progress_interval;
+                                print_time = true;
+                            }
+                            if (elapsed_time - last_progress_time > 30) {
+                                last_progress_time = elapsed_time;
+                                print_time = true;
+                            }
+                            if (print_time) {
+                                LOGINFO("Progress: iterations completed ({:.2f}%)- Elapsed time: {:.0f} seconds- "
+                                        "populated entries: {} ({:.2f}%)",
+                                        progress_percent, elapsed_time, m_shadow_map.size(),
+                                        m_shadow_map.size() * 100.0 / preload_size);
+                            }
                         }
                     }
-                }
-                {
-                    std::unique_lock lg(m_test_done_mtx);
-                    if (--test_count == 0) { m_test_done_cv.notify_one(); }
-                }
-            });
+                    {
+                        std::unique_lock lg(m_test_done_mtx);
+                        if (--test_count == 0) { m_test_done_cv.notify_one(); }
+                    }
+                });
         }
 
         {
@@ -547,65 +550,68 @@ private:
 
 protected:
     void run_in_parallel(const std::vector< std::pair< std::string, int > >& op_list) {
-        auto test_count = m_fibers.size();
+        auto test_count = m_reactors.size();
         const auto total_iters = SISL_OPTIONS["num_iters"].as< uint32_t >();
-        const auto num_iters_per_thread = total_iters / m_fibers.size();
+        const auto num_iters_per_thread = total_iters / m_reactors.size();
         const auto extra_iters = total_iters % num_iters_per_thread;
-        LOGINFO("number of fibers {} num_iters_per_thread {} extra_iters {} ", m_fibers.size(), num_iters_per_thread,
-                extra_iters);
+        LOGINFO("number of reactors {} num_iters_per_thread {} extra_iters {} ", m_reactors.size(),
+                num_iters_per_thread, extra_iters);
 
-        for (uint32_t fiber_id = 0; fiber_id < m_fibers.size(); ++fiber_id) {
+        for (uint32_t fiber_id = 0; fiber_id < m_reactors.size(); ++fiber_id) {
             auto num_iters_this_fiber = num_iters_per_thread + (fiber_id < extra_iters ? 1 : 0);
-            iomanager.run_on_forget(m_fibers[fiber_id], [this, fiber_id, &test_count, op_list, num_iters_this_fiber]() {
-                std::random_device g_rd{};
-                std::default_random_engine re{g_rd()};
-                std::vector< uint32_t > weights;
-                std::transform(op_list.begin(), op_list.end(), std::back_inserter(weights),
-                               [](const auto& pair) { return pair.second; });
+            iomanager.run_on_forget(
+                m_reactors[fiber_id], [this, fiber_id, &test_count, op_list, num_iters_this_fiber]() {
+                    std::random_device g_rd{};
+                    std::default_random_engine re{g_rd()};
+                    std::vector< uint32_t > weights;
+                    std::transform(op_list.begin(), op_list.end(), std::back_inserter(weights),
+                                   [](const auto& pair) { return pair.second; });
 
-                double progress_interval = (double)num_iters_this_fiber / 20; // 5% of the total number of iterations
-                double progress_thresh = progress_interval;                   // threshold for progress interval
-                double elapsed_time, progress_percent, last_progress_time = 0;
+                    double progress_interval =
+                        (double)num_iters_this_fiber / 20;      // 5% of the total number of iterations
+                    double progress_thresh = progress_interval; // threshold for progress interval
+                    double elapsed_time, progress_percent, last_progress_time = 0;
 
-                // Construct a weighted distribution based on the input frequencies
-                std::discrete_distribution< uint32_t > s_rand_op_generator(weights.begin(), weights.end());
-                auto m_start_time = Clock::now();
-                auto time_to_stop = [this, m_start_time]() {
-                    return (get_elapsed_time_sec(m_start_time) > m_run_time);
-                };
+                    // Construct a weighted distribution based on the input frequencies
+                    std::discrete_distribution< uint32_t > s_rand_op_generator(weights.begin(), weights.end());
+                    auto m_start_time = Clock::now();
+                    auto time_to_stop = [this, m_start_time]() {
+                        return (get_elapsed_time_sec(m_start_time) > m_run_time);
+                    };
 
-                for (uint32_t i = 0; i < num_iters_this_fiber && !time_to_stop(); i++) {
-                    uint32_t op_idx = s_rand_op_generator(re);
-                    (this->m_operations[op_list[op_idx].first])();
-                    m_num_ops.fetch_add(1);
+                    for (uint32_t i = 0; i < num_iters_this_fiber && !time_to_stop(); i++) {
+                        uint32_t op_idx = s_rand_op_generator(re);
+                        (this->m_operations[op_list[op_idx].first])();
+                        m_num_ops.fetch_add(1);
 
-                    if (fiber_id == 0) {
-                        elapsed_time = get_elapsed_time_sec(m_start_time);
-                        progress_percent = (double)i / num_iters_this_fiber * 100;
+                        if (fiber_id == 0) {
+                            elapsed_time = get_elapsed_time_sec(m_start_time);
+                            progress_percent = (double)i / num_iters_this_fiber * 100;
 
-                        // check progress every 5% of the total number of iterations or every 30 seconds
-                        bool print_time = false;
-                        if (i >= progress_thresh) {
-                            progress_thresh += progress_interval;
-                            print_time = true;
-                        }
-                        if (elapsed_time - last_progress_time > 30) {
-                            last_progress_time = elapsed_time;
-                            print_time = true;
-                        }
-                        if (print_time) {
-                            LOGINFO("Progress: iterations completed ({:.2f}%)- Elapsed time: {:.0f} seconds of total "
+                            // check progress every 5% of the total number of iterations or every 30 seconds
+                            bool print_time = false;
+                            if (i >= progress_thresh) {
+                                progress_thresh += progress_interval;
+                                print_time = true;
+                            }
+                            if (elapsed_time - last_progress_time > 30) {
+                                last_progress_time = elapsed_time;
+                                print_time = true;
+                            }
+                            if (print_time) {
+                                LOGINFO(
+                                    "Progress: iterations completed ({:.2f}%)- Elapsed time: {:.0f} seconds of total "
                                     "{} ({:.2f}%) - total entries: {} ({:.2f}%)",
                                     progress_percent, elapsed_time, m_run_time, elapsed_time * 100.0 / m_run_time,
                                     m_shadow_map.size(), m_shadow_map.size() * 100.0 / m_max_range_input);
+                            }
                         }
                     }
-                }
-                {
-                    std::unique_lock lg(m_test_done_mtx);
-                    if (--test_count == 0) { m_test_done_cv.notify_one(); }
-                }
-            });
+                    {
+                        std::unique_lock lg(m_test_done_mtx);
+                        if (--test_count == 0) { m_test_done_cv.notify_one(); }
+                    }
+                });
         }
 
         {

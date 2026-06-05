@@ -17,7 +17,7 @@
 #include <homestore/chunk_selector.h>
 
 #include <vector>
-#include <folly/ThreadLocal.h>
+#include <sisl/utility/thread_buffer.hpp>
 #include <sisl/logging/logging.h>
 
 #include <homestore/vchunk.h>
@@ -39,7 +39,7 @@ public:
 
 private:
     std::vector< shared< Chunk > > m_chunks;
-    folly::ThreadLocal< uint32_t > m_next_chunk_index;
+    sisl::ExitSafeThreadBuffer< uint32_t > m_next_chunk_index;
     bool m_dynamic_chunk_add; // Can we add chunk dynamically
 };
 

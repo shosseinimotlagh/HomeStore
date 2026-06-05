@@ -1,6 +1,5 @@
 #include <flatbuffers/idl.h>
 #include <flatbuffers/minireflect.h>
-#include <folly/executors/InlineExecutor.h>
 #include <iomgr/iomgr_flip.hpp>
 #include <boost/lexical_cast.hpp>
 #include <boost/uuid/nil_generator.hpp>
@@ -13,11 +12,13 @@
 #include <homestore/logstore_service.hpp>
 #include <homestore/superblk_handler.hpp>
 
+#include "common/coro_helpers.hpp"
 #include "common/homestore_assert.hpp"
 #include "common/homestore_config.hpp"
 #include "common/homestore_utils.hpp"
 #include "replication/service/raft_repl_service.h"
 #include "replication/repl_dev/raft_repl_dev.h"
+#include <sisl/async/when_all.hpp> // sisl::async::when_all for the push-data broadcast
 #include "device/chunk.h"
 #include "device/device.h"
 #include "push_data_rpc_generated.h"
@@ -60,9 +61,9 @@ RaftReplDev::RaftReplDev(RaftReplService& svc, superblk< raft_repl_dev_superblk 
         }
 
         if (m_rd_sb->is_timeline_consistent) {
-            logstore_service()
-                .open_log_store(m_rd_sb->logdev_id, m_rd_sb->free_blks_journal_id, false)
-                .thenValue([this](auto log_store) {
+            detail::detach_then(
+                logstore_service().open_log_store(m_rd_sb->logdev_id, m_rd_sb->free_blks_journal_id, false),
+                [this](auto log_store) {
                     m_free_blks_journal = std::move(log_store);
                     m_rd_sb->free_blks_journal_id = m_free_blks_journal->get_store_id();
                 });
@@ -135,33 +136,21 @@ bool RaftReplDev::join_group() {
         m_msg_mgr.join_group(m_group_id, "homestore_replication",
                              std::dynamic_pointer_cast< nuraft_mesg::mesg_state_mgr >(shared_from_this()));
     if (!raft_result) {
-        HS_DBG_ASSERT(false, "Unable to join the group_id={} with error={}", group_id_str(), raft_result.error());
+        HS_DBG_ASSERT(false, "Unable to join the group_id={} with error={}", group_id_str(),
+                      raft_result.error().message());
         return false;
     }
     return true;
 }
 
-repl_data_rpc_error_code RaftReplDev::nuraft_to_hs_error(nuraft::cmd_result_code const& nuraft_err) {
-    switch (nuraft_err) {
-    case nuraft::cmd_result_code::OK:
-        return repl_data_rpc_error_code::SUCCESS;
-    case nuraft::cmd_result_code::SERVER_NOT_FOUND:
-        return repl_data_rpc_error_code::SERVER_NOT_FOUND;
-    case nuraft::cmd_result_code::TIMEOUT:
-        return repl_data_rpc_error_code::TIMEOUT;
-    case nuraft::cmd_result_code::SERVER_ALREADY_EXISTS:
-        return repl_data_rpc_error_code::SERVER_ALREADY_EXISTS;
-    case nuraft::cmd_result_code::CANCELLED:
-        return repl_data_rpc_error_code::CANCELLED;
-    case nuraft::cmd_result_code::TERM_MISMATCH:
-        return repl_data_rpc_error_code::TERM_MISMATCH;
-    case nuraft::cmd_result_code::BAD_REQUEST:
-        return repl_data_rpc_error_code::BAD_REQUEST;
-    case nuraft::cmd_result_code::FAILED:
-        return repl_data_rpc_error_code::FAILED;
-    default:
-        return repl_data_rpc_error_code::NOT_SUPPORTED;
-    }
+// The data-service path now returns nuraft_mesg's collapsed std::error_condition surface (errors.hpp):
+// the universal cases are std::errc, everything domain-specific lands in FAILED.
+repl_data_rpc_error_code RaftReplDev::nuraft_to_hs_error(std::error_condition const& cond) {
+    if (!cond) { return repl_data_rpc_error_code::SUCCESS; }
+    if (cond == std::errc::invalid_argument) { return repl_data_rpc_error_code::BAD_REQUEST; }
+    if (cond == std::errc::operation_canceled) { return repl_data_rpc_error_code::CANCELLED; }
+    if (cond == std::errc::timed_out) { return repl_data_rpc_error_code::TIMEOUT; }
+    return repl_data_rpc_error_code::FAILED;
 }
 
 nuraft_mesg::destination_t RaftReplDev::hs_to_nuraft_dest(repl_dest_t dest) {
@@ -182,23 +171,20 @@ bool RaftReplDev::add_data_rpc_service(std::string const& request_name,
 NullDataRpcAsyncResult RaftReplDev::data_request_unidirectional(repl_dest_t const& dest,
                                                                 std::string const& request_name,
                                                                 sisl::io_blob_list_t const& cli_buf) {
-    return group_msg_service()
-        ->data_service_request_unidirectional(hs_to_nuraft_dest(dest), request_name, cli_buf)
-        .deferValue([this](auto&& r) -> Result< folly::Unit, repl_data_rpc_error_code > {
-            if (r.hasError()) { return folly::makeUnexpected(nuraft_to_hs_error(r.error())); }
-            return folly::unit;
-        });
+    // r is nuraft_mesg::result = std::expected, so test it with operator bool.
+    auto r = co_await group_msg_service()->data_service_request_unidirectional(hs_to_nuraft_dest(dest), request_name,
+                                                                               cli_buf);
+    if (!r) { co_return std::unexpected(nuraft_to_hs_error(r.error())); }
+    co_return std::monostate{};
 }
 
 DataRpcAsyncResult< sisl::GenericClientResponse >
 RaftReplDev::data_request_bidirectional(repl_dest_t const& dest, std::string const& request_name,
                                         sisl::io_blob_list_t const& cli_buf) {
-    return group_msg_service()
-        ->data_service_request_bidirectional(hs_to_nuraft_dest(dest), request_name, cli_buf)
-        .deferValue([this](auto&& r) -> Result< sisl::GenericClientResponse, repl_data_rpc_error_code > {
-            if (r.hasError()) { return folly::makeUnexpected(nuraft_to_hs_error(r.error())); }
-            return std::move(r.value());
-        });
+    auto r = co_await group_msg_service()->data_service_request_bidirectional(hs_to_nuraft_dest(dest), request_name,
+                                                                              cli_buf);
+    if (!r) { co_return std::unexpected(nuraft_to_hs_error(r.error())); }
+    co_return std::move(r.value());
 }
 
 // All the steps in the implementation should be idempotent and retryable.
@@ -226,7 +212,8 @@ AsyncReplResult<> RaftReplDev::start_replace_member(std::string& task_id, const 
         // until the successor finishes the catch-up of the latest log, and then resign. Return NOT_LEADER and let
         // client retry.
         if (is_leader) {
-            RD_LOGI(trace_id, "Step1. Replace member, leader is the member_out so yield leadership, task_id={}", task_id);
+            RD_LOGI(trace_id, "Step1. Replace member, leader is the member_out so yield leadership, task_id={}",
+                    task_id);
             raft_server()->yield_leadership(false /* immediate */, -1 /* successor */);
         }
         RD_LOGE(trace_id, "Step1. Replace member, I am not leader, can not handle the request, task_id={}", task_id);
@@ -462,7 +449,7 @@ ReplaceMemberStatus RaftReplDev::get_replace_member_status(std::string& task_id,
     }
     init_req_counter counter(pending_request_num);
 
-    if (!m_repl_svc_ctx || !is_leader()) { return ReplaceMemberStatus::NOT_LEADER; }
+    if (!repl_ctx() || !is_leader()) { return ReplaceMemberStatus::NOT_LEADER; }
 
     auto peers = get_replication_status();
     peer_info out_peer_info;
@@ -528,31 +515,18 @@ ReplServiceError RaftReplDev::do_add_member(const replica_member_info& member, u
         RD_LOGI(trace_id, "Member to add failed, not leader");
         return ReplServiceError::BAD_REQUEST;
     }
-    auto ret = retry_when_config_changing(
-        [&] {
-            auto srv_config = nuraft::srv_config(nuraft_mesg::to_server_id(member.id), 0,
-                                                 boost::uuids::to_string(member.id), "", false, member.priority);
-            auto add_ret = m_msg_mgr.add_member(m_group_id, srv_config)
-                               .via(&folly::InlineExecutor::instance())
-                               .thenValue([this, member, trace_id](auto&& e) -> nuraft::cmd_result_code {
-                                   return e.hasError() ? e.error() : nuraft::cmd_result_code::OK;
-                               });
-            return add_ret.value();
-        },
-        trace_id);
-    if (ret == nuraft::cmd_result_code::SERVER_ALREADY_EXISTS) {
-        RD_LOGW(trace_id, "Ignoring error returned from nuraft add_member, member={}, err={}",
-                boost::uuids::to_string(member.id), ret);
-    } else if (ret == nuraft::cmd_result_code::CANCELLED) {
-        // nuraft mesg will return cancelled if the change is not commited after waiting for
-        // raft_leader_change_timeout_ms(default 3200).
-        RD_LOGE(trace_id, "Add member failed, member={}, err={}", boost::uuids::to_string(member.id), ret);
-        return ReplServiceError::CANCELLED;
-    } else if (ret != nuraft::cmd_result_code::OK) {
-        // It's ok to retry this request as the request
-        //  replace member is idempotent.
-        RD_LOGE(trace_id, "Add member failed, member={}, err={}", boost::uuids::to_string(member.id), ret);
-        return ReplServiceError::RETRY_REQUEST;
+    auto srv_config = nuraft::srv_config(nuraft_mesg::to_server_id(member.id), 0, boost::uuids::to_string(member.id),
+                                         "", false, member.priority);
+    // add_member now retries config-changing and is idempotent on already-exists internally, returning a
+    // collapsed std::error_condition. Block for the result (control-plane, infrequent; the task is fulfilled
+    // by nuraft/gRPC threads, not a homestore reactor, so the wait does not deadlock the data path).
+    auto e = detail::sync_get(m_msg_mgr.add_member(m_group_id, srv_config));
+    if (!e) {
+        RD_LOGE(trace_id, "Add member failed, member={}, err={}", boost::uuids::to_string(member.id),
+                e.error().message());
+        // cancelled = leadership/term moved under us; anything else is retryable (replace member is idempotent).
+        return (e.error() == std::errc::operation_canceled) ? ReplServiceError::CANCELLED
+                                                            : ReplServiceError::RETRY_REQUEST;
     }
     RD_LOGI(trace_id, "Proposed to raft to add member, member={}", boost::uuids::to_string(member.id));
     return ReplServiceError::OK;
@@ -616,24 +590,13 @@ ReplServiceError RaftReplDev::do_remove_member(const replica_id_t& member, bool 
         RD_LOGI(trace_id, "Member to remove is the leader so yield leadership");
         return ReplServiceError::NOT_LEADER;
     }
-    auto ret = retry_when_config_changing(
-        [&] {
-            auto rem_ret = m_msg_mgr.rem_member(m_group_id, member)
-                               .via(&folly::InlineExecutor::instance())
-                               .thenValue([this, member, trace_id](auto&& e) -> nuraft::cmd_result_code {
-                                   return e.hasError() ? e.error() : nuraft::cmd_result_code::OK;
-                               });
-            return rem_ret.value();
-        },
-        trace_id);
-    if (ret == nuraft::cmd_result_code::SERVER_NOT_FOUND) {
-        RD_LOGW(trace_id, "Remove member not found in group error, ignoring, member={}",
-                boost::uuids::to_string(member));
-    } else if (ret != nuraft::cmd_result_code::OK) {
-        // Its ok to retry this request as the request
-        // of replace member is idempotent.
+    // rem_member now retries config-changing and is idempotent on member-not-found internally, returning a
+    // collapsed std::error_condition. Block for its result (see do_add_member).
+    auto e = detail::sync_get(m_msg_mgr.rem_member(m_group_id, member));
+    if (!e) {
+        // retryable -- replace member is idempotent.
         RD_LOGE(trace_id, "Replace member failed to remove member, member={}, err={}", boost::uuids::to_string(member),
-                ret);
+                e.error().message());
         return ReplServiceError::RETRY_REQUEST;
     }
     RD_LOGI(trace_id, "Proposed to raft to remove member, member={}", boost::uuids::to_string(member));
@@ -784,7 +747,7 @@ AsyncReplResult<> RaftReplDev::clean_replace_member_task(const std::string& task
 ReplResult< replace_member_task > RaftReplDev::get_ongoing_replace_member_task(uint64_t trace_id) const {
     if (m_rd_sb->replace_member_task.replica_in == boost::uuids::nil_uuid() ||
         m_rd_sb->replace_member_task.replica_out == boost::uuids::nil_uuid()) {
-        return folly::makeUnexpected(ReplServiceError::RESULT_NOT_EXIST_YET);
+        return std::unexpected(ReplServiceError::RESULT_NOT_EXIST_YET);
     }
     return replace_member_task{.task_id = std::string(m_rd_sb->replace_member_task.task_id),
                                .replica_out = m_rd_sb->replace_member_task.replica_out,
@@ -839,7 +802,7 @@ void RaftReplDev::reset_quorum_size(uint32_t commit_quorum, uint64_t trace_id) {
     raft_server()->update_params(params);
 }
 
-folly::SemiFuture< ReplServiceError > RaftReplDev::destroy_group() {
+sisl::async::task< ReplServiceError > RaftReplDev::destroy_group() {
     // Set the intent to destroy the group
     m_stage.update([](auto* stage) { *stage = repl_dev_stage_t::DESTROYING; });
 
@@ -866,7 +829,7 @@ folly::SemiFuture< ReplServiceError > RaftReplDev::destroy_group() {
     if (err != ReplServiceError::OK) {
         // Failed to initialize the repl_req_ctx for replace member.
         LOGERROR("Failed to initialize repl_req_ctx for destorying group, error={}", err);
-        return folly::makeSemiFuture< ReplServiceError >(std::move(err));
+        co_return err;
     }
 
     // the rreq will be recreated when appending log, which is a follower-like flow
@@ -875,12 +838,12 @@ folly::SemiFuture< ReplServiceError > RaftReplDev::destroy_group() {
     err = m_state_machine->propose_to_raft(std::move(rreq));
     if (err != ReplServiceError::OK) {
         m_stage.update([](auto* stage) { *stage = repl_dev_stage_t::ACTIVE; });
-        return folly::makeSemiFuture< ReplServiceError >(std::move(err));
         LOGERROR("RaftReplDev::destroy_group failed {}", err);
+        co_return err;
     }
 
     LOGINFO("Raft repl dev destroy_group={}", group_id_str());
-    return m_destroy_promise.getSemiFuture();
+    co_return co_await m_destroy_promise;
 }
 
 void RaftReplDev::use_config(json_superblk raft_config_sb) { m_raft_config_sb = std::move(raft_config_sb); }
@@ -888,9 +851,9 @@ void RaftReplDev::use_config(json_superblk raft_config_sb) { m_raft_config_sb = 
 void RaftReplDev::on_create_snapshot(nuraft::snapshot& s, nuraft::async_result< bool >::handler_type& when_done) {
     RD_LOGD(NO_TRACE_ID, "create_snapshot last_idx={}/term={}", s.get_last_log_idx(), s.get_last_log_term());
     auto snp_ctx = std::make_shared< nuraft_snapshot_context >(s);
-    auto result = m_listener->create_snapshot(snp_ctx).get();
+    auto result = detail::sync_get(m_listener->create_snapshot(snp_ctx));
     auto null_except = std::shared_ptr< std::exception >();
-    HS_REL_ASSERT(result.hasError() == false, "Not expecting creating snapshot to return false. ");
+    HS_REL_ASSERT(bool(result), "Not expecting creating snapshot to return false. ");
 
     // propose truncate boundary on leader if needed
     if (is_leader()) { propose_truncate_boundary(); }
@@ -911,7 +874,7 @@ void RaftReplDev::trigger_snapshot_creation(repl_lsn_t compact_lsn, bool wait_fo
             }
         }
         // Step 1.2 trigger cp_flush to make sure all changes are flushed to disk before updating truncation boundary
-        hs()->cp_mgr().trigger_cp_flush(true /*force*/).get();
+        detail::sync_get(hs()->cp_mgr().trigger_cp_flush(true /*force*/));
         RD_LOGI(NO_TRACE_ID, "cp_flush completed before updating truncation boundary to lsn={}", compact_lsn);
         // Step 1.3 Update truncation boundary
         RD_LOGI(NO_TRACE_ID, "Updating truncation boundary to lsn={}, current_truncation_boundary={}", compact_lsn,
@@ -942,7 +905,7 @@ void RaftReplDev::trigger_snapshot_creation(repl_lsn_t compact_lsn, bool wait_fo
     }
 
     // Step 4. trigger cp_flush to make sure all changes are flushed to disk after snapshot creation and log compaction
-    hs()->cp_mgr().trigger_cp_flush(true /*force*/).get();
+    detail::sync_get(hs()->cp_mgr().trigger_cp_flush(true /*force*/));
     RD_LOGI(NO_TRACE_ID, "cp_flush completed after snapshot creation and log compaction");
     RD_LOGI(NO_TRACE_ID, "snapshot creation and compaction completed");
 }
@@ -1003,7 +966,7 @@ void RaftReplDev::propose_truncate_boundary() {
 // we do not have shutdown for async_alloc_write according to the two points above.
 void RaftReplDev::async_alloc_write(sisl::blob const& header, sisl::blob const& key, sisl::sg_list const& data,
                                     repl_req_ptr_t rreq, bool part_of_batch, trace_id_t tid) {
-    if (!rreq) { auto rreq = repl_req_ptr_t(new repl_req_ctx{}); }
+    if (!rreq) { rreq = repl_req_ptr_t(new repl_req_ctx{}); }
 
     {
         auto const guard = m_stage.access();
@@ -1035,7 +998,7 @@ void RaftReplDev::async_alloc_write(sisl::blob const& header, sisl::blob const& 
             header.size(), key.size(), data.size);
 
     // Add the request to the repl_dev_rreq map, it will be accessed throughout the life cycle of this request
-    auto const [_, happened] = m_repl_key_req_map.emplace(rreq->rkey(), rreq);
+    auto const happened = m_repl_key_req_map.emplace(rreq->rkey(), rreq);
     RD_DBG_ASSERT(happened, "Duplicate repl_key={} found in the map", rreq->rkey().to_string());
 
     // If it is header only entry, directly propose to the raft
@@ -1063,29 +1026,30 @@ void RaftReplDev::async_alloc_write(sisl::blob const& header, sisl::blob const& 
 
         auto const data_write_start_time = Clock::now();
         // Write the data
-        data_service()
-            .async_write(data, rreq->local_blkid())
-            .thenValue([this, rreq, data_write_start_time](auto&& err) {
-                // update outstanding no matter error or not;
-                COUNTER_DECREMENT(m_metrics, outstanding_data_write_cnt, 1);
+        detail::detach_then(data_service().async_write(data, rreq->local_blkid()),
+                            [this, rreq, data_write_start_time](iomgr::io_result const& r) {
+                                // update outstanding no matter error or not;
+                                COUNTER_DECREMENT(m_metrics, outstanding_data_write_cnt, 1);
 
-                if (err) {
-                    HS_DBG_ASSERT(false, "Error in writing data, err_code={}, category={}, err_message={}", err.value(),
-                                  err.category().name(), err.message());
-                    handle_error(rreq, ReplServiceError::DRIVE_WRITE_ERROR);
-                } else {
-                    // update metrics for originated rreq;
-                    const auto write_num_pieces = rreq->local_blkid().num_pieces();
-                    HISTOGRAM_OBSERVE(m_metrics, rreq_pieces_per_write, write_num_pieces);
-                    HISTOGRAM_OBSERVE(m_metrics, rreq_data_write_latency_us,
-                                      get_elapsed_time_us(data_write_start_time));
-                    HISTOGRAM_OBSERVE(m_metrics, rreq_total_data_write_latency_us,
-                                      get_elapsed_time_us(rreq->created_time()));
+                                if (!r) {
+                                    auto const& err = r.error();
+                                    HS_DBG_ASSERT(false,
+                                                  "Error in writing data, err_code={}, category={}, err_message={}",
+                                                  err.value(), err.category().name(), err.message());
+                                    handle_error(rreq, ReplServiceError::DRIVE_WRITE_ERROR);
+                                } else {
+                                    // update metrics for originated rreq;
+                                    const auto write_num_pieces = rreq->local_blkid().num_pieces();
+                                    HISTOGRAM_OBSERVE(m_metrics, rreq_pieces_per_write, write_num_pieces);
+                                    HISTOGRAM_OBSERVE(m_metrics, rreq_data_write_latency_us,
+                                                      get_elapsed_time_us(data_write_start_time));
+                                    HISTOGRAM_OBSERVE(m_metrics, rreq_total_data_write_latency_us,
+                                                      get_elapsed_time_us(rreq->created_time()));
 
-                    auto raft_status = m_state_machine->propose_to_raft(rreq);
-                    if (raft_status != ReplServiceError::OK) { handle_error(rreq, raft_status); }
-                }
-            });
+                                    auto raft_status = m_state_machine->propose_to_raft(rreq);
+                                    if (raft_status != ReplServiceError::OK) { handle_error(rreq, raft_status); }
+                                }
+                            });
     } else {
         RD_LOGT(tid, "Skipping data channel send since value size is 0");
         rreq->add_state(repl_req_state_t::DATA_WRITTEN);
@@ -1110,30 +1074,34 @@ void RaftReplDev::push_data_to_all_followers(repl_req_ptr_t rreq, sisl::sg_list 
            flatbuffers::FlatBufferToString(builder.GetBufferPointer() + sizeof(flatbuffers::uoffset_t),
                                            PushDataRequestTypeTable()));*/
 
-    auto peers = get_active_peers();
-    auto calls = std::vector< nuraft_mesg::NullAsyncResult >();
-    for (auto peer : peers) {
+    // Broadcast the push to every follower and release the packet buffers once all replies are in. This is
+    // fire-and-forget: detach() starts the coroutine and returns immediately.
+    detail::detach(push_data_coro(std::move(rreq), get_active_peers()));
+}
+
+// Fans the push out to all followers via when_all and releases the rreq packet buffers when every reply is
+// in. Per-peer errors are intentionally swallowed (just logged): a follower that misses the push will fetch
+// the data instead -- so when_all (which never short-circuits on a child error) is exactly the right
+// primitive. rreq/peers are taken BY VALUE (copied into the coroutine frame); `this` is the long-lived repl
+// dev, so capturing it implicitly is safe.
+sisl::async::task< void > RaftReplDev::push_data_coro(repl_req_ptr_t rreq, std::set< replica_id_t > peers) {
+    std::vector< nuraft_mesg::null_async_task > calls;
+    calls.reserve(peers.size());
+    for (auto const& peer : peers) {
         RD_LOGD(rreq->traceID(), "Data Channel: Pushing data to follower {}, rreq=[{}]", peer, rreq->to_string());
-        calls.push_back(group_msg_service()
-                            ->data_service_request_unidirectional(peer, PUSH_DATA, rreq->m_pkts)
-                            .via(&folly::InlineExecutor::instance()));
+        calls.push_back(group_msg_service()->data_service_request_unidirectional(peer, PUSH_DATA, rreq->m_pkts));
     }
-    folly::collectAllUnsafe(calls).thenValue([this, rreq](auto&& v_res) {
-        for (auto const& res : v_res) {
-            if (sisl_likely(res.value())) {
-                auto r = res.value();
-                if (r.hasError()) {
-                    // Just logging PushData error, no action is needed as follower can try by fetchData.
-                    RD_LOGI(rreq->traceID(), "Data Channel: Error in pushing data to all followers: rreq=[{}] error={}",
-                            rreq->to_string(), r.error());
-                }
-            }
+    auto const results = co_await sisl::async::when_all(std::move(calls)); // vector< nuraft_mesg::result< void > >
+    for (auto const& r : results) {
+        if (!r) {
+            RD_LOGI(rreq->traceID(), "Data Channel: Error in pushing data to all followers: rreq=[{}] error={}",
+                    rreq->to_string(), r.error().message());
         }
-        RD_LOGD(rreq->traceID(), "Data Channel: Data push completed for rreq=[{}]", rreq->to_compact_string());
-        // Release the buffer which holds the packets
-        rreq->release_fb_builder();
-        rreq->m_pkts.clear();
-    });
+    }
+    RD_LOGD(rreq->traceID(), "Data Channel: Data push completed for rreq=[{}]", rreq->to_compact_string());
+    rreq->release_fb_builder(); // release the buffer that holds the packets
+    rreq->m_pkts.clear();
+    co_return;
 }
 
 void RaftReplDev::on_push_data_received(intrusive< sisl::GenericRpcData >& rpc_data) {
@@ -1198,13 +1166,14 @@ void RaftReplDev::on_push_data_received(intrusive< sisl::GenericRpcData >& rpc_d
     COUNTER_INCREMENT(m_metrics, outstanding_data_write_cnt, 1);
 
     // Schedule a write and upon completion, mark the data as written.
-    data_service()
-        .async_write(r_cast< const char* >(rreq->data()), push_req->data_size(), rreq->local_blkid())
-        .thenValue([this, rreq, push_data_rcv_time](auto&& err) {
+    detail::detach_then(
+        data_service().async_write(r_cast< const char* >(rreq->data()), push_req->data_size(), rreq->local_blkid()),
+        [this, rreq, push_data_rcv_time](iomgr::io_result const& r) {
             // update outstanding no matter error or not;
             COUNTER_DECREMENT(m_metrics, outstanding_data_write_cnt, 1);
 
-            if (err) {
+            if (!r) {
+                auto const& err = r.error();
                 COUNTER_INCREMENT(m_metrics, write_err_cnt, 1);
                 RD_DBG_ASSERT(false, "Error in writing data, error_code={},category={}, err_message={}", err.value(),
                               err.category().name(), err.message());
@@ -1212,7 +1181,7 @@ void RaftReplDev::on_push_data_received(intrusive< sisl::GenericRpcData >& rpc_d
             } else {
                 rreq->release_data();
                 rreq->add_state(repl_req_state_t::DATA_WRITTEN);
-                rreq->m_data_written_promise.setValue();
+                rreq->m_data_written_promise.complete({});
                 // if rreq create time is earlier than push_data receive time, that means the rreq was created by raft
                 // channel log. Otherwise set to zero as rreq is created by data channel.
                 const auto data_log_diff_us =
@@ -1243,9 +1212,12 @@ repl_req_ptr_t RaftReplDev::applier_create_req(repl_key const& rkey, journal_typ
                                                int64_t lsn) {
     if (is_data_channel) RD_DBG_ASSERT(-1 == lsn, "lsn from data channel should always be -1 , got lsn {}", lsn);
 
-    auto const [it, happened] = m_repl_key_req_map.try_emplace(rkey, repl_req_ptr_t(new repl_req_ctx()));
-    RD_DBG_ASSERT((it != m_repl_key_req_map.end()), "Unexpected error in map_repl_key_to_req");
-    auto rreq = it->second;
+    auto const new_req = repl_req_ptr_t(new repl_req_ctx());
+    repl_req_ptr_t rreq;
+    auto const happened =
+        m_repl_key_req_map.try_emplace_or_cvisit(rkey, new_req, [&rreq](auto const& entry) { rreq = entry.second; });
+    if (happened) { rreq = new_req; }
+    RD_DBG_ASSERT((rreq != nullptr), "Unexpected error in map_repl_key_to_req");
 
     if (!happened) {
         // We already have the entry in the map, reset its start time to prevent it from being incorrectly gc during
@@ -1289,8 +1261,14 @@ repl_req_ptr_t RaftReplDev::applier_create_req(repl_key const& rkey, journal_typ
     return rreq;
 }
 
-folly::Future< folly::Unit > RaftReplDev::notify_after_data_written(std::vector< repl_req_ptr_t >* rreqs) {
-    std::vector< folly::Future< folly::Unit > > futs;
+sisl::async::task< void > RaftReplDev::notify_after_data_written(std::vector< repl_req_ptr_t >* rreqs) {
+    // Each awaiter holds a strong ref to its rreq (captured by value into the coroutine frame), so the
+    // m_data_written_promise it awaits stays alive even if the caller releases its references.
+    auto await_written = [](repl_req_ptr_t rreq) -> sisl::async::task< std::monostate > {
+        co_return co_await rreq->m_data_written_promise;
+    };
+
+    std::vector< sisl::async::task< std::monostate > > futs;
     futs.reserve(rreqs->size());
     std::vector< repl_req_ptr_t > unreceived_data_reqs;
 
@@ -1311,7 +1289,7 @@ folly::Future< folly::Unit > RaftReplDev::notify_after_data_written(std::vector<
             // happen in case of leader is not the propose (i.e raft forwarding is enabled)
             unreceived_data_reqs.emplace_back(rreq);
         } else {
-            futs.emplace_back(rreq->m_data_written_promise.getFuture());
+            futs.emplace_back(await_written(rreq));
         }
     }
 
@@ -1328,31 +1306,36 @@ folly::Future< folly::Unit > RaftReplDev::notify_after_data_written(std::vector<
             HS_REL_ASSERT(false, "Data fetch timeout, should not happen");
         }
         for (auto const& rreq : unreceived_data_reqs) {
-            futs.emplace_back(rreq->m_data_written_promise.getFuture());
+            futs.emplace_back(await_written(rreq));
         }
     }
 
     // All the entries are done already, no need to wait
-    if (futs.size() == 0) { return folly::makeFuture< folly::Unit >(folly::Unit{}); }
+    if (futs.size() == 0) { co_return; }
 
-    return folly::collectAllUnsafe(futs).thenValue([this, rreqs](auto&& e) {
+    co_await sisl::async::when_all(std::move(futs));
 #ifndef NDEBUG
-        for (auto const& rreq : *rreqs) {
-            if ((rreq == nullptr) || (!rreq->has_linked_data())) { continue; }
-            HS_DBG_ASSERT(rreq->has_state(repl_req_state_t::DATA_WRITTEN),
-                          "Data written promise raised without updating DATA_WRITTEN state for rkey={}",
-                          rreq->rkey().to_string());
-            RD_LOGD(rreq->traceID(), "Data write completed and blkid mapped: rreq=[{}]", rreq->to_compact_string());
-        }
+    for (auto const& rreq : *rreqs) {
+        if ((rreq == nullptr) || (!rreq->has_linked_data())) { continue; }
+        HS_DBG_ASSERT(rreq->has_state(repl_req_state_t::DATA_WRITTEN),
+                      "Data written promise raised without updating DATA_WRITTEN state for rkey={}",
+                      rreq->rkey().to_string());
+        RD_LOGD(rreq->traceID(), "Data write completed and blkid mapped: rreq=[{}]", rreq->to_compact_string());
+    }
 #endif
-        RD_LOGT(NO_TRACE_ID, "{} pending reqs's data are written", rreqs->size());
-        return folly::makeFuture< folly::Unit >(folly::Unit{});
-    });
+    RD_LOGT(NO_TRACE_ID, "{} pending reqs's data are written", rreqs->size());
+    co_return;
 }
 
 bool RaftReplDev::wait_for_data_receive(std::vector< repl_req_ptr_t > const& rreqs, uint64_t timeout_ms,
                                         std::vector< repl_req_ptr_t >* timeout_rreqs) {
-    std::vector< folly::Future< folly::Unit > > futs;
+    // Each awaiter holds a strong ref to its rreq, so the m_data_received_promise it awaits stays alive even past
+    // the timeout below (the detached fan-out may still be pending; it keeps the rreq alive until completion).
+    auto await_received = [](repl_req_ptr_t rreq) -> sisl::async::task< std::monostate > {
+        co_return co_await rreq->m_data_received_promise;
+    };
+
+    std::vector< sisl::async::task< std::monostate > > futs;
     std::vector< repl_req_ptr_t > only_wait_reqs;
     only_wait_reqs.reserve(rreqs.size());
     futs.reserve(rreqs.size());
@@ -1362,7 +1345,7 @@ bool RaftReplDev::wait_for_data_receive(std::vector< repl_req_ptr_t > const& rre
             continue;
         }
         only_wait_reqs.emplace_back(rreq);
-        futs.emplace_back(rreq->m_data_received_promise.getFuture());
+        futs.emplace_back(await_received(rreq));
     }
 
     // All the data has been received already, no need to wait
@@ -1384,11 +1367,15 @@ bool RaftReplDev::wait_for_data_receive(std::vector< repl_req_ptr_t > const& rre
     }
 
     // block waiting here until all the futs are ready (data channel filled in and promises are made);
-    auto all_futs_ready = folly::collectAllUnsafe(futs).wait(std::chrono::milliseconds(timeout_ms)).isReady();
+    auto all_futs_ready =
+        detail::sync_wait_for(sisl::async::when_all(std::move(futs)), std::chrono::milliseconds(timeout_ms));
     if (!all_futs_ready && timeout_rreqs != nullptr) {
         timeout_rreqs->clear();
-        for (size_t i{0}; i < futs.size(); ++i) {
-            if (!futs[i].isReady()) { timeout_rreqs->emplace_back(only_wait_reqs[i]); }
+        // await_ready() == true iff that rreq's data-received promise has already completed.
+        for (size_t i{0}; i < only_wait_reqs.size(); ++i) {
+            if (!only_wait_reqs[i]->m_data_received_promise.await_ready()) {
+                timeout_rreqs->emplace_back(only_wait_reqs[i]);
+            }
         }
         all_futs_ready = timeout_rreqs->empty();
     }
@@ -1468,56 +1455,83 @@ void RaftReplDev::fetch_data_from_remote(std::vector< repl_req_ptr_t > rreqs) {
 
     // leader can change, on the receiving side, we need to check if the leader is still the one who originated the
     // blkid;
+    // Fetch is fire-and-forget: detach() starts the coroutine and returns. Copy originator out of
+    // rreqs.front() before rreqs is moved into the coroutine frame -- the reference would otherwise dangle.
+    nuraft_mesg::svr_id_t const originator_id = originator;
+    detail::detach(fetch_data_coro(std::move(builder), originator_id, std::move(rreqs)));
+}
+
+// Single bidirectional fetch to the originator: on success hands the response to handle_fetch_data_response
+// on a worker reactor, on failure fails the still-pending rreqs. builder/originator/rreqs are by-value
+// coroutine params (copied into the frame); `this` is the long-lived repl dev. response is
+// nuraft_mesg::result = std::expected, so it is tested with operator bool.
+sisl::async::task< void > RaftReplDev::fetch_data_coro(shared< flatbuffers::FlatBufferBuilder > builder,
+                                                       nuraft_mesg::svr_id_t originator,
+                                                       std::vector< repl_req_ptr_t > rreqs) {
     auto const fetch_start_time = Clock::now();
-    group_msg_service()
-        ->data_service_request_bidirectional(
-            originator, FETCH_DATA,
-            sisl::io_blob_list_t{
-                sisl::io_blob{builder->GetBufferPointer(), builder->GetSize(), false /* is_aligned */}})
-        .via(&folly::InlineExecutor::instance())
-        .thenValue([this, builder, rreqs = std::move(rreqs), fetch_start_time](auto response) {
-            COUNTER_DECREMENT(m_metrics, outstanding_data_fetch_cnt, 1);
-            auto const fetch_latency_us = get_elapsed_time_us(fetch_start_time);
-            HISTOGRAM_OBSERVE(m_metrics, rreq_data_fetch_latency_us, fetch_latency_us);
+    auto response = co_await group_msg_service()->data_service_request_bidirectional(
+        originator, FETCH_DATA,
+        sisl::io_blob_list_t{sisl::io_blob{builder->GetBufferPointer(), builder->GetSize(), false /* is_aligned */}});
 
-            RD_LOGT(NO_TRACE_ID, "Data Channel: FetchData from remote completed, time taken={} us", fetch_latency_us);
+    COUNTER_DECREMENT(m_metrics, outstanding_data_fetch_cnt, 1);
+    auto const fetch_latency_us = get_elapsed_time_us(fetch_start_time);
+    HISTOGRAM_OBSERVE(m_metrics, rreq_data_fetch_latency_us, fetch_latency_us);
 
-            if (!response) {
-                // if we are here, it means the original who sent the log entries are down.
-                // we need to handle error and when the other member becomes leader, it will resend the log entries;
-                RD_LOGE(NO_TRACE_ID,
-                        "Not able to fetching data from originator={}, error={}, probably originator is down. Will "
-                        "retry when new leader start appending log entries",
-                        rreqs.front()->remote_blkid().server_id, response.error());
-                for (auto const& rreq : rreqs) {
-                    // TODO: Set the data_received promise with error, so that waiting threads can be unblocked and
-                    // reject the request. Without that, it will timeout and then reject it.
+    RD_LOGT(NO_TRACE_ID, "Data Channel: FetchData from remote completed, time taken={} us", fetch_latency_us);
 
-                    // We could have get to a scenario, where didn't receive the data at the time of fetch, but we
-                    // received after issuing fetch and that leader has already switched. In this case, we don't want to
-                    // fail the request.
-                    if (!rreq->has_state(repl_req_state_t::DATA_RECEIVED)) {
-                        handle_error(rreq, RaftReplService::to_repl_error(response.error()));
-                    }
-                }
-                COUNTER_INCREMENT(m_metrics, fetch_err_cnt, 1);
-                return;
+    if (!response) {
+        // if we are here, it means the original who sent the log entries are down.
+        // we need to handle error and when the other member becomes leader, it will resend the log entries;
+        RD_LOGE(NO_TRACE_ID,
+                "Not able to fetching data from originator={}, error={}, probably originator is down. Will "
+                "retry when new leader start appending log entries",
+                rreqs.front()->remote_blkid().server_id, response.error().message());
+        for (auto const& rreq : rreqs) {
+            // TODO: Set the data_received promise with error, so that waiting threads can be unblocked and
+            // reject the request. Without that, it will timeout and then reject it.
+
+            // We could have get to a scenario, where didn't receive the data at the time of fetch, but we
+            // received after issuing fetch and that leader has already switched. In this case, we don't want to
+            // fail the request.
+            if (!rreq->has_state(repl_req_state_t::DATA_RECEIVED)) {
+                handle_error(rreq, RaftReplService::to_repl_error(response.error()));
             }
+        }
+        COUNTER_INCREMENT(m_metrics, fetch_err_cnt, 1);
+        co_return;
+    }
 
-            builder->Release();
+    builder->Release();
 
-            iomanager.run_on_forget(iomgr::reactor_regex::random_worker,
-                                    [this, r = std::move(response.value()), rreqs = std::move(rreqs)]() {
-                                        handle_fetch_data_response(std::move(r), std::move(rreqs));
-                                    });
-        });
+    iomanager.run_on_forget(iomgr::reactor_regex::random_worker,
+                            [this, r = std::move(response.value()), rreqs = std::move(rreqs)]() {
+                                handle_fetch_data_response(std::move(r), std::move(rreqs));
+                            });
+    co_return;
 }
 
 void RaftReplDev::on_fetch_data_received(intrusive< sisl::GenericRpcData >& rpc_data) {
+    // A FetchData RPC can land on a gRPC handler thread for a repl dev that is no longer serving: either being torn
+    // down (is_stopping, set by stop()) or already removed/destroyed -- leave()/permanent_destroy() move the stage
+    // to DESTROYED/PERMANENT_DESTROYED but DO NOT unbind this data-service handler, so the binding outlives the
+    // dev's active life and a late fetch would dereference a freed/null data layer (get_blk_size() -> null
+    // m_data_service, m_listener). Reject anything not ACTIVE (the same readiness gate every other handler uses);
+    // the follower simply retries the fetch. Register the request first so stop() drains an in-flight fetch before
+    // teardown rather than racing past a just-starting one.
+    incr_pending_request_num();
+    if (is_stopping() || (get_stage() != repl_dev_stage_t::ACTIVE)) {
+        RD_LOGD(NO_TRACE_ID, "Data Channel: FetchData received while not active (stopping={} stage={}), ignoring",
+                is_stopping(), static_cast< int >(get_stage()));
+        rpc_data->send_response();
+        decr_pending_request_num();
+        return;
+    }
+
     auto const& incoming_buf = rpc_data->request_blob();
     if (!incoming_buf.cbytes()) {
         RD_LOGW(NO_TRACE_ID, "Data Channel: PushData received with empty buffer, ignoring this call");
         rpc_data->send_response();
+        decr_pending_request_num();
         return;
     }
     auto fetch_req = GetSizePrefixedFetchData(incoming_buf.cbytes());
@@ -1525,10 +1539,18 @@ void RaftReplDev::on_fetch_data_received(intrusive< sisl::GenericRpcData >& rpc_
     RD_LOGT(NO_TRACE_ID, "Data Channel: FetchData received: fetch_req.size={}",
             fetch_req->request()->entries()->size());
 
+    // on_fetch_data is a lazy coroutine that when_all defers, and it takes blkid/sgs (and header) BY REFERENCE.
+    // So those args must outlive the deferral -- persist them in reserved (no realloc) vectors and pass stable
+    // .back() references; the vectors are then moved into the completion continuation so they live across when_all.
     std::vector< sisl::sg_list > sgs_vec;
-    std::vector< folly::Future< std::error_code > > futs;
-    sgs_vec.reserve(fetch_req->request()->entries()->size());
-    futs.reserve(fetch_req->request()->entries()->size());
+    std::vector< MultiBlkId > blkids_vec;
+    std::vector< sisl::blob > headers_vec;
+    std::vector< sisl::async::task< iomgr::io_result > > futs;
+    auto const n_entries = fetch_req->request()->entries()->size();
+    sgs_vec.reserve(n_entries);
+    blkids_vec.reserve(n_entries);
+    headers_vec.reserve(n_entries);
+    futs.reserve(n_entries);
 
     for (auto const& req : *(fetch_req->request()->entries())) {
         auto const& lsn = req->lsn();
@@ -1545,6 +1567,7 @@ void RaftReplDev::on_fetch_data_received(intrusive< sisl::GenericRpcData >& rpc_
 
         // accumulate the sgs for later use (send back to the requester));
         sgs_vec.push_back(sgs);
+        blkids_vec.push_back(local_blkid);
 
         if (originator != server_id()) {
             RD_LOGD(NO_TRACE_ID, "non-originator FetchData received:  dsn={} lsn={} originator={}, my_server_id={}",
@@ -1554,16 +1577,24 @@ void RaftReplDev::on_fetch_data_received(intrusive< sisl::GenericRpcData >& rpc_
         }
 
         auto const& header = req->user_header();
-        sisl::blob user_header = sisl::blob{header->Data(), header->size()};
+        headers_vec.push_back(sisl::blob{header->Data(), header->size()});
         RD_LOGT(NO_TRACE_ID, "Data Channel: FetchData handled, my_blkid={}", local_blkid.to_string());
-        futs.emplace_back(std::move(m_listener->on_fetch_data(lsn, user_header, local_blkid, sgs)));
+        // Pass the persistent vector elements (stable: vectors are reserved) by reference -- the local sgs/
+        // local_blkid/header above would dangle once this loop iteration ends, before the deferred task runs.
+        futs.emplace_back(m_listener->on_fetch_data(lsn, headers_vec.back(), blkids_vec.back(), sgs_vec.back()));
     }
 
-    folly::collectAllUnsafe(futs).thenValue(
-        [this, rpc_data = std::move(rpc_data), sgs_vec = std::move(sgs_vec)](auto&& vf) {
-            for (auto const& err_c : vf) {
-                const auto& err = err_c.value();
-                if (err) {
+    // Fan out the reads concurrently; respond once all complete (non-blocking -- this is an RPC handler).
+    detail::detach_then(
+        sisl::async::when_all(std::move(futs)),
+        [this, rpc_data = std::move(rpc_data), sgs_vec = std::move(sgs_vec), blkids_vec = std::move(blkids_vec),
+         headers_vec = std::move(headers_vec)](std::vector< iomgr::io_result > const& results) {
+            // Reads are done; release the drain hold taken at entry. Remaining work (buffer free, send_response)
+            // touches only global iomgr state and the self-owned rpc_data, not destroyable repl-dev state.
+            decr_pending_request_num();
+            for (auto const& r : results) {
+                if (!r) {
+                    auto const& err = r.error();
                     // if read data failed, we should ignore the rpc_data and let the follower retry the fetch
                     RD_LOGD(NO_TRACE_ID,
                             "Data Channel: Error happens when fetching data. value={}, category={}, err_message={}, "
@@ -1632,9 +1663,9 @@ void RaftReplDev::handle_fetch_data_response(sisl::GenericClientResponse respons
             auto const data_write_start_time = Clock::now();
             COUNTER_INCREMENT(m_metrics, total_write_cnt, 1);
             COUNTER_INCREMENT(m_metrics, outstanding_data_write_cnt, 1);
-            data_service()
-                .async_write(r_cast< const char* >(rreq->data()), data_size, rreq->local_blkid())
-                .thenValue([this, rreq, data_write_start_time](auto&& err) {
+            detail::detach_then(
+                data_service().async_write(r_cast< const char* >(rreq->data()), data_size, rreq->local_blkid()),
+                [this, rreq, data_write_start_time](iomgr::io_result const& r) {
                     // update outstanding no matter error or not;
                     COUNTER_DECREMENT(m_metrics, outstanding_data_write_cnt, 1);
                     auto const data_write_latency = get_elapsed_time_us(data_write_start_time);
@@ -1645,12 +1676,12 @@ void RaftReplDev::handle_fetch_data_response(sisl::GenericClientResponse respons
                     HISTOGRAM_OBSERVE(m_metrics, rreq_data_write_latency_us, data_write_latency);
                     HISTOGRAM_OBSERVE(m_metrics, rreq_total_data_write_latency_us, total_data_write_latency);
 
-                    RD_REL_ASSERT(!err, "Error in writing data, error_code={}, category={}, err_message={}",
-                                  err.value(), err.category().name(), err.message());
+                    RD_REL_ASSERT(bool(r), "Error in writing data, error_code={}, category={}, err_message={}",
+                                  r.error().value(), r.error().category().name(), r.error().message());
                     // TODO: Find a way to return error to the Listener
                     rreq->release_data();
                     rreq->add_state(repl_req_state_t::DATA_WRITTEN);
-                    rreq->m_data_written_promise.setValue();
+                    rreq->m_data_written_promise.complete({});
 
                     RD_LOGD(rreq->traceID(),
                             "Data Channel: Data Write completed rreq=[{}], data_write_latency_us={}, "
@@ -1691,8 +1722,9 @@ void RaftReplDev::handle_rollback(repl_req_ptr_t rreq) {
     // 3. free the allocated blocks
     if (rreq->has_state(repl_req_state_t::BLK_ALLOCATED)) {
         auto blkid = rreq->local_blkid();
-        data_service().async_free_blk(blkid).thenValue([this, blkid, rreq](auto&& err) {
-            HS_LOG_ASSERT(!err, "freeing blkid={} upon error failed, potential to cause blk leak", blkid.to_string());
+        detail::detach_then(data_service().async_free_blk(blkid), [this, blkid, rreq](iomgr::io_result const& r) {
+            HS_LOG_ASSERT(bool(r), "freeing blkid={} upon error failed, potential to cause blk leak",
+                          blkid.to_string());
             RD_LOGD(rreq->traceID(), "Releasing blkid={} freed successfully", blkid.to_string());
         });
     }
@@ -1802,15 +1834,15 @@ void RaftReplDev::handle_error(repl_req_ptr_t const& rreq, ReplServiceError err)
         // Free the blks which is allocated already
         if (rreq->has_state(repl_req_state_t::BLK_ALLOCATED)) {
             auto blkid = rreq->local_blkid();
-            data_service().async_free_blk(blkid).thenValue([blkid](auto&& err) {
-                HS_LOG_ASSERT(!err, "freeing blkid={} upon error failed, potential to cause blk leak",
+            detail::detach_then(data_service().async_free_blk(blkid), [blkid](iomgr::io_result const& r) {
+                HS_LOG_ASSERT(bool(r), "freeing blkid={} upon error failed, potential to cause blk leak",
                               blkid.to_string());
             });
         }
     } else if (rreq->op_code() == journal_type_t::HS_CTRL_DESTROY) {
         if (rreq->is_proposer()) {
             RD_LOGE(rreq->traceID(), "Raft Channel: Error in processing rreq=[{}] error={}", rreq->to_string(), err);
-            m_destroy_promise.setValue(err);
+            m_destroy_promise.complete(err);
         }
     }
 
@@ -1954,38 +1986,38 @@ static bool blob_equals(sisl::blob const& a, sisl::blob const& b) {
 }
 
 repl_req_ptr_t RaftReplDev::repl_key_to_req(repl_key const& rkey) const {
-    auto const it = m_repl_key_req_map.find(rkey);
-    if (it == m_repl_key_req_map.cend()) { return nullptr; }
-    return it->second;
+    repl_req_ptr_t rreq;
+    m_repl_key_req_map.cvisit(rkey, [&rreq](auto const& entry) { rreq = entry.second; });
+    return rreq;
 }
 
 // async_read and async_free_blks graceful shutdown will be handled by data_service.
 
-folly::Future< std::error_code > RaftReplDev::async_read(MultiBlkId const& bid, sisl::sg_list& sgs, uint32_t size,
-                                                         bool part_of_batch, trace_id_t tid) {
+sisl::async::task< iomgr::io_result > RaftReplDev::async_read(MultiBlkId const& bid, sisl::sg_list& sgs, uint32_t size,
+                                                              bool part_of_batch, trace_id_t tid) {
     if (is_stopping()) {
         LOGINFO("repl dev is being shutdown!");
-        return folly::makeFuture< std::error_code >(std::make_error_code(std::errc::operation_canceled));
+        co_return std::unexpected(std::make_error_condition(std::errc::operation_canceled));
     }
     if (get_stage() != repl_dev_stage_t::ACTIVE) {
         LOGINFO("repl dev is not active!");
-        return folly::makeFuture< std::error_code >(std::make_error_code(std::errc::operation_canceled));
+        co_return std::unexpected(std::make_error_condition(std::errc::operation_canceled));
     }
-    return data_service().async_read(bid, sgs, size, part_of_batch);
+    co_return co_await data_service().async_read(bid, sgs, size, part_of_batch);
 }
 
-folly::Future< std::error_code > RaftReplDev::async_free_blks(int64_t, MultiBlkId const& bid, trace_id_t tid) {
+sisl::async::task< iomgr::io_result > RaftReplDev::async_free_blks(int64_t, MultiBlkId const& bid, trace_id_t tid) {
     // TODO: For timeline consistency required, we should retain the blkid that is changed and write that to another
     // journal.
     if (is_stopping()) {
         LOGINFO("repl dev is being shutdown!");
-        return folly::makeFuture< std::error_code >(std::make_error_code(std::errc::operation_canceled));
+        co_return std::unexpected(std::make_error_condition(std::errc::operation_canceled));
     }
     if (get_stage() != repl_dev_stage_t::ACTIVE) {
         LOGINFO("repl dev is not active!");
-        return folly::makeFuture< std::error_code >(std::make_error_code(std::errc::operation_canceled));
+        co_return std::unexpected(std::make_error_condition(std::errc::operation_canceled));
     }
-    return data_service().async_free_blk(bid);
+    co_return co_await data_service().async_free_blk(bid);
 }
 
 AsyncReplResult<> RaftReplDev::become_leader() {
@@ -1996,33 +2028,32 @@ AsyncReplResult<> RaftReplDev::become_leader() {
     init_req_counter counter(pending_request_num);
     reset_latch_lsn();
 
-    return m_msg_mgr.become_leader(m_group_id)
-        .via(&folly::InlineExecutor::instance())
-        .thenValue([this, counter = std::move(counter)](auto&& e) {
-            if (e.hasError()) {
-                RD_LOGE(NO_TRACE_ID, "Error in becoming leader: {}", e.error());
-                return make_async_error<>(RaftReplService::to_repl_error(e.error()));
-            }
-            return make_async_success<>();
-        });
+    // become_leader is control-plane; block for its result and wrap into the AsyncReplResult task this method
+    // returns. counter lives on this frame until sync_get returns, the same span the old continuation kept alive.
+    auto e = detail::sync_get(m_msg_mgr.become_leader(m_group_id));
+    if (!e) {
+        RD_LOGE(NO_TRACE_ID, "Error in becoming leader: {}", e.error().message());
+        return make_async_error<>(RaftReplService::to_repl_error(e.error()));
+    }
+    return make_async_success<>();
 }
 
-bool RaftReplDev::is_leader() const { return m_repl_svc_ctx && m_repl_svc_ctx->is_raft_leader(); }
+bool RaftReplDev::is_leader() const { return repl_ctx() && repl_ctx()->is_raft_leader(); }
 
 replica_id_t RaftReplDev::get_leader_id() const {
     static replica_id_t empty_uuid = boost::uuids::nil_uuid();
-    if (!m_repl_svc_ctx) { return empty_uuid; }
-    auto leader = m_repl_svc_ctx->raft_leader_id();
+    if (!repl_ctx()) { return empty_uuid; }
+    auto leader = repl_ctx()->raft_leader_id();
     return leader.empty() ? empty_uuid : boost::lexical_cast< replica_id_t >(leader);
 }
 
 std::vector< peer_info > RaftReplDev::get_replication_status() const {
     std::vector< peer_info > pi;
-    if (!m_repl_svc_ctx) {
+    if (!repl_ctx()) {
         RD_LOGD(NO_TRACE_ID, "m_repl_svc_ctx doesn't exist, returning empty peer info");
         return pi;
     }
-    auto rep_status = m_repl_svc_ctx->get_raft_status();
+    auto rep_status = repl_ctx()->get_raft_status();
     for (auto const& pinfo : rep_status) {
         pi.emplace_back(peer_info{.id_ = boost::lexical_cast< replica_id_t >(pinfo.id_),
                                   .replication_idx_ = pinfo.last_log_idx_,
@@ -2136,14 +2167,15 @@ uint32_t RaftReplDev::get_quorum_for_commit() const {
 }
 
 uint32_t RaftReplDev::get_custom_commit_quorum() const {
-    if (!m_repl_svc_ctx || !m_repl_svc_ctx->_server) { return 0; }
-    return static_cast< uint32_t >(m_repl_svc_ctx->_server->get_current_params().custom_commit_quorum_size_);
+    auto* const server = repl_ctx() ? repl_ctx()->raft_server() : nullptr;
+    if (!server) { return 0; }
+    return static_cast< uint32_t >(server->get_current_params().custom_commit_quorum_size_);
 }
 
 uint32_t RaftReplDev::get_blk_size() const { return data_service().get_blk_size(); }
 
-nuraft_mesg::repl_service_ctx* RaftReplDev::group_msg_service() { return m_repl_svc_ctx.get(); }
-nuraft::raft_server* RaftReplDev::raft_server() { return m_repl_svc_ctx->_server; }
+nuraft_mesg::repl_service_ctx* RaftReplDev::group_msg_service() { return repl_ctx(); }
+nuraft::raft_server* RaftReplDev::raft_server() { return repl_ctx()->raft_server(); }
 
 ///////////////////////////////////  Config Serialize/Deserialize Section ////////////////////////////////////
 static nlohmann::json serialize_server_config(std::list< nuraft::ptr< nuraft::srv_config > > const& server_list) {
@@ -2352,7 +2384,7 @@ void RaftReplDev::leave() {
     m_rd_sb.write();
 
     RD_LOGI(NO_TRACE_ID, "RaftReplDev leave group_id={}", group_id_str());
-    m_destroy_promise.setValue(ReplServiceError::OK); // In case proposer is waiting for the destroy to complete
+    m_destroy_promise.complete(ReplServiceError::OK); // In case proposer is waiting for the destroy to complete
 }
 
 nuraft::cb_func::ReturnCode RaftReplDev::raft_event(nuraft::cb_func::Type type, nuraft::cb_func::Param* param) {
@@ -2498,7 +2530,7 @@ void RaftReplDev::monitor_replace_member_replication_status() {
         RD_LOGI(NO_TRACE_ID, "Raft repl dev is destroyed or unready, ignore check replace member status");
         return;
     }
-    if (!m_repl_svc_ctx || !is_leader()) { return; }
+    if (!repl_ctx() || !is_leader()) { return; }
     if (m_rd_sb->replace_member_task.replica_in == boost::uuids::nil_uuid() ||
         m_rd_sb->replace_member_task.replica_out == boost::uuids::nil_uuid()) {
         RD_LOGT(NO_TRACE_ID, "No replace member in progress, return");
@@ -2554,8 +2586,8 @@ void RaftReplDev::monitor_replace_member_replication_status() {
 
     replica_member_info out{replica_out, ""};
     replica_member_info in{replica_in, ""};
-    auto ret = complete_replace_member(task_id, out, in, 0, trace_id).get();
-    if (ret.hasError()) {
+    auto ret = detail::sync_get(complete_replace_member(task_id, out, in, 0, trace_id));
+    if (!ret) {
         RD_LOGE(trace_id, "Failed to complete replace member, next time will retry it, task_id={}, error={}", task_id,
                 ret.error());
         return;
@@ -2622,10 +2654,15 @@ void RaftReplDev::gc_repl_reqs() {
     std::vector< repl_req_ptr_t > expired_rreqs;
 
     const auto gc_log_freq = HS_DYNAMIC_CONFIG(consensus.gc_repl_reqs_log_frequency);
-    auto req_map_size = m_repl_key_req_map.size();
+    // Snapshot the map (rreq is a shared_ptr); boost::concurrent_flat_map holds shard locks during visitation and
+    // forbids re-entrant access, and the gc body below touches the map (unlink), so iterate over the snapshot.
+    std::vector< std::pair< repl_key, repl_req_ptr_t > > rreq_snapshot;
+    rreq_snapshot.reserve(m_repl_key_req_map.size());
+    m_repl_key_req_map.visit_all([&rreq_snapshot](auto const& e) { rreq_snapshot.emplace_back(e.first, e.second); });
+    auto req_map_size = rreq_snapshot.size();
     // The map is unlikely to change when there is no write, here we use log_every_n to avoid logging too frequently
     RD_LOGI_EVERY_N(unmove(gc_log_freq), NO_TRACE_ID, "m_repl_key_req_map size is {};", req_map_size);
-    for (auto [key, rreq] : m_repl_key_req_map) {
+    for (auto& [key, rreq] : rreq_snapshot) {
         // FIXME: Skipping proposer for now, the DSN in proposer increased in proposing stage, not when commit().
         // Need other mechanism.
         if (rreq->is_proposer()) {
@@ -2673,25 +2710,25 @@ void RaftReplDev::gc_repl_reqs() {
         RD_LOGD(removing_rreq->traceID(), "Removing rreq [{}]", removing_rreq->to_string());
         if (removing_rreq->has_state(repl_req_state_t::BLK_ALLOCATED)) {
             auto blkid = removing_rreq->local_blkid();
-            data_service().async_free_blk(blkid).thenValue([this, blkid, removing_rreq](auto&& err) {
-                if (!err) {
-                    RD_LOGD(removing_rreq->traceID(), "GC rreq: Releasing blkid={} freed successfully",
-                            blkid.to_string());
-                } else if (err == std::make_error_code(std::errc::operation_canceled)) {
-                    // The gc reaper thread stops after the data service has been stopped,
-                    // leading to a scenario where it attempts to free the blkid while the data service is inactive.
-                    // In this case, we ignore the error and simply log a warning.
-                    RD_LOGW(removing_rreq->traceID(), "GC rreq: Releasing blkid={} canceled", blkid.to_string());
-                } else {
-                    HS_LOG_ASSERT(false, "[traceID={}] freeing blkid={} upon error failed, potential to cause blk leak",
-                                  removing_rreq->traceID(), blkid.to_string());
-                }
-            });
+            detail::detach_then(
+                data_service().async_free_blk(blkid), [this, blkid, removing_rreq](iomgr::io_result const& r) {
+                    if (r) {
+                        RD_LOGD(removing_rreq->traceID(), "GC rreq: Releasing blkid={} freed successfully",
+                                blkid.to_string());
+                    } else if (r.error() == std::make_error_condition(std::errc::operation_canceled)) {
+                        // The gc reaper thread stops after the data service has been stopped,
+                        // leading to a scenario where it attempts to free the blkid while the data service is inactive.
+                        // In this case, we ignore the error and simply log a warning.
+                        RD_LOGW(removing_rreq->traceID(), "GC rreq: Releasing blkid={} canceled", blkid.to_string());
+                    } else {
+                        HS_LOG_ASSERT(false,
+                                      "[traceID={}] freeing blkid={} upon error failed, potential to cause blk leak",
+                                      removing_rreq->traceID(), blkid.to_string());
+                    }
+                });
         }
-        // 2. remove from the m_repl_key_req_map
-        if (m_repl_key_req_map.find(removing_rreq->rkey()) != m_repl_key_req_map.end()) {
-            m_repl_key_req_map.erase(removing_rreq->rkey());
-        }
+        // 2. remove from the m_repl_key_req_map (erase is a no-op if absent)
+        m_repl_key_req_map.erase(removing_rreq->rkey());
     }
 }
 
@@ -2744,9 +2781,12 @@ void RaftReplDev::on_log_found(logstore_seq_num_t lsn, log_buffer buf, void* ctx
     repl_key const rkey{
         .server_id = jentry->server_id, .term = lentry->get_term(), .dsn = jentry->dsn, .traceID = jentry->traceID};
 
-    auto const [it, happened] = m_repl_key_req_map.try_emplace(rkey, repl_req_ptr_t(new repl_req_ctx()));
-    RD_DBG_ASSERT((it != m_repl_key_req_map.end()), "Unexpected error in map_repl_key_to_req");
-    auto rreq = it->second;
+    auto const new_req = repl_req_ptr_t(new repl_req_ctx());
+    repl_req_ptr_t rreq;
+    auto const happened =
+        m_repl_key_req_map.try_emplace_or_cvisit(rkey, new_req, [&rreq](auto const& entry) { rreq = entry.second; });
+    if (happened) { rreq = new_req; }
+    RD_DBG_ASSERT((rreq != nullptr), "Unexpected error in map_repl_key_to_req");
     RD_DBG_ASSERT(happened, "rreq already exists for rkey={}", rkey.to_string());
     uint32_t data_size{0u};
 
@@ -2901,35 +2941,37 @@ void RaftReplDev::clear_chunk_req(chunk_num_t chunk_id) {
             "start cleaning all the in-memory rreqs, which has allocated blk on the emergent chunk={} before handling "
             "no_space_left error",
             chunk_id);
-    std::vector< folly::Future< folly::Unit > > futs;
-    for (auto& [key, rreq] : m_repl_key_req_map) {
+    std::vector< sisl::async::task< iomgr::io_result > > futs;
+    // Snapshot first: visit_all holds shard locks and the async continuation below erases from the map.
+    std::vector< std::pair< repl_key, repl_req_ptr_t > > rreq_snapshot;
+    m_repl_key_req_map.visit_all([&rreq_snapshot](auto const& e) { rreq_snapshot.emplace_back(e.first, e.second); });
+    for (auto& [key, rreq] : rreq_snapshot) {
         if (rreq->has_state(repl_req_state_t::BLK_ALLOCATED)) {
             auto blkid = rreq->local_blkid();
             if (chunk_id == blkid.chunk_num()) {
-                // only clean the rreqs which has allocated blks on the emergent chunk
-                futs.emplace_back(
-                    std::move(data_service().async_free_blk(blkid).thenValue([this, &blkid, &key](auto&& err) {
-                        HS_LOG_ASSERT(!err, "freeing blkid={} upon error failed, potential to cause blk leak",
-                                      blkid.to_string());
-                        RD_LOGD(NO_TRACE_ID, "blkid={} freed successfully for handling no_space_left error",
-                                blkid.to_string());
-                        m_repl_key_req_map.erase(key); // remove from the req map after freeing the blk
-                    })));
+                // only clean the rreqs which has allocated blks on the emergent chunk. blkid/key are passed by value
+                // into the coroutine frame so they outlive this loop iteration.
+                futs.emplace_back([](RaftReplDev* self, MultiBlkId blkid,
+                                     repl_key key) -> sisl::async::task< iomgr::io_result > {
+                    auto r = co_await data_service().async_free_blk(blkid);
+                    HS_LOG_ASSERT(bool(r), "freeing blkid={} upon error failed, potential to cause blk leak",
+                                  blkid.to_string());
+                    LOGDEBUGMOD(replication, "[traceID={}] [{}] blkid={} freed successfully for handling no_space_left",
+                                NO_TRACE_ID, self->identify_str(), blkid.to_string());
+                    self->m_repl_key_req_map.erase(key); // remove from the req map after freeing the blk
+                    co_return r;
+                }(this, blkid, key));
             }
         }
     }
 
-    folly::collectAllUnsafe(futs)
-        .thenValue([this](auto&& vf) {
-            // TODO:: handle the error in freeing blk if necessary in the future.
-            // for nuobject case, error for freeing blk in the emergent chunk can be ingored
-            RD_LOGD(
-                NO_TRACE_ID,
-                "all the necessary in-memory rreqs which has allocated blks on the emergent chunk have been cleaned up "
-                "successfully, continue to handle no_space_left error.");
-        })
-        // need to wait for the completion
-        .wait();
+    // need to wait for the completion before returning
+    detail::sync_get(sisl::async::when_all(std::move(futs)));
+    // TODO:: handle the error in freeing blk if necessary in the future.
+    // for nuobject case, error for freeing blk in the emergent chunk can be ingored
+    RD_LOGD(NO_TRACE_ID,
+            "all the necessary in-memory rreqs which has allocated blks on the emergent chunk have been cleaned up "
+            "successfully, continue to handle no_space_left error.");
 }
 
 ReplServiceError RaftReplDev::init_req_ctx(repl_req_ptr_t rreq, repl_key rkey, journal_type_t op_code, bool is_proposer,

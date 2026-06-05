@@ -34,6 +34,7 @@
 #include <sisl/logging/logging.h>
 #include <sisl/options/options.h>
 #include <sisl/settings/settings.hpp>
+#include <fmt/ranges.h> // fmt::join (fmt 11+ split ranges/join out of the core header)
 #include <sisl/grpc/rpc_client.hpp>
 #include "test_common/homestore_test_common.hpp"
 
@@ -57,7 +58,7 @@ namespace bip = boost::interprocess;
 
 namespace test_common {
 
-VENUM(ipc_packet_op_t, uint32_t, WAKE_UP = 0, CLEAN_EXIT = 1, UNCLEAN_EXIT = 2, PEER_GOING_DOWN = 3);
+ENUM(ipc_packet_op_t, uint32_t, WAKE_UP = 0, CLEAN_EXIT = 1, UNCLEAN_EXIT = 2, PEER_GOING_DOWN = 3);
 ENUM(repl_test_phase_t, uint32_t, REGISTER, MEMBER_START, TEST_RUN, VALIDATE, CLEANUP);
 
 class HSReplTestHelper : public HSTestHelper {
@@ -217,9 +218,6 @@ public:
             ipc_data_ = static_cast< IPCData* >(region_->get_address());
         }
 
-        int tmp_argc = 1;
-        folly_ = std::make_unique< folly::Init >(&tmp_argc, &argv_, true);
-
         LOGINFO("Starting Homestore replica={}", replica_num_);
         start_homestore(
             name_ + std::to_string(replica_num_),
@@ -309,8 +307,8 @@ public:
                 repl_groups_.insert({repl_group_id, std::move(listener)});
             }
 
-            auto v = hs()->repl_service().create_repl_dev(repl_group_id, members).get();
-            ASSERT_EQ(v.hasValue(), true)
+            auto v = homestore::detail::sync_get(hs()->repl_service().create_repl_dev(repl_group_id, members));
+            ASSERT_EQ(v.has_value(), true)
                 << "Error in creating repl dev for group_id=" << boost::uuids::to_string(repl_group_id).c_str()
                 << ", err=" << v.error();
             auto& raftService = dynamic_cast< RaftReplService& >(hs()->repl_service());
@@ -401,7 +399,6 @@ private:
     boost::process::group proc_grp_;
     std::unique_ptr< bip::shared_memory_object > shm_;
     std::unique_ptr< bip::mapped_region > region_;
-    std::unique_ptr< folly::Init > folly_;
 
     std::mutex groups_mtx_;
     std::condition_variable group_created_cv_;

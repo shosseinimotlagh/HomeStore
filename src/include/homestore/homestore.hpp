@@ -62,7 +62,7 @@ class CrashSimulator;
 
 using HomeStoreSafePtr = std::shared_ptr< HomeStore >;
 
-VENUM(hs_vdev_type_t, uint32_t, DATA_VDEV = 1, INDEX_VDEV = 2, META_VDEV = 3, LOGDEV_VDEV = 4);
+ENUM(hs_vdev_type_t, uint32_t, DATA_VDEV = 1, INDEX_VDEV = 2, META_VDEV = 3, LOGDEV_VDEV = 4);
 
 #pragma pack(1)
 struct hs_vdev_context {

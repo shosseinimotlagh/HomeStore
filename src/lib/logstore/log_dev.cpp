@@ -31,6 +31,7 @@
 #include "common/homestore_assert.hpp"
 #include "common/homestore_config.hpp"
 #include "common/homestore_utils.hpp"
+#include "common/coro_helpers.hpp" // detail::await_shared / await_value / sync_get
 #include "common/crash_simulator.hpp"
 #include "replication/service/generic_repl_svc.h"
 
@@ -97,7 +98,7 @@ void LogDev::start(bool format, std::shared_ptr< JournalVirtualDev > vdev) {
 
     {
         // Also call the logstore to inform that start/replay is completed.
-        folly::SharedMutexWritePriority::WriteHolder holder(m_store_map_mtx);
+        std::unique_lock< std::shared_mutex > holder(m_store_map_mtx);
         if (!format) {
             for (auto& p : m_id_logstore_map) {
                 auto& lstore{p.second.log_store};
@@ -150,7 +151,7 @@ void LogDev::stop() {
         }
     }
 
-    folly::SharedMutexWritePriority::ReadHolder holder(m_store_map_mtx);
+    std::shared_lock< std::shared_mutex > holder(m_store_map_mtx);
     for (auto& [_, store] : m_id_logstore_map) {
         store.log_store->stop();
     }
@@ -171,10 +172,7 @@ void LogDev::stop() {
     // after we call stop, we need to do any pending device truncations
     truncate();
     m_id_logstore_map.clear();
-    if (allow_timer_flush()) {
-        auto f = stop_timer();
-        std::move(f).get();
-    }
+    if (allow_timer_flush()) { detail::sync_get(stop_timer()); }
 }
 
 void LogDev::destroy() {
@@ -185,26 +183,24 @@ void LogDev::destroy() {
 void LogDev::start_timer() {
     // Currently only tests set it to 0.
     if (HS_DYNAMIC_CONFIG(logstore.flush_timer_frequency_us))
-        iomanager.run_on_wait(logstore_service().flush_thread(), [this]() {
+        iomanager.run_on_wait(logstore_service().flush_reactor(), [this]() {
             m_flush_timer_hdl = iomanager.schedule_thread_timer(
                 HS_DYNAMIC_CONFIG(logstore.flush_timer_frequency_us) * 1000, true /* recurring */, nullptr /* cookie */,
                 [this](void*) { flush_if_necessary(); });
         });
 }
 
-folly::Future< int > LogDev::stop_timer() {
-    // return future to the caller;
-    // this future will be completed when the timer is stopped
-    auto p = std::make_shared< folly::Promise< int > >();
-    auto f = p->getFuture();
-    iomanager.run_on_forget(logstore_service().flush_thread(), [this, p]() mutable {
-        if (m_flush_timer_hdl != iomgr::null_timer_handle) {
+sisl::async::task< int > LogDev::stop_timer() {
+    // returns a task completed when the timer is stopped on the flush reactor
+    auto aw = std::make_shared< sisl::async::value_awaitable< int > >();
+    iomanager.run_on_forget(logstore_service().flush_reactor(), [this, aw]() mutable {
+        if (m_flush_timer_hdl != iomgr::timer_handle_t{}) {
             iomanager.cancel_timer(m_flush_timer_hdl, true);
-            m_flush_timer_hdl = iomgr::null_timer_handle;
+            m_flush_timer_hdl = iomgr::timer_handle_t{};
         }
-        p->setValue(0);
+        aw->complete(0);
     });
-    return f;
+    return detail::await_value(std::move(aw));
 }
 
 void LogDev::do_load(off_t device_cursor) {
@@ -430,7 +426,9 @@ LogGroup* LogDev::prepare_flush(int32_t estimated_records) {
 }
 
 bool LogDev::can_flush_in_this_thread() {
-    if (iomanager.am_i_io_reactor() && (iomanager.iofiber_self() == logstore_service().flush_thread())) { return true; }
+    if (iomanager.am_i_io_reactor() && (iomanager.this_reactor() == logstore_service().flush_reactor())) {
+        return true;
+    }
     return (!HS_DYNAMIC_CONFIG(logstore.flush_only_in_dedicated_thread) && iomanager.am_i_worker_reactor());
 }
 
@@ -438,7 +436,7 @@ bool LogDev::flush_if_necessary(int64_t threshold_size) {
     if (is_stopping()) return false;
     incr_pending_request_num();
     if (!can_flush_in_this_thread()) {
-        iomanager.run_on_forget(logstore_service().flush_thread(),
+        iomanager.run_on_forget(logstore_service().flush_reactor(),
                                 [this, threshold_size]() { flush_if_necessary(threshold_size); });
         decr_pending_request_num();
         return false;
@@ -564,7 +562,7 @@ void LogDev::on_flush_completion(LogGroup* lg) {
             // during async_append stream tracker create log entry can cause
             // resize and realloc of memory. So take a lock so that log records
             // point to valid memory.
-            folly::SharedMutexWritePriority::WriteHolder holder(m_stream_tracker_mtx);
+            std::unique_lock< std::shared_mutex > holder(m_stream_tracker_mtx);
 #ifdef _PRERELEASE
             lock_latency = get_elapsed_time_us(lock_start_time);
 #endif
@@ -625,7 +623,7 @@ uint64_t LogDev::truncate() {
     // map lock, which is contained in this class and then meta_mutex. Reason for this is, we take meta_mutex under
     // other store_map lock, so reversing could cause deadlock
     std::unique_lock fg = flush_guard();
-    folly::SharedMutexWritePriority::ReadHolder holder(m_store_map_mtx);
+    std::shared_lock< std::shared_mutex > holder(m_store_map_mtx);
     std::unique_lock mg{m_meta_mutex};
 
     logdev_key min_safe_ld_key = logdev_key::out_of_bound_ld_key();
@@ -712,7 +710,7 @@ void LogDev::handle_unopened_log_stores(bool format) {
     // TODO: At present we are assuming all unopened store ids could be removed. In future have a callback to this
     // start routine, which takes the list of unopened store ids and can return a new set, which can be removed.
     {
-        folly::SharedMutexWritePriority::WriteHolder holder(m_store_map_mtx);
+        std::unique_lock< std::shared_mutex > holder(m_store_map_mtx);
         for (auto it{std::begin(m_unopened_store_id)}; it != std::end(m_unopened_store_id);) {
             if (m_id_logstore_map.find(*it) == m_id_logstore_map.end()) {
                 // Not opened even on second time check, simply unreserve id
@@ -731,7 +729,7 @@ std::shared_ptr< HomeLogStore > LogDev::create_new_log_store(bool append_mode) {
     lstore = std::make_shared< HomeLogStore >(shared_from_this(), store_id, append_mode, 0);
 
     {
-        folly::SharedMutexWritePriority::WriteHolder holder(m_store_map_mtx);
+        std::unique_lock< std::shared_mutex > holder(m_store_map_mtx);
         const auto it = m_id_logstore_map.find(store_id);
         HS_REL_ASSERT((it == m_id_logstore_map.end()), "store_id {}-{} already exists", m_logdev_id, store_id);
         m_id_logstore_map.insert(std::pair(store_id, logstore_info{.log_store = lstore, .append_mode = append_mode}));
@@ -741,23 +739,30 @@ std::shared_ptr< HomeLogStore > LogDev::create_new_log_store(bool append_mode) {
     return lstore;
 }
 
-folly::Future< shared< HomeLogStore > > LogDev::open_log_store(logstore_id_t store_id, bool append_mode,
-                                                               log_found_cb_t log_found_cb,
-                                                               log_replay_done_cb_t log_replay_done_cb) {
-    folly::SharedMutexWritePriority::WriteHolder holder(m_store_map_mtx);
-    auto it = m_id_logstore_map.find(store_id);
-    if (it == m_id_logstore_map.end()) {
-        bool happened;
-        std::tie(it, happened) = m_id_logstore_map.insert(std::pair(store_id,
-                                                                    logstore_info{
-                                                                        .log_store = nullptr,
-                                                                        .append_mode = append_mode,
-                                                                        .log_found_cb = log_found_cb,
-                                                                        .log_replay_done_cb = log_replay_done_cb,
-                                                                    }));
-        HS_REL_ASSERT_EQ(happened, true, "Unable to insert logstore into id_logstore_map");
+sisl::async::task< shared< HomeLogStore > > LogDev::open_log_store(logstore_id_t store_id, bool append_mode,
+                                                                   log_found_cb_t log_found_cb,
+                                                                   log_replay_done_cb_t log_replay_done_cb) {
+    // The map insert must happen SYNCHRONOUSLY here (so replay's on_logfound finds the entry); only the wait for
+    // the store to be opened is awaited. So this is NOT itself a coroutine -- it inserts under the lock, then
+    // returns a task awaiting the entry's broadcast completion (copied out before the lock releases).
+    std::shared_ptr< sisl::async::shared_awaitable< std::shared_ptr< HomeLogStore > > > comp;
+    {
+        std::unique_lock< std::shared_mutex > holder(m_store_map_mtx);
+        auto it = m_id_logstore_map.find(store_id);
+        if (it == m_id_logstore_map.end()) {
+            bool happened;
+            std::tie(it, happened) = m_id_logstore_map.insert(std::pair(store_id,
+                                                                        logstore_info{
+                                                                            .log_store = nullptr,
+                                                                            .append_mode = append_mode,
+                                                                            .log_found_cb = log_found_cb,
+                                                                            .log_replay_done_cb = log_replay_done_cb,
+                                                                        }));
+            HS_REL_ASSERT_EQ(happened, true, "Unable to insert logstore into id_logstore_map");
+        }
+        comp = it->second.promise;
     }
-    return it->second.promise.getFuture();
+    return detail::await_shared(std::move(comp));
 }
 
 bool LogDev::remove_log_store(logstore_id_t store_id) {
@@ -765,7 +770,7 @@ bool LogDev::remove_log_store(logstore_id_t store_id) {
     incr_pending_request_num();
     LOGINFO("Removing log_dev={} log_store={}", m_logdev_id, store_id);
     {
-        folly::SharedMutexWritePriority::WriteHolder holder(m_store_map_mtx);
+        std::unique_lock< std::shared_mutex > holder(m_store_map_mtx);
         auto ret = m_id_logstore_map.erase(store_id);
         if (ret == 0) {
             LOGWARN("try to remove invalid store_id {}-{}", m_logdev_id, store_id);
@@ -779,7 +784,7 @@ bool LogDev::remove_log_store(logstore_id_t store_id) {
 }
 
 void LogDev::on_log_store_found(logstore_id_t store_id, const logstore_superblk& sb) {
-    folly::SharedMutexWritePriority::ReadHolder holder(m_store_map_mtx);
+    std::shared_lock< std::shared_mutex > holder(m_store_map_mtx);
     auto it = m_id_logstore_map.find(store_id);
     if (it == m_id_logstore_map.end()) {
         LOGERROR("Store Id {}-{} found but not opened yet, it will be discarded after logstore is started", m_logdev_id,
@@ -796,14 +801,14 @@ void LogDev::on_log_store_found(logstore_id_t store_id, const logstore_superblk&
         std::make_shared< HomeLogStore >(shared_from_this(), store_id, info.append_mode, sb.m_first_seq_num);
     info.log_store->register_log_found_cb(info.log_found_cb);
     info.log_store->register_log_replay_done_cb(info.log_replay_done_cb);
-    info.promise.setValue(info.log_store);
+    info.promise->complete(info.log_store);
 }
 
 void LogDev::on_logfound(logstore_id_t id, logstore_seq_num_t lsn, logdev_key ld_key, logdev_key flush_ld_key,
                          log_buffer buf, uint32_t nremaining_in_batch) {
     HomeLogStore* log_store{nullptr};
     {
-        folly::SharedMutexWritePriority::ReadHolder holder(m_store_map_mtx);
+        std::shared_lock< std::shared_mutex > holder(m_store_map_mtx);
         auto const it = m_id_logstore_map.find(id);
         if (it == m_id_logstore_map.end()) {
             auto [unopened_it, inserted] = m_unopened_store_io.insert(std::make_pair<>(id, 0));
@@ -820,7 +825,7 @@ void LogDev::on_logfound(logstore_id_t id, logstore_seq_num_t lsn, logdev_key ld
 nlohmann::json LogDev::dump_log_store(const log_dump_req& dump_req) {
     nlohmann::json json_dump{}; // create root object
     if (dump_req.log_store == nullptr) {
-        folly::SharedMutexWritePriority::ReadHolder holder(m_store_map_mtx);
+        std::shared_lock< std::shared_mutex > holder(m_store_map_mtx);
         for (auto& id_logstore : m_id_logstore_map) {
             auto store_ptr{id_logstore.second.log_store};
             const std::string id{std::to_string(store_ptr->get_store_id())};
@@ -858,7 +863,7 @@ nlohmann::json LogDev::get_status(int verbosity) const {
 
     // All logstores
     {
-        folly::SharedMutexWritePriority::ReadHolder holder(m_store_map_mtx);
+        std::shared_lock< std::shared_mutex > holder(m_store_map_mtx);
         for (const auto& [id, lstore] : m_id_logstore_map) {
             js["logstore_id_" + std::to_string(id)] = lstore.log_store->get_status(verbosity);
         }

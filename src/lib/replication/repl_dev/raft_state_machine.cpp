@@ -1,4 +1,4 @@
-#include <iomgr/iomgr_timer.hpp>
+#include <iomgr/iomgr.hpp>
 #include <iomgr/iomgr_flip.hpp>
 #include <sisl/logging/logging.h>
 #include <sisl/fds/utils.hpp>
@@ -11,6 +11,7 @@
 #include <homestore/homestore.hpp>
 #include "common/homestore_config.hpp"
 #include "common/crash_simulator.hpp"
+#include "common/coro_helpers.hpp" // detail::sync_get (block on the DSN-flush CP trigger)
 
 SISL_LOGGING_DECL(replication)
 
@@ -158,7 +159,7 @@ repl_req_ptr_t RaftStateMachine::localize_journal_entry_finish(nuraft::log_entry
     //
     // In this case, we call prepare the localization of journal entry ourselves and then finish them
     //
-    repl_journal_entry* jentry = r_cast< repl_journal_entry const* >(lentry.get_buf().data_begin());
+    repl_journal_entry* jentry = r_cast< repl_journal_entry* >(lentry.get_buf().data_begin());
     RELEASE_ASSERT_EQ(jentry->major_version, repl_journal_entry::JOURNAL_ENTRY_MAJOR,
                       "Mismatched version of journal entry received from RAFT peer");
 
@@ -293,7 +294,12 @@ int64_t RaftStateMachine::reset_next_batch_size_hint(int64_t new_hint) {
 }
 
 void RaftStateMachine::iterate_repl_reqs(std::function< void(int64_t, repl_req_ptr_t rreq) > const& cb) {
-    for (auto [key, rreq] : m_lsn_req_map) {
+    // boost::concurrent_flat_map holds a shard lock during visitation and forbids re-entrant access from the
+    // visitor, so snapshot the entries first (rreq is a shared_ptr) then invoke cb outside the lock.
+    std::vector< std::pair< int64_t, repl_req_ptr_t > > snapshot;
+    snapshot.reserve(m_lsn_req_map.size());
+    m_lsn_req_map.visit_all([&snapshot](auto const& entry) { snapshot.emplace_back(entry.first, entry.second); });
+    for (auto const& [key, rreq] : snapshot) {
         cb(key, rreq);
     }
 }
@@ -308,7 +314,7 @@ void RaftStateMachine::become_ready() { m_rd.become_ready(); }
 void RaftStateMachine::unlink_lsn_to_req(int64_t lsn, repl_req_ptr_t rreq) {
     // it is possible a LSN mapped to different rreq in history
     // due to log overwritten. Verify the rreq before removing
-    auto deleted = m_lsn_req_map.erase_if_equal(lsn, rreq);
+    auto deleted = m_lsn_req_map.erase_if(lsn, [&rreq](auto const& entry) { return entry.second == rreq; });
     if (deleted) { RD_LOGT(rreq->traceID(), "Raft channel: erase lsn {},  rreq {}", lsn, rreq->to_string()); }
 }
 
@@ -317,21 +323,20 @@ void RaftStateMachine::link_lsn_to_req(repl_req_ptr_t rreq, int64_t lsn) {
     rreq->add_state(repl_req_state_t::LOG_RECEIVED);
     // reset the rreq created_at time to now https://github.com/eBay/HomeStore/issues/506
     rreq->set_created_time();
-    auto r = m_lsn_req_map.insert(lsn, std::move(rreq));
-    if (!r.second) {
-        RD_LOGE(rreq->traceID(), "lsn={} already in precommit list, exist_term={}, is_volatile={}", lsn,
-                r.first->second->term(), r.first->second->is_volatile());
+    if (!m_lsn_req_map.try_emplace(lsn, rreq)) {
+        m_lsn_req_map.cvisit(lsn, [&](auto const& entry) {
+            RD_LOGE(rreq->traceID(), "lsn={} already in precommit list, exist_term={}, is_volatile={}", lsn,
+                    entry.second->term(), entry.second->is_volatile());
+        });
         // TODO: we need to think about the case where volatile is in the map already, is it safe to overwrite it?
     }
 }
 
 repl_req_ptr_t RaftStateMachine::lsn_to_req(int64_t lsn) {
     // Pull the req from the lsn
-    auto const it = m_lsn_req_map.find(lsn);
-    // RD_DBG_ASSERT(it != m_lsn_req_map.cend(), "lsn req map missing lsn={}", lsn);
-    if (it == m_lsn_req_map.cend()) { return nullptr; }
-
-    repl_req_ptr_t rreq = it->second;
+    // RD_DBG_ASSERT(found, "lsn req map missing lsn={}", lsn);
+    repl_req_ptr_t rreq;
+    if (!m_lsn_req_map.cvisit(lsn, [&rreq](auto const& entry) { rreq = entry.second; })) { return nullptr; }
     RD_DBG_ASSERT_EQ(lsn, rreq->lsn(), "lsn req map mismatch");
     return rreq;
 }
@@ -411,7 +416,7 @@ void RaftStateMachine::save_logical_snp_obj(nuraft::snapshot& s, ulong& obj_id, 
         // Nuraft will compact and truncate all logs when processeing the last obj.
         // Update the truncation upper limit here to ensure all stale logs are truncated.
         m_rd.m_truncation_upper_limit.exchange(s_cast< repl_lsn_t >(s.get_last_log_idx()));
-        hs()->cp_mgr().trigger_cp_flush(true).wait(); // ensure DSN is flushed to disk
+        detail::sync_get(hs()->cp_mgr().trigger_cp_flush(true)); // ensure DSN is flushed to disk
     }
 
     // Update the object offset.
@@ -434,7 +439,7 @@ bool RaftStateMachine::apply_snapshot(nuraft::snapshot& s) {
 
     auto snp_ctx = std::make_shared< nuraft_snapshot_context >(s);
     auto res = m_rd.m_listener->apply_snapshot(snp_ctx);
-    hs()->cp_mgr().trigger_cp_flush(true /* force */).get();
+    detail::sync_get(hs()->cp_mgr().trigger_cp_flush(true /* force */));
     return res;
 }
 

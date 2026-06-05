@@ -19,12 +19,14 @@
  */
 
 #pragma once
+#include <future>
 #include <sisl/logging/logging.h>
 #include <sisl/options/options.h>
 #include <sisl/settings/settings.hpp>
 #include <iomgr/io_environment.hpp>
 #include <iomgr/iomgr_flip.hpp>
 #include <homestore/homestore.hpp>
+#include "common/coro_helpers.hpp" // detail::sync_get / detach_then
 #include <homestore/index_service.hpp>
 #include <homestore/replication_service.hpp>
 #include <homestore/checkpoint/cp_mgr.hpp>
@@ -95,7 +97,7 @@ struct Runner {
     std::atomic< uint64_t > issued_tasks_{0};
     std::atomic< uint64_t > completed_tasks_{0};
     std::function< void(void) > task_;
-    folly::Promise< folly::Unit > comp_promise_;
+    std::promise< void > comp_promise_;
 
     Runner(uint64_t num_tasks, uint32_t qd = 8) : total_tasks_{num_tasks}, qdepth_{qd} {
         if (total_tasks_ < (uint64_t)qdepth_) { total_tasks_ = qdepth_; }
@@ -108,15 +110,16 @@ struct Runner {
     void set_task(std::function< void(void) > f) {
         issued_tasks_.store(0);
         completed_tasks_.store(0);
-        comp_promise_ = folly::Promise< folly::Unit >{};
+        comp_promise_ = std::promise< void >{};
         task_ = std::move(f);
     }
 
-    folly::Future< folly::Unit > execute() {
+    std::future< void > execute() {
+        auto fut = comp_promise_.get_future();
         for (uint32_t i{0}; i < qdepth_; ++i) {
             run_task();
         }
-        return comp_promise_.getFuture();
+        return fut;
     }
 
     void next_task() {
@@ -124,7 +127,7 @@ struct Runner {
         if ((issued_tasks_.load() < total_tasks_)) {
             run_task();
         } else if ((ctasks + 1) == total_tasks_) {
-            comp_promise_.setValue();
+            comp_promise_.set_value();
         }
     }
 
@@ -137,20 +140,21 @@ struct Runner {
 struct Waiter {
     std::atomic< uint64_t > expected_comp{0};
     std::atomic< uint64_t > actual_comp{0};
-    folly::Promise< folly::Unit > comp_promise;
+    std::promise< void > comp_promise;
 
     Waiter(uint64_t num_op) : expected_comp{num_op} {}
     Waiter() : Waiter{SISL_OPTIONS["num_io"].as< uint64_t >()} {}
     Waiter(const Waiter&) = delete;
     Waiter& operator=(const Waiter&) = delete;
 
-    folly::Future< folly::Unit > start(std::function< void(void) > f) {
+    std::future< void > start(std::function< void(void) > f) {
+        auto fut = comp_promise.get_future();
         f();
-        return comp_promise.getFuture();
+        return fut;
     }
 
     void one_complete() {
-        if ((actual_comp.fetch_add(1) + 1) >= expected_comp.load()) { comp_promise.setValue(); }
+        if ((actual_comp.fetch_add(1) + 1) >= expected_comp.load()) { comp_promise.set_value(); }
     }
 };
 
@@ -222,8 +226,8 @@ public:
     void wait_for_crash_recovery(bool check_will_crash = false) {
         if (check_will_crash && !homestore::HomeStore::instance()->crash_simulator().will_crash()) { return; }
         LOGDEBUG("Waiting for m_crash_recovered future");
-        m_crash_recovered.getFuture().get();
-        m_crash_recovered = folly::Promise< folly::Unit >();
+        m_crash_recovered.get_future().get();
+        m_crash_recovered = std::promise< void >();
         homestore::HomeStore::instance()->crash_simulator().set_will_crash(false);
     }
 #endif
@@ -358,9 +362,9 @@ public:
         };
 
         if (wait) {
-            on_complete(std::move(fut).get());
+            on_complete(homestore::detail::sync_get(std::move(fut)));
         } else {
-            std::move(fut).thenValue(on_complete);
+            homestore::detail::detach_then(std::move(fut), on_complete);
         }
     }
 
@@ -369,7 +373,6 @@ private:
         auto const ndevices = SISL_OPTIONS["num_devs"].as< uint32_t >();
         auto const dev_size = SISL_OPTIONS["dev_size_mb"].as< uint64_t >() * 1024 * 1024;
         auto num_threads = SISL_OPTIONS["num_threads"].as< uint32_t >();
-        auto num_fibers = SISL_OPTIONS["num_fibers"].as< uint32_t >();
         auto is_spdk = SISL_OPTIONS["spdk"].as< bool >();
 
         auto use_file = SISL_OPTIONS["use_file"].as< bool >();
@@ -422,8 +425,8 @@ private:
         }
 
         LOGINFO("Starting iomgr with {} threads, spdk: {}", num_threads, is_spdk);
-        ioenvironment.with_iomgr(
-            iomgr::iomgr_params{.num_threads = num_threads, .is_spdk = is_spdk, .num_fibers = 1 + num_fibers});
+        // iomgr v13 is io_uring-only (no spdk) and has no fibers; num_threads sizes the worker reactor pool.
+        ioenvironment.with_iomgr(iomgr::iomgr_params{.num_threads = num_threads});
 
         auto const http_port = SISL_OPTIONS["http_port"].as< int >();
         if (http_port != 0) {
@@ -452,7 +455,7 @@ private:
         hsi->with_crash_simulator([this](void) mutable {
             LOGWARN("CrashSimulator::crash() is called - restarting homestore");
             this->restart_homestore();
-            m_crash_recovered.setValue();
+            m_crash_recovered.set_value();
         });
 #endif
 
@@ -534,7 +537,7 @@ protected:
     std::vector< std::string > m_generated_devs;
 #ifdef _PRERELEASE
     flip::FlipClient m_fc{iomgr_flip::instance()};
-    folly::Promise< folly::Unit > m_crash_recovered;
+    std::promise< void > m_crash_recovered;
 #endif
 };
 } // namespace test_common

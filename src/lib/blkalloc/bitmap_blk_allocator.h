@@ -24,7 +24,6 @@
 #include <vector>
 
 #include <sisl/fds/bitset.hpp>
-#include <folly/MPMCQueue.h>
 #include <sisl/utility/enum.hpp>
 #include <sisl/utility/urcu_helper.hpp>
 #include <sisl/fds/thread_vector.hpp>

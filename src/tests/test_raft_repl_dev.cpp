@@ -979,7 +979,6 @@ int main(int argc, char* argv[]) {
     });
     HS_SETTINGS_FACTORY().save();
 
-    FLAGS_folly_global_cpu_executor_threads = 4;
     g_helper = std::make_unique< test_common::HSReplTestHelper >("test_raft_repl_dev", args, orig_argv);
     // No spare replica's are created. Test cases in this file expects fixed number of replica's.
     g_helper->setup(SISL_OPTIONS["replicas"].as< uint32_t >());

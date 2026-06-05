@@ -19,12 +19,7 @@
 #include <string>
 #include <shared_mutex>
 
-#include <folly/Expected.h>
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wuninitialized"
-#pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
-#include <folly/futures/Future.h>
-#pragma GCC diagnostic pop
+#include <sisl/async/task.hpp>
 #include <nuraft_mesg/nuraft_mesg.hpp>
 #include <sisl/fds/buffer.hpp>
 #include <sisl/logging/logging.h>
@@ -45,10 +40,10 @@ struct repl_dev_superblk;
 class RaftReplDev;
 
 class RaftReplService : public GenericReplService,
-                        public nuraft_mesg::MessagingApplication,
+                        public nuraft_mesg::messaging_application,
                         public std::enable_shared_from_this< RaftReplService > {
 private:
-    shared< nuraft_mesg::Manager > m_msg_mgr;
+    shared< nuraft_mesg::manager > m_msg_mgr;
     json_superblk m_config_sb;
     std::vector< std::pair< sisl::byte_view, void* > > m_config_sb_bufs;
     std::mutex m_pending_fetch_mtx;
@@ -57,7 +52,7 @@ private:
     iomgr::timer_handle_t m_rdev_gc_timer_hdl;
     iomgr::timer_handle_t m_flush_durable_commit_timer_hdl;
     iomgr::timer_handle_t m_replace_member_sync_check_timer_hdl;
-    iomgr::io_fiber_t m_reaper_fiber;
+    iomgr::IOReactor* m_reaper_reactor{nullptr};
     std::atomic< int32_t > restart_counter{0};
     std::mutex raft_restart_mutex;
 
@@ -66,13 +61,14 @@ public:
     ~RaftReplService() override;
 
     static ReplServiceError to_repl_error(nuraft::cmd_result_code code);
+    static ReplServiceError to_repl_error(std::error_condition cond);
     int32_t compute_raft_follower_priority();
 
-    ///////////////////// Overrides of nuraft_mesg::MessagingApplication ////////////////////
+    ///////////////////// Overrides of nuraft_mesg::messaging_application ////////////////////
     std::string lookup_peer(nuraft_mesg::peer_id_t const&) override;
     std::shared_ptr< nuraft_mesg::mesg_state_mgr > create_state_mgr(int32_t srv_id,
                                                                     nuraft_mesg::group_id_t const& group_id) override;
-    nuraft_mesg::Manager& msg_manager() { return *m_msg_mgr; }
+    nuraft_mesg::manager& msg_manager() { return *m_msg_mgr; }
     void add_to_fetch_queue(cshared< RaftReplDev >& rdev, std::vector< repl_req_ptr_t > rreqs);
 
 protected:
@@ -82,7 +78,7 @@ protected:
 
     AsyncReplResult< shared< ReplDev > > create_repl_dev(group_id_t group_id,
                                                          std::set< replica_id_t > const& members) override;
-    folly::SemiFuture< ReplServiceError > remove_repl_dev(group_id_t group_id) override;
+    sisl::async::task< ReplServiceError > remove_repl_dev(group_id_t group_id) override;
     void load_repl_dev(sisl::byte_view const& buf, void* meta_cookie) override;
     AsyncReplResult<> replace_member(group_id_t group_id, std::string& task_id, const replica_member_info& member_out,
                                      const replica_member_info& member_in, uint32_t commit_quorum = 0,
@@ -147,7 +143,7 @@ public:
 
 public:
     std::unique_ptr< CPContext > on_switchover_cp(CP* cur_cp, CP* new_cp) override;
-    folly::Future< bool > cp_flush(CP* cp) override;
+    sisl::async::task< bool > cp_flush(CP* cp) override;
     void cp_cleanup(CP* cp) override;
     int cp_progress_percent() override;
 };

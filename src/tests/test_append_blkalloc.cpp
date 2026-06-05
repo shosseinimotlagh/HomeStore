@@ -89,12 +89,11 @@ public:
     //
     // this api is for caller who is not interested with the write buffer and blkids;
     //
-    void write_io(uint64_t io_size, uint32_t num_iovs = 1) {
+    sisl::async::task< void > write_io(uint64_t io_size, uint32_t num_iovs = 1) {
         auto sg = std::make_shared< sisl::sg_list >();
-        write_sgs(io_size, sg, num_iovs).thenValue([this, sg](auto) {
-            free(*sg);
-            finish_and_notify();
-        });
+        co_await write_sgs(io_size, sg, num_iovs);
+        free(*sg);
+        finish_and_notify();
     }
 
     void wait_for_all_io_complete() {
@@ -102,53 +101,44 @@ public:
         m_cv.wait(lk, [this] { return this->m_io_job_done; });
     }
 
-    void write_io_verify(const uint64_t io_size) {
+    sisl::async::task< void > write_io_verify(const uint64_t io_size) {
         auto sg_write_ptr = std::make_shared< sisl::sg_list >();
         auto sg_read_ptr = std::make_shared< sisl::sg_list >();
 
-        write_sgs(io_size, sg_write_ptr, 1 /* num_iovs */)
-            .thenValue([sg_write_ptr, sg_read_ptr, this](auto&& written_bid_ptr) mutable {
-                // this will be called in write io completion cb;
-                LOGINFO("after_write_cb: Write completed;");
+        auto written_bid_ptr = co_await write_sgs(io_size, sg_write_ptr, 1 /* num_iovs */);
+        // this will be called in write io completion cb;
+        LOGINFO("after_write_cb: Write completed;");
 
-                iovec iov;
-                iov.iov_len = written_bid_ptr->blk_count() * inst().get_blk_size();
-                iov.iov_base = iomanager.iobuf_alloc(512, iov.iov_len);
-                sg_read_ptr->iovs.push_back(iov);
-                sg_read_ptr->size = iov.iov_len;
+        iovec iov;
+        iov.iov_len = written_bid_ptr->blk_count() * inst().get_blk_size();
+        iov.iov_base = iomanager.iobuf_alloc(512, iov.iov_len);
+        sg_read_ptr->iovs.push_back(iov);
+        sg_read_ptr->size = iov.iov_len;
 
-                LOGINFO("Step 2: async read on blkid: {}", written_bid_ptr->to_string());
-                return inst().async_read(*written_bid_ptr, *sg_read_ptr, sg_read_ptr->size);
-            })
-            .thenValue([this, sg_write_ptr, sg_read_ptr](auto err) mutable {
-                RELEASE_ASSERT(!err, "read failured");
-                const auto equal = test_common::HSTestHelper::compare(*sg_read_ptr, *sg_write_ptr);
-                RELEASE_ASSERT(equal, "read/write mismatch");
+        LOGINFO("Step 2: async read on blkid: {}", written_bid_ptr->to_string());
+        RELEASE_ASSERT(bool(co_await inst().async_read(*written_bid_ptr, *sg_read_ptr, sg_read_ptr->size)),
+                       "read failured");
+        const auto equal = test_common::HSTestHelper::compare(*sg_read_ptr, *sg_write_ptr);
+        RELEASE_ASSERT(equal, "read/write mismatch");
 
-                LOGINFO("Read completed;");
-                free(*sg_write_ptr);
-                free(*sg_read_ptr);
+        LOGINFO("Read completed;");
+        free(*sg_write_ptr);
+        free(*sg_read_ptr);
 
-                this->finish_and_notify();
-            });
+        this->finish_and_notify();
     }
 
-    void write_io_free_blk(const uint64_t io_size) {
+    sisl::async::task< void > write_io_free_blk(const uint64_t io_size) {
         std::shared_ptr< sisl::sg_list > sg_write_ptr = std::make_shared< sisl::sg_list >();
 
-        write_sgs(io_size, sg_write_ptr, 1 /* num_iovs */)
-            .thenValue([sg_write_ptr, this](auto&& written_bid_ptr) {
-                LOGINFO("after_write_cb: Write completed;");
-                free(*sg_write_ptr);
+        auto written_bid_ptr = co_await write_sgs(io_size, sg_write_ptr, 1 /* num_iovs */);
+        LOGINFO("after_write_cb: Write completed;");
+        free(*sg_write_ptr);
 
-                LOGINFO("Step 2: started async_free_blk: {}", written_bid_ptr->to_string());
-                return inst().async_free_blk(*written_bid_ptr);
-            })
-            .thenValue([this](auto&& err) {
-                RELEASE_ASSERT(!err, "Failed to free blks");
-                LOGINFO("completed async_free_blks");
-                this->finish_and_notify();
-            });
+        LOGINFO("Step 2: started async_free_blk: {}", written_bid_ptr->to_string());
+        RELEASE_ASSERT(bool(co_await inst().async_free_blk(*written_bid_ptr)), "Failed to free blks");
+        LOGINFO("completed async_free_blks");
+        this->finish_and_notify();
     }
 
 private:
@@ -159,7 +149,8 @@ private:
     // caller should be responsible to call free(sg) to free the iobuf allocated in iovs,
     // normally it should be freed in after_write_cb;
     //
-    folly::Future< shared< BlkId > > write_sgs(uint64_t io_size, cshared< sisl::sg_list >& sg, uint32_t num_iovs) {
+    sisl::async::task< shared< MultiBlkId > > write_sgs(uint64_t io_size, cshared< sisl::sg_list >& sg,
+                                                        uint32_t num_iovs) {
         // TODO: What if iov_len is not multiple of 4Ki?
         HS_DBG_ASSERT_EQ(io_size % (4 * Ki * num_iovs), 0, "Expecting iov_len : {} to be multiple of {}.",
                          io_size / num_iovs, 4 * Ki);
@@ -173,13 +164,11 @@ private:
             sg->size += iov_len;
         }
 
-        MultiBlkId blkid;
-        return inst()
-            .async_alloc_write(*(sg.get()), blk_alloc_hints{}, blkid, false /* part_of_batch*/)
-            .thenValue([sg, this, blkid](auto err) {
-                RELEASE_ASSERT(!err, "Write failure");
-                return folly::makeFuture< shared< MultiBlkId > >(std::make_shared< MultiBlkId >(blkid));
-            });
+        auto blkid = std::make_shared< MultiBlkId >();
+        RELEASE_ASSERT(
+            bool(co_await inst().async_alloc_write(*(sg.get()), blk_alloc_hints{}, *blkid, false /* part_of_batch */)),
+            "Write failure");
+        co_return blkid;
     }
 
 protected:
@@ -193,7 +182,8 @@ TEST_F(AppendBlkAllocatorTest, TestBasicWrite) {
     // start io in worker thread;
     const auto io_size = 4 * Ki;
     LOGINFO("Step 1: run on worker thread to schedule write for {} Bytes.", io_size);
-    iomanager.run_on_forget(iomgr::reactor_regex::random_worker, [this, io_size]() { this->write_io(io_size); });
+    iomanager.run_on_forget(iomgr::reactor_regex::random_worker,
+                            [this, io_size]() { detail::detach(this->write_io(io_size)); });
 
     LOGINFO("Step 2: Wait for I/O to complete.");
     wait_for_all_io_complete();
@@ -205,7 +195,8 @@ TEST_F(AppendBlkAllocatorTest, TestWriteThenReadVerify) {
     // start io in worker thread;
     auto io_size = 4 * Ki;
     LOGINFO("Step 1: run on worker thread to schedule write for {} Bytes.", io_size);
-    iomanager.run_on_forget(iomgr::reactor_regex::random_worker, [this, io_size]() { this->write_io_verify(io_size); });
+    iomanager.run_on_forget(iomgr::reactor_regex::random_worker,
+                            [this, io_size]() { detail::detach(this->write_io_verify(io_size)); });
 
     LOGINFO("Step 2: Wait for I/O to complete.");
     wait_for_all_io_complete();
@@ -218,7 +209,7 @@ TEST_F(AppendBlkAllocatorTest, TestWriteThenFreeBlk) {
     auto io_size = 4 * Mi;
     LOGINFO("Step 1: run on worker thread to schedule write for {} Bytes, then free blk.", io_size);
     iomanager.run_on_forget(iomgr::reactor_regex::random_worker,
-                            [this, io_size]() { this->write_io_free_blk(io_size); });
+                            [this, io_size]() { detail::detach(this->write_io_free_blk(io_size)); });
 
     LOGINFO("Step 2: Wait for I/O to complete.");
     wait_for_all_io_complete();
@@ -229,7 +220,8 @@ TEST_F(AppendBlkAllocatorTest, TestWriteThenFreeBlk) {
 TEST_F(AppendBlkAllocatorTest, TestCPFlush) {
     const auto io_size = 4 * Ki;
     LOGINFO("Step 1: run on worker thread to schedule write for {} Bytes.", io_size);
-    iomanager.run_on_forget(iomgr::reactor_regex::random_worker, [this, io_size]() { this->write_io(io_size); });
+    iomanager.run_on_forget(iomgr::reactor_regex::random_worker,
+                            [this, io_size]() { detail::detach(this->write_io(io_size)); });
 
     LOGINFO("Step 2: Wait for I/O to complete.");
     wait_for_all_io_complete();
@@ -245,7 +237,7 @@ TEST_F(AppendBlkAllocatorTest, TestWriteThenRecovey) {
     auto io_size = 4 * Mi;
     LOGINFO("Step 1: run on worker thread to schedule write for {} Bytes, then free blk.", io_size);
     iomanager.run_on_forget(iomgr::reactor_regex::random_worker,
-                            [this, io_size]() { this->write_io_free_blk(io_size); });
+                            [this, io_size]() { detail::detach(this->write_io_free_blk(io_size)); });
 
     LOGINFO("Step 2: Wait for I/O to complete.");
     wait_for_all_io_complete();
@@ -262,7 +254,8 @@ TEST_F(AppendBlkAllocatorTest, TestWriteThenRecovey) {
     this->reset_io_job_done();
 
     LOGINFO("Step 6: run on worker thread to schedule write for {} Bytes.", io_size);
-    iomanager.run_on_forget(iomgr::reactor_regex::random_worker, [this, io_size]() { this->write_io(io_size); });
+    iomanager.run_on_forget(iomgr::reactor_regex::random_worker,
+                            [this, io_size]() { detail::detach(this->write_io(io_size)); });
 
     LOGINFO("Step 7: Wait for I/O to complete.");
     wait_for_all_io_complete();

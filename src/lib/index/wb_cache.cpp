@@ -24,6 +24,7 @@
 #include "wb_cache.hpp"
 #include "index_cp.hpp"
 #include "device/virtual_dev.hpp"
+#include "common/coro_helpers.hpp" // detail::detach_then
 #include "common/resource_mgr.hpp"
 
 #ifdef _PRERELEASE
@@ -73,12 +74,12 @@ void IndexWBCache::start_flush_threads() {
     auto nthreads = std::max(1, HS_DYNAMIC_CONFIG(generic.cache_flush_threads));
 
     for (int32_t i{0}; i < nthreads; ++i) {
-        iomanager.create_reactor("index_cp_flush" + std::to_string(i), iomgr::INTERRUPT_LOOP, 1u,
+        iomanager.create_reactor("index_cp_flush" + std::to_string(i), iomgr::INTERRUPT_LOOP,
                                  [this, ctx](bool is_started) {
                                      if (is_started) {
                                          {
                                              std::unique_lock< std::mutex > lk{ctx->mtx};
-                                             m_cp_flush_fibers.push_back(iomanager.iofiber_self());
+                                             m_cp_flush_reactors.push_back(iomanager.this_reactor());
                                              ++(ctx->thread_cnt);
                                          }
                                          ctx->cv.notify_one();
@@ -432,11 +433,13 @@ void IndexWBCache::link_buf(IndexBufferPtr const& up_buf, IndexBufferPtr const& 
     down_buf->m_up_buffer = real_up_buf;
 
     if (down_buf->state() == index_buf_state_t::CLEAN) {
-        //In root collapse case, down_buf is written before up_buf, but in root split case, down_buf is written after up_buf.
+        // In root collapse case, down_buf is written before up_buf, but in root split case, down_buf is written after
+        // up_buf.
         LOGDEBUGMOD(wbcache,
-                   "CLEAN_BUF_DEBUG: Adding CLEAN down_buf {} to up_buf {}, up_buf wait_count before={}, might be dirtied later",
-                   down_buf->blkid().to_integer(), real_up_buf->blkid().to_integer(),
-                   real_up_buf->m_wait_for_down_buffers.get());
+                    "CLEAN_BUF_DEBUG: Adding CLEAN down_buf {} to up_buf {}, up_buf wait_count before={}, might be "
+                    "dirtied later",
+                    down_buf->blkid().to_integer(), real_up_buf->blkid().to_integer(),
+                    real_up_buf->m_wait_for_down_buffers.get());
     }
 
     real_up_buf->add_down_buffer(down_buf);
@@ -684,7 +687,7 @@ void IndexWBCache::recover(sisl::byte_view sb) {
     LOGTRACEMOD(wbcache, "After recovery: {}", to_string_dag_bufs(modified_dags, icp_ctx->id()));
 
 #endif
-    uint32_t cnt = 0;
+    [[maybe_unused]] uint32_t cnt = 0;
     LOGTRACEMOD(wbcache, "Potential parent recovered bufs (#of bufs = {})", potential_parent_recovered_bufs.size());
     for (auto const& buf : potential_parent_recovered_bufs) {
         LOGTRACEMOD(wbcache, " {} - check stale recovered buf {}", cnt++, buf->to_string());
@@ -826,10 +829,10 @@ bool IndexWBCache::was_node_committed(IndexBufferPtr const& buf) {
 }
 
 //////////////////// CP Related API section /////////////////////////////////
-folly::Future< bool > IndexWBCache::async_cp_flush(IndexCPContext* cp_ctx) {
+sisl::async::task< bool > IndexWBCache::async_cp_flush(IndexCPContext* cp_ctx) {
     LOGINFOMOD(wbcache, "Starting Index CP Flush with cp {}, dirty_buf_count={}, nodes_added={}, nodes_removed={}",
-           cp_ctx->id(), cp_ctx->m_dirty_buf_count.get(), cp_ctx->m_num_nodes_added.load(),
-           cp_ctx->m_num_nodes_removed.load());
+               cp_ctx->id(), cp_ctx->m_dirty_buf_count.get(), cp_ctx->m_num_nodes_added.load(),
+               cp_ctx->m_num_nodes_removed.load());
     LOGTRACEMOD(wbcache, "Index CP Flush with cp {}, \ndag={}", cp_ctx->id(), cp_ctx->to_string_with_dags());
     // #ifdef _PRERELEASE
     //     static int id = 0;
@@ -846,13 +849,13 @@ folly::Future< bool > IndexWBCache::async_cp_flush(IndexCPContext* cp_ctx) {
             CP_PERIODIC_LOG(DEBUG, unmove(cp_ctx->id()), "Btree does not have any dirty buffers to flush");
         }
         cp_ctx->complete(true);
-        return folly::makeFuture< bool >(true); // nothing to flush
+        co_return true; // nothing to flush
     }
 
 #ifdef _PRERELEASE
     if (hs()->crash_simulator().is_crashed()) {
         LOGINFO("crash simulation is ongoing, so skip the cp flush");
-        return folly::makeFuture< bool >(true);
+        co_return true;
     }
 #endif
 
@@ -871,8 +874,8 @@ folly::Future< bool > IndexWBCache::async_cp_flush(IndexCPContext* cp_ctx) {
 
     cp_ctx->prepare_flush_iteration();
     m_updated_ordinals.clear();
-    for (auto& fiber : m_cp_flush_fibers) {
-        iomanager.run_on_forget(fiber, [this, cp_ctx]() {
+    for (auto& reactor : m_cp_flush_reactors) {
+        iomanager.run_on_forget(reactor, [this, cp_ctx]() {
             IndexBufferPtrList buf_list;
             get_next_bufs(cp_ctx, resource_mgr().get_dirty_buf_qd(), buf_list);
 
@@ -882,7 +885,7 @@ folly::Future< bool > IndexWBCache::async_cp_flush(IndexCPContext* cp_ctx) {
             m_vdev->submit_batch();
         });
     }
-    return cp_ctx->get_future();
+    co_return co_await cp_ctx->get_future();
 }
 
 void IndexWBCache::do_flush_one_buf(IndexCPContext* cp_ctx, IndexBufferPtr const& buf, bool part_of_batch) {
@@ -927,8 +930,9 @@ void IndexWBCache::do_flush_one_buf(IndexCPContext* cp_ctx, IndexBufferPtr const
             LOGTRACEMOD(wbcache, "Flushing cp {} new node buf {} blkid {}", cp_ctx->id(), buf->to_string(),
                         buf->blkid().to_string());
         }
-        m_vdev->async_write(r_cast< const char* >(buf->raw_buffer()), m_node_size, buf->m_blkid, part_of_batch)
-            .thenValue([buf, cp_ctx](auto) {
+        detail::detach_then(
+            m_vdev->async_write(r_cast< const char* >(buf->raw_buffer()), m_node_size, buf->m_blkid, part_of_batch),
+            [buf, cp_ctx](iomgr::io_result const&) {
                 try {
                     auto& pthis = s_cast< IndexWBCache& >(wb_cache());
                     pthis.process_write_completion(cp_ctx, buf);
@@ -965,8 +969,9 @@ void IndexWBCache::process_write_completion(IndexCPContext* cp_ctx, IndexBufferP
         }
 
         // We are done flushing the buffers, We flush the vdev to persist the vdev bitmaps and free blks
-        // Pick a CP Manager blocking IO fiber to execute the cp flush of vdev
-        iomanager.run_on_forget(cp_mgr().pick_blocking_io_fiber(), [this, cp_ctx]() {
+        // TODO: m_vdev->cp_flush() is still a blocking io call; dispatch to any worker reactor for now.
+        // Real co_await-based non-blocking flush is deferred until the vdev cp_flush path is converted.
+        iomanager.run_on_forget(iomgr::reactor_regex::random_worker, [this, cp_ctx]() {
             auto cp_id = cp_ctx->id();
             LOGTRACEMOD(wbcache, "Initiating CP {} flush", cp_id);
             m_vdev->cp_flush(cp_ctx); // This is a blocking io call
@@ -978,7 +983,7 @@ void IndexWBCache::process_write_completion(IndexCPContext* cp_ctx, IndexBufferP
 }
 
 std::pair< IndexBufferPtr, bool > IndexWBCache::on_buf_flush_done(IndexCPContext* cp_ctx, IndexBufferPtr const& buf) {
-    if (m_cp_flush_fibers.size() > 1) {
+    if (m_cp_flush_reactors.size() > 1) {
         std::unique_lock lg(m_flush_mtx);
         return on_buf_flush_done_internal(cp_ctx, buf);
     } else {
@@ -1007,7 +1012,7 @@ std::pair< IndexBufferPtr, bool > IndexWBCache::on_buf_flush_done_internal(Index
 }
 
 void IndexWBCache::get_next_bufs(IndexCPContext* cp_ctx, uint32_t max_count, IndexBufferPtrList& bufs) {
-    if (m_cp_flush_fibers.size() > 1) {
+    if (m_cp_flush_reactors.size() > 1) {
         std::unique_lock lg(m_flush_mtx);
         get_next_bufs_internal(cp_ctx, max_count, nullptr, bufs);
     } else {

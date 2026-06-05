@@ -3,6 +3,7 @@
 #include "replication/repl_dev/raft_state_machine.h"
 #include "replication/repl_dev/raft_repl_dev.h"
 #include "replication/repl_dev/common.h"
+#include "common/coro_helpers.hpp" // detail::sync_get
 
 namespace homestore {
 
@@ -64,13 +65,12 @@ void ReplLogStore::end_of_append_batch(ulong start_lsn, ulong count) {
         // schedule a fetch and write. Once all requests are completed and written, these requests are poped out of
         // the map and the future will be ready.
         auto cur_time = std::chrono::steady_clock::now();
-        auto fut = m_rd.notify_after_data_written(reqs);
         // Wait for the fetch and write to be completed successfully.
         // It is essential to complete the data write before appending to the log. If the logs are flushed
         // before the data is written, a restart and subsequent log replay occurs, as the in-memory state is lost,
         // it leaves us uncertain about whether the data was actually written, potentially leading to data
         // inconsistency.
-        std::move(fut).wait();
+        detail::sync_get(m_rd.notify_after_data_written(reqs));
         HISTOGRAM_OBSERVE(m_rd.metrics(), data_channel_wait_latency_us, get_elapsed_time_us(cur_time));
     }
 

@@ -29,7 +29,6 @@
 
 #include <sisl/fds/buffer.hpp>
 #include <sisl/fds/stream_tracker.hpp>
-#include <folly/Synchronized.h>
 #include <nlohmann/json.hpp>
 
 #include <homestore/logstore/log_store_internal.hpp>

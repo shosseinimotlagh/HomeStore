@@ -91,7 +91,7 @@ static constexpr hs_uuid_t INVALID_SYSTEM_UUID{0};
 ///////////// All Enums //////////////////////////
 ENUM(HSDevType, uint8_t, Data, Fast);
 ENUM(Op_type, uint8_t, READ, WRITE, UNMAP);
-VENUM(PhysicalDevGroup, uint8_t, DATA = 0, FAST = 1, META = 2);
+ENUM(PhysicalDevGroup, uint8_t, DATA = 0, FAST = 1, META = 2);
 ENUM(io_flag, uint8_t,
      BUFFERED_IO, // should be set if file system doesn't support direct IOs and we are working on a file as a
                   // disk. This option is enabled only on in debug build.

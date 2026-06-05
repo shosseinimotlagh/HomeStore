@@ -23,6 +23,8 @@
 #include <iomgr/iomgr.hpp>
 #include <sisl/metrics/metrics.hpp>
 #include <sisl/utility/enum.hpp>
+#include <sisl/async/task.hpp>            // sisl::async::task
+#include <sisl/async/value_awaitable.hpp> // sisl::async::value_awaitable (per-consumer flush completion)
 
 #include <homestore/superblk_handler.hpp>
 #include <homestore/checkpoint/cp.hpp>
@@ -49,13 +51,16 @@ public:
 class CPContext {
 protected:
     CP* m_cp;
-    folly::Promise< bool > m_flush_comp;
+    // Single-consumer flush completion: the consumer calls complete(status) when its flush finishes, and
+    // CPManager awaits get_future() once.
+    std::shared_ptr< sisl::async::value_awaitable< bool > > m_flush_comp{
+        std::make_shared< sisl::async::value_awaitable< bool > >()};
 
 public:
     CPContext(CP* cp) : m_cp{cp} {}
     CP* cp() { return m_cp; }
     cp_id_t id() const;
-    void complete(bool status) { m_flush_comp.setValue(status); }
+    void complete(bool status) { m_flush_comp->complete(status); }
 #ifdef _PRERELEASE
     void abrupt() {
         m_cp->m_abrupt_cp.store(true);
@@ -63,7 +68,11 @@ public:
     }
     bool is_abrupt() { return m_cp->m_abrupt_cp.load(); }
 #endif
-    folly::Future< bool > get_future() { return m_flush_comp.getFuture(); }
+    // Copy the awaitable into the frame so it stays alive across the suspend independent of this CPContext.
+    sisl::async::task< bool > get_future() {
+        auto aw = m_flush_comp;
+        co_return co_await *aw;
+    }
 
     virtual ~CPContext() = default;
 };
@@ -84,7 +93,7 @@ public:
     /// returned future.
     /// @param cp CP pointer to which the dirty buffers have to be flushed
     /// @param done_cb Callback after cp is done
-    virtual folly::Future< bool > cp_flush(CP* cp) = 0;
+    virtual sisl::async::task< bool > cp_flush(CP* cp) = 0;
 
     /// @brief After all consumers flushed the CP, CPManager calls this method to clean up any CP related structures
     /// @param cp
@@ -157,13 +166,12 @@ private:
     std::array< std::unique_ptr< CPCallbacks >, (size_t)cp_consumer_t::SENTINEL > m_cp_cb_table;
     std::unique_ptr< CPWatchdog > m_wd_cp;
     superblk< cp_mgr_super_block > m_sb;
-    std::vector< iomgr::io_fiber_t > m_cp_io_fibers;
     iomgr::timer_handle_t m_cp_timer_hdl;
     bool m_cp_shutdown_initiated{false};
     bool m_in_flush_phase{false};
     bool m_pending_trigger_cp{false}; // Is there is a waiter for a cp flush to start
-    folly::SharedPromise< bool > m_pending_trigger_cp_comp;
-    iomgr::io_fiber_t m_timer_fiber;
+    std::shared_ptr< sisl::async::shared_awaitable< bool > > m_pending_trigger_cp_comp;
+    iomgr::IOReactor* m_timer_reactor{nullptr};
 
 public:
     CPManager();
@@ -214,23 +222,21 @@ public:
     /// @brief Trigger a checkpoint flush on all subsystems registered. There is only 1 checkpoint per checkpoint
     /// manager. Checkpoint flush will wait for cp to exited all critical io sections.
     /// @param force : Do we need to force queue the checkpoint flush, in case previous checkpoint is being flushed
-    folly::Future< bool > trigger_cp_flush(bool force = false);
+    sisl::async::task< bool > trigger_cp_flush(bool force = false);
 
     const std::array< std::unique_ptr< CPCallbacks >, (size_t)cp_consumer_t::SENTINEL >& consumer_list() const {
         return m_cp_cb_table;
     }
 
-    iomgr::io_fiber_t pick_blocking_io_fiber() const;
-
 private:
     void cp_ref(CP* cp);
     void create_first_cp();
-    void cp_start_flush(CP* cp);
+    sisl::async::task< void > cp_start_flush(CP* cp);
     void on_cp_flush_done(CP* cp);
     void cleanup_cp(CP* cp);
     void on_meta_blk_found(const sisl::byte_view& buf, void* meta_cookie);
     void start_cp_thread();
-    folly::Future< bool > do_trigger_cp_flush(bool force, bool flush_on_shutdown);
+    sisl::async::task< bool > do_trigger_cp_flush(bool force, bool flush_on_shutdown);
     uint64_t cp_timer_us();
     void start_timer_thread();
     void stop_timer_thread();

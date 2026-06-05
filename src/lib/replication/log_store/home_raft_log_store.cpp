@@ -18,6 +18,7 @@
 #include <sisl/fds/utils.hpp>
 #include "common/homestore_assert.hpp"
 #include <homestore/homestore.hpp>
+#include "common/coro_helpers.hpp" // detail::detach_then / sync_get / await_value_ref
 #include <iomgr/iomgr_flip.hpp>
 
 using namespace homestore;
@@ -97,19 +98,21 @@ HomeRaftLogStore::HomeRaftLogStore(logdev_id_t logdev_id, logstore_id_t logstore
         if (!m_log_store) { throw std::runtime_error("Failed to create log store"); }
         m_logstore_id = m_log_store->get_store_id();
         LOGDEBUGMOD(replication, "Opened new home log_dev={} log_store={}", m_logdev_id, m_logstore_id);
+        m_log_store_ready.complete({}); // created synchronously; wait_for_log_store_ready() returns immediately
     } else {
         m_logdev_id = logdev_id;
         m_logstore_id = logstore_id;
         LOGDEBUGMOD(replication, "Opening existing home log_dev={} log_store={}", m_logdev_id, logstore_id);
         logstore_service().open_logdev(m_logdev_id, flush_mode_t::EXPLICIT);
-        m_log_store_future = logstore_service()
-                                 .open_log_store(m_logdev_id, logstore_id, true, log_found_cb, log_replay_done_cb)
-                                 .thenValue([this](auto log_store) {
-                                     m_log_store = std::move(log_store);
-                                     DEBUG_ASSERT_EQ(m_logstore_id, m_log_store->get_store_id(),
-                                                     "Mismatch in passed and create logstore id");
-                                     REPL_STORE_LOG(DEBUG, "Home Log store created/opened successfully");
-                                 });
+        detail::detach_then(
+            logstore_service().open_log_store(m_logdev_id, logstore_id, true, log_found_cb, log_replay_done_cb),
+            [this](auto log_store) {
+                m_log_store = std::move(log_store);
+                DEBUG_ASSERT_EQ(m_logstore_id, m_log_store->get_store_id(),
+                                "Mismatch in passed and create logstore id");
+                REPL_STORE_LOG(DEBUG, "Home Log store created/opened successfully");
+                m_log_store_ready.complete({});
+            });
     }
 }
 
@@ -390,7 +393,7 @@ void HomeRaftLogStore::purge_all_logs() {
     m_log_store->truncate(last_lsn, false /* in_memory_truncate_only */);
 }
 
-void HomeRaftLogStore::wait_for_log_store_ready() { m_log_store_future.wait(); }
+void HomeRaftLogStore::wait_for_log_store_ready() { detail::sync_get(detail::await_value_ref(m_log_store_ready)); }
 
 void HomeRaftLogStore::set_last_durable_lsn(repl_lsn_t lsn) { m_last_durable_lsn = to_store_lsn(lsn); }
 

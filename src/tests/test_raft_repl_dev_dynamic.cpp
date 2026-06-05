@@ -210,12 +210,10 @@ TEST_F(ReplDevDynamicTest, TwoMemberDown) {
         constexpr int max_retries = 3;
         bool succeeded = false;
         for (int i = 0; i < max_retries; ++i) {
-            auto result = hs()->repl_service()
-                              .replace_member(db->repl_dev()->group_id(), task_id,
-                                              replica_member_info{g_helper->replica_id(member_out), ""},
-                                              replica_member_info{g_helper->replica_id(member_in), ""}, 1)
-                              .get();
-            if (!result.hasError()) {
+            auto result = detail::sync_get(hs()->repl_service().replace_member(
+                db->repl_dev()->group_id(), task_id, replica_member_info{g_helper->replica_id(member_out), ""},
+                replica_member_info{g_helper->replica_id(member_in), ""}, 1));
+            if (result.has_value()) {
                 succeeded = true;
                 break;
             }
@@ -607,7 +605,6 @@ int main(int argc, char* argv[]) {
     });
     HS_SETTINGS_FACTORY().save();
 
-    FLAGS_folly_global_cpu_executor_threads = 4;
     g_helper = std::make_unique< test_common::HSReplTestHelper >("test_raft_repl_dev_dynamic", args, orig_argv);
 
     // We spawn spare replica's also for dynamic repl dev tests.

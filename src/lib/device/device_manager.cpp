@@ -54,7 +54,7 @@ static int determine_open_flags(io_flag oflags) {
 }
 
 static bool is_hdd(const std::string& devname) {
-    const iomgr::drive_type dtype = iomgr::DriveInterface::get_drive_type(devname);
+    const iomgr::drive_type dtype = iomgr::type_of(devname);
     if (dtype == iomgr::drive_type::block_hdd || dtype == iomgr::drive_type::file_on_hdd) { return true; }
     return false;
 }
@@ -123,7 +123,7 @@ void DeviceManager::format_devices() {
 
 uint32_t DeviceManager::format_single_device(dev_info& dinfo) {
     HS_LOG_ASSERT(!m_first_blk_hdr.is_empty(), "Empty first block header, cannot format device {}", dinfo.dev_name);
-    auto attr = iomgr::DriveInterface::get_attributes(dinfo.dev_name);
+    auto attr = iomgr::attributes_of(dinfo.dev_name);
     if (dinfo.dev_size == 0) { dinfo.dev_size = PhysicalDev::get_dev_size(dinfo.dev_name); }
     auto sb_size = hs_super_blk::total_used_size(dinfo);
     auto buf = hs_utils::iobuf_alloc(sb_size, sisl::buftag::superblk, attr.align_size);
@@ -856,7 +856,7 @@ ChunkPool::~ChunkPool() {
         m_pool_cv.notify_one();
     }
     // Wait for the chunk pool to finish.
-    m_pool_halt.getFuture().get();
+    m_pool_halt.get_future().get();
     m_producer_thread.join();
 }
 
@@ -883,7 +883,7 @@ void ChunkPool::producer() {
         });
 
         if (!m_run_pool) {
-            m_pool_halt.setValue();
+            m_pool_halt.set_value();
             return;
         }
 

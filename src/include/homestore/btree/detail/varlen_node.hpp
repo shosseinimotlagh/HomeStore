@@ -588,7 +588,7 @@ protected:
             return;
         }
         std::vector< Record > rec;
-        rec.reserve(no_of_entries);
+        rec.resize(no_of_entries);
 
         uint32_t ind = 0;
         while (ind < no_of_entries) {

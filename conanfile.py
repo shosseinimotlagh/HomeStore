@@ -9,7 +9,7 @@ required_conan_version = ">=1.60.0"
 
 class HomestoreConan(ConanFile):
     name = "homestore"
-    version = "7.5.9"
+    version = "8.0.0"
 
     homepage = "https://github.com/eBay/Homestore"
     description = "HomeStore Storage Engine"
@@ -23,7 +23,7 @@ class HomestoreConan(ConanFile):
                 "shared": ['True', 'False'],
                 "fPIC": ['True', 'False'],
                 "coverage": ['True', 'False'],
-                "sanitize": ['True', 'False'],
+                "sanitize": ['address', 'thread', 'False'],
                 "testing" : ['full', 'min', 'off', 'epoll_mode', 'spdk_mode'],
             }
     default_options = {
@@ -52,24 +52,21 @@ class HomestoreConan(ConanFile):
         self.test_requires("gtest/[^1.17]")
 
     def requirements(self):
-        self.requires("iomgr/[^12.0]", transitive_headers=True)
-        self.requires("sisl/[^13.2]", transitive_headers=True)
-        self.requires("nuraft_mesg/[^4.0]", transitive_headers=True)
-
-        self.requires("farmhash/cci.20190513@", transitive_headers=True)
+        self.requires("iomgr/[^13.0]@oss/dev", transitive_headers=True)
+        self.requires("sisl/[^14.5]@oss/dev", transitive_headers=True)
+        self.requires("nuraft_mesg/[^5.0]@oss/dev", transitive_headers=True)
         if self.settings.arch in ['x86', 'x86_64']:
             self.requires("isa-l/[^2.30]", transitive_headers=True)
 
-        # Tests require OpenSSL 3.x
-        self.requires("openssl/[^3.1]", override=True)
-
+        self.requires("farmhash/cci.20190513@")
+        
     def imports(self):
         self.copy(root_package="sisl", pattern="*", dst="bin/scripts/python/flip/", src="bindings/flip/python/", keep_path=False)
 
     def layout(self):
         self.folders.source = "."
-        if self.options.get_safe("sanitize"):
-            self.folders.build = join("build", "Sanitized")
+        if self.options.get_safe("sanitize") and self.options.sanitize != "False":
+            self.folders.build = join("build", f"Sanitized-{self.options.sanitize}")
         elif self.options.get_safe("coverage"):
             self.folders.build = join("build", "Coverage")
         else:
@@ -100,13 +97,15 @@ class HomestoreConan(ConanFile):
         if self.settings.build_type == "Debug":
             if self.options.get_safe("coverage"):
                 tc.variables['BUILD_COVERAGE'] = 'ON'
-            elif self.options.get_safe("sanitize"):
-                tc.variables['MEMORY_SANITIZER_ON'] = 'ON'
+            elif self.options.get_safe("sanitize") and self.options.sanitize != "False":
+                if self.options.sanitize == "thread":
+                    tc.variables['THREAD_SANITIZER_ON'] = 'ON'
+                else:  # address
+                    tc.variables['ADDRESS_SANITIZER_ON'] = 'ON'
         tc.variables["CONAN_PACKAGE_NAME"] = self.name
         tc.variables["CONAN_PACKAGE_VERSION"] = self.version
         tc.generate()
 
-        # This generates "boost-config.cmake" and "grpc-config.cmake" etc in self.generators_folder
         deps = CMakeDeps(self)
         deps.generate()
 
@@ -128,10 +127,12 @@ class HomestoreConan(ConanFile):
         copy(self, "*.dll", self.build_folder, join(self.package_folder, "lib"), keep_path=False)
 
     def package_info(self):
-        if self.options.sanitize:
-            self.cpp_info.sharedlinkflags.append("-fsanitize=address")
-            self.cpp_info.exelinkflags.append("-fsanitize=address")
-            self.cpp_info.sharedlinkflags.append("-fsanitize=undefined")
-            self.cpp_info.exelinkflags.append("-fsanitize=undefined")
-        if self.settings.os == "Linux":
-            self.cpp_info.system_libs.append("aio")
+        if self.options.get_safe("sanitize") and self.options.sanitize != "False":
+            if self.options.sanitize == "thread":
+                self.cpp_info.sharedlinkflags.append("-fsanitize=thread")
+                self.cpp_info.exelinkflags.append("-fsanitize=thread")
+            else:
+                self.cpp_info.sharedlinkflags.append("-fsanitize=address")
+                self.cpp_info.exelinkflags.append("-fsanitize=address")
+                self.cpp_info.sharedlinkflags.append("-fsanitize=undefined")
+                self.cpp_info.exelinkflags.append("-fsanitize=undefined")

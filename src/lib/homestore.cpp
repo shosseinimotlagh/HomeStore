@@ -34,6 +34,8 @@
 
 #include "index/wb_cache.hpp"
 #include "common/homestore_utils.hpp"
+#include "common/coro_helpers.hpp" // detail::sync_get (block on the first-boot CP flush)
+#include <sisl/async/when_all.hpp> // sisl::async::when_all (concurrent vdev format)
 #include "common/homestore_config.hpp"
 #include "common/homestore_assert.hpp"
 #include "common/homestore_status_mgr.hpp"
@@ -238,7 +240,7 @@ void HomeStore::format_and_start(std::map< uint32_t, hs_format_params >&& format
         hs_utils::set_btree_mempool_size(m_dev_mgr->atomic_page_size({HSDevType::Data}));
     }
 
-    std::vector< folly::Future< std::error_code > > futs;
+    std::vector< sisl::async::task< iomgr::io_result > > futs;
     for (const auto& [svc_type, fparams] : format_opts) {
         if (fparams.size_pct == 0) { continue; }
 
@@ -264,10 +266,9 @@ void HomeStore::format_and_start(std::map< uint32_t, hs_format_params >&& format
     }
 
     if (!futs.empty()) {
-        auto tlist = folly::collectAllUnsafe(futs).get();
-        for (auto const& t : tlist) {
-            auto const err = t.value();
-            HS_REL_ASSERT(!err, "IO error during format of vdev, error={}", err.message());
+        auto const results = detail::sync_get(sisl::async::when_all(std::move(futs)));
+        for (auto const& r : results) {
+            HS_REL_ASSERT(bool(r), "IO error during format of vdev, error={}", r ? std::string{} : r.error().message());
         }
     }
     do_start();
@@ -305,7 +306,7 @@ void HomeStore::do_start() {
     // boot going forward on next reboot.
     if (m_dev_mgr->is_first_time_boot()) {
         // Take the first CP after we have initialized all subsystems and wait for it to complete.
-        m_cp_mgr->trigger_cp_flush(true /* force */).get();
+        detail::sync_get(m_cp_mgr->trigger_cp_flush(true /* force */));
         m_dev_mgr->commit_formatting();
     }
 

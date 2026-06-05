@@ -17,11 +17,12 @@
 #include <sys/uio.h>
 #include <cstdint>
 
-#include <folly/small_vector.h>
+#include <boost/container/small_vector.hpp>
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wuninitialized"
 #pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
-#include <folly/futures/Future.h>
+#include <iomgr/io_op.hpp>     // iomgr::io_result (the data-surface error type)
+#include <sisl/async/task.hpp> // sisl::async::task
 #pragma GCC diagnostic pop
 #include <sisl/fds/buffer.hpp>
 #include <sisl/utility/atomic_counter.hpp>
@@ -92,8 +93,8 @@ public:
      * @param part_of_batch Whether this operation is part of a batch of operations.
      * @return A Future that will contain an error code indicating the success or failure of the operation.
      */
-    folly::Future< std::error_code > async_alloc_write(sisl::sg_list const& sgs, blk_alloc_hints const& hints,
-                                                       MultiBlkId& out_blkids, bool part_of_batch = false);
+    sisl::async::task< iomgr::io_result > async_alloc_write(sisl::sg_list const& sgs, blk_alloc_hints const& hints,
+                                                            MultiBlkId& out_blkids, bool part_of_batch = false);
 
     /**
      * @brief Asynchronously writes the given buffer to the specified block ID.
@@ -104,8 +105,8 @@ public:
      * @param part_of_batch Whether this write is part of a batch operation.
      * @return A Future that will resolve to an error code indicating the result of the write operation.
      */
-    folly::Future< std::error_code > async_write(const char* buf, uint32_t size, MultiBlkId const& bid,
-                                                 bool part_of_batch = false);
+    sisl::async::task< iomgr::io_result > async_write(const char* buf, uint32_t size, MultiBlkId const& bid,
+                                                      bool part_of_batch = false);
     /**
      * @brief : asynchronous write with input block ids;
      *
@@ -115,8 +116,8 @@ public:
      * @param cb : callback that will be triggered after write completes
      * @param part_of_batch : is this write part of a batch;
      */
-    folly::Future< std::error_code > async_write(sisl::sg_list const& sgs, MultiBlkId const& in_blkids,
-                                                 bool part_of_batch = false);
+    sisl::async::task< iomgr::io_result > async_write(sisl::sg_list const& sgs, MultiBlkId const& in_blkids,
+                                                      bool part_of_batch = false);
 
     /**
      * @brief : asynchronous write with input block ids;
@@ -127,8 +128,8 @@ public:
      * @param cb : callback that will be triggered after write completes
      * @param part_of_batch : is this write part of a batch;
      */
-    folly::Future< std::error_code > async_write(sisl::sg_list const& sgs, std::vector< MultiBlkId > const& in_blkids,
-                                                 bool part_of_batch = false);
+    sisl::async::task< iomgr::io_result >
+    async_write(sisl::sg_list const& sgs, std::vector< MultiBlkId > const& in_blkids, bool part_of_batch = false);
 
     /**
      * @brief Asynchronously reads data from the specified block ID into the provided buffer.
@@ -139,8 +140,8 @@ public:
      * @param part_of_batch Whether this read is part of a batch operation.
      * @return A Future that will resolve to an error code indicating the result of the operation.
      */
-    folly::Future< std::error_code > async_read(MultiBlkId const& bid, uint8_t* buf, uint32_t size,
-                                                bool part_of_batch = false);
+    sisl::async::task< iomgr::io_result > async_read(MultiBlkId const& bid, uint8_t* buf, uint32_t size,
+                                                     bool part_of_batch = false);
 
     /**
      * @brief Asynchronously reads data from the specified block ID.
@@ -150,10 +151,10 @@ public:
      * @param size The size of the data to read.
      * @param part_of_batch Whether this read is part of a batch.
      *
-     * @return A `folly::Future` that will contain the error code of the read operation.
+     * @return A task that completes with the iomgr::io_result of the read operation.
      */
-    folly::Future< std::error_code > async_read(MultiBlkId const& bid, sisl::sg_list& sgs, uint32_t size,
-                                                bool part_of_batch = false);
+    sisl::async::task< iomgr::io_result > async_read(MultiBlkId const& bid, sisl::sg_list& sgs, uint32_t size,
+                                                     bool part_of_batch = false);
 
     /**
      * @brief Submit the io batch, which is a mandatory method to be called if read/write are issued with part_of_batch
@@ -199,7 +200,7 @@ public:
      * @param bid The block IDs to free.
      * @return A Future that will resolve to an error code indicating the result of the operation.
      */
-    folly::Future< std::error_code > async_free_blk(MultiBlkId const& bid);
+    sisl::async::task< iomgr::io_result > async_free_blk(MultiBlkId const& bid);
 
     /**
      * @brief Frees the specified block IDs immediately. Used during log replay on commit only.
@@ -294,6 +295,13 @@ private:
      * @param cookie A pointer to the cookie associated with the data processing.
      */
     static void process_data_completion(std::error_condition ec, void* cookie);
+
+    // Read one piece while bracketing it in the read tracker. Member coroutines (not capturing lambdas) so `this`
+    // and the args are copied into the self-owning frame -- a capturing coroutine lambda would dangle once the
+    // enclosing call returns the (lazy) task.
+    sisl::async::task< iomgr::io_result > do_read_blk(BlkId bid, uint8_t* buf, uint32_t size, bool part_of_batch);
+    sisl::async::task< iomgr::io_result > do_readv_blk(BlkId bid, sisl::sg_iovs_t iovs, uint32_t size,
+                                                       bool part_of_batch);
 
 private:
     std::shared_ptr< VirtualDev > m_vdev;

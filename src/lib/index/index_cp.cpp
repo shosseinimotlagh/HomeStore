@@ -13,9 +13,9 @@ std::unique_ptr< CPContext > IndexCPCallbacks::on_switchover_cp(CP* cur_cp, CP* 
     return std::make_unique< IndexCPContext >(new_cp);
 }
 
-folly::Future< bool > IndexCPCallbacks::cp_flush(CP* cp) {
+sisl::async::task< bool > IndexCPCallbacks::cp_flush(CP* cp) {
     auto ctx = s_cast< IndexCPContext* >(cp->context(cp_consumer_t::INDEX_SVC));
-    return m_wb_cache->async_cp_flush(ctx);
+    co_return co_await m_wb_cache->async_cp_flush(ctx);
 }
 
 void IndexCPCallbacks::cp_cleanup(CP* cp) {}
@@ -30,7 +30,7 @@ void IndexCPContext::add_to_txn_journal(uint32_t index_ordinal, const IndexBuffe
                                         const IndexBufferPtrList& freed_bufs) {
     auto record_size = txn_record::size_for_num_ids(created_bufs.size() + freed_bufs.size() + (left_child_buf ? 1 : 0) +
                                                     (parent_buf ? 1 : 0));
-    std::unique_lock< iomgr::FiberManagerLib::mutex > lg{m_txn_journal_mtx};
+    std::unique_lock< std::mutex > lg{m_txn_journal_mtx};
     if (m_txn_journal_buf.bytes() == nullptr) {
         m_txn_journal_buf =
             std::move(sisl::io_blob_safe{std::max(sizeof(txn_journal), 512ul), 512, sisl::buftag::metablk});

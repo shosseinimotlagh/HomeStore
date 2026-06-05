@@ -103,7 +103,7 @@ public:
          *
          * @return : On success, the number of bytes written is returned.  On error, -1 is returned.
          */
-        folly::Future< std::error_code > async_append(const uint8_t* buf, size_t count);
+        sisl::async::task< iomgr::io_result > async_append(const uint8_t* buf, size_t count);
 
         /**
          * @brief : writes up to count bytes from the buffer starting at buf at offset offset.
@@ -119,7 +119,7 @@ public:
          *
          * @return : On success, the number of bytes read or written is returned, or -1 on error.
          */
-        folly::Future< std::error_code > async_pwrite(const uint8_t* buf, size_t size, off_t offset);
+        sisl::async::task< iomgr::io_result > async_pwrite(const uint8_t* buf, size_t size, off_t offset);
 
         /**
          * @brief : writes iovcnt buffers of data described by iov to the offset.
@@ -134,7 +134,7 @@ public:
          *
          * @return : On success, number of bytes written. On error, -1 is returned
          */
-        folly::Future< std::error_code > async_pwritev(const iovec* iov, int iovcnt, off_t offset);
+        sisl::async::task< iomgr::io_result > async_pwritev(const iovec* iov, int iovcnt, off_t offset);
 
         /// @brief writes up to count bytes from the buffer starting at buf at offset offset. The cursor is not
         /// changed. pwrite always use offset returned from alloc_next_append_blk to do the write;pwrite should not
