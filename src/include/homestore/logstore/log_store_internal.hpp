@@ -103,10 +103,10 @@ struct log_dump_req {
                  std::shared_ptr< home_log_store > logstore = nullptr, logstore_seq_num_t s_seq = 0,
                  logstore_seq_num_t e_seq = std::numeric_limits< int64_t >::max()) :
             verbosity_level{level}, log_store{logstore}, start_seq_num{s_seq}, end_seq_num{e_seq} {}
-    log_dump_verbosity verbosity_level;        // How much information we need of log file (entire content or header)
+    log_dump_verbosity verbosity_level;          // How much information we need of log file (entire content or header)
     std::shared_ptr< home_log_store > log_store; // if null all log stores are dumped
-    logstore_seq_num_t start_seq_num;          // empty_key if from start of log file
-    logstore_seq_num_t end_seq_num;            // empty_key if till last log entry
+    logstore_seq_num_t start_seq_num;            // empty_key if from start of log file
+    logstore_seq_num_t end_seq_num;              // empty_key if till last log entry
 };
 
 struct logstore_record {
@@ -121,13 +121,13 @@ struct logstore_record {
 class home_log_store;
 struct logstore_req {
     home_log_store* log_store; // Backpointer to the log store. We are not storing shared_ptr as user should not destroy
-                             // it until all ios are not completed.
+                               // it until all ios are not completed.
     logstore_seq_num_t seq_num; // Log store specific seq_num (which could be monotonically increaseing with logstore)
     sisl::io_blob data;         // Data blob containing data
     void* cookie;               // User generated cookie (considered as opaque)
     bool is_internal_req;       // If the req is created internally by home_log_store itself
     log_req_comp_cb_t cb;       // Callback upon completion of write (overridden than default)
-    Clock::time_point start_time;
+    sisl::Clock::time_point start_time;
     bool flush_wait{false}; // Wait for the flush to happen
 
     logstore_req(const logstore_req&) = delete;

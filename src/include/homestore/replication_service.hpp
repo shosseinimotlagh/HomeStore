@@ -33,7 +33,7 @@ public:
     /// @param listener state machine listener of all the events happening on the repl_dev (commit, precommit etc)
     /// @return A Future repl_dev on success or Future ReplServiceError upon error
     virtual async_result< shared< repl_dev > > create_repl_dev(group_id_t group_id,
-                                                                 std::set< replica_id_t > const& members) = 0;
+                                                               std::set< replica_id_t > const& members) = 0;
 
     /// @brief Removes the entire Repl Device. The underlying replica group is marked as destroy_pending and all its
     /// resources are not released until garbage collection of repl devices kick in.
@@ -50,9 +50,8 @@ public:
     /// @param commit_quorum Commit quorum to be used for this operation. If 0, it will use the default commit quorum.
     /// @return A Future on replace the member accepted or Future ReplServiceError upon error
     virtual async_status replace_member(group_id_t group_id, std::string& task_id,
-                                             const replica_member_info& member_out,
-                                             const replica_member_info& member_in, uint32_t commit_quorum = 0,
-                                             uint64_t trace_id = 0) const = 0;
+                                        const replica_member_info& member_out, const replica_member_info& member_in,
+                                        uint32_t commit_quorum = 0, uint64_t trace_id = 0) const = 0;
 
     /// @brief Flips the learner flag for a specific replica member in the group.
     /// @param group_id The ID of the replica group.
@@ -63,8 +62,8 @@ public:
     /// @param trace_id Optional trace ID for tracking (default: 0).
     /// @return A future result indicating success or error.
     virtual async_status flip_learner_flag(group_id_t group_id, const replica_member_info& member, bool target,
-                                                uint32_t commit_quorum, bool wait_and_verify = true,
-                                                uint64_t trace_id = 0) const = 0;
+                                           uint32_t commit_quorum, bool wait_and_verify = true,
+                                           uint64_t trace_id = 0) const = 0;
 
     /// @brief Remove the specific replica member from the group.
     /// @param group_id The ID of the replica group.
@@ -74,7 +73,7 @@ public:
     /// @param trace_id Optional trace ID for tracking (default: 0).
     /// @return A future result indicating success or error.
     virtual async_status remove_member(group_id_t group_id, const replica_id_t& member, uint32_t commit_quorum,
-                                            bool wait_and_verify = true, uint64_t trace_id = 0) const = 0;
+                                       bool wait_and_verify = true, uint64_t trace_id = 0) const = 0;
 
     /// @brief Clean the replace member task.
     /// @param group_id The ID of the replica group.
@@ -83,7 +82,7 @@ public:
     /// @param trace_id Optional trace ID for tracking (default: 0).
     /// @return A future result indicating success or error.
     virtual async_status clean_replace_member_task(group_id_t group_id, const std::string& task_id,
-                                                        uint32_t commit_quorum, uint64_t trace_id = 0) const = 0;
+                                                   uint32_t commit_quorum, uint64_t trace_id = 0) const = 0;
 
     /// @brief Lists all replace member tasks.
     /// @param trace_id Optional trace ID for tracking (default: 0).

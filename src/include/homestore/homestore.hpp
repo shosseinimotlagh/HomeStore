@@ -68,7 +68,7 @@ ENUM(hs_vdev_type_t, uint32_t, DATA_VDEV = 1, INDEX_VDEV = 2, META_VDEV = 3, LOG
 struct hs_vdev_context {
     enum hs_vdev_type_t type;
 
-    sisl::blob to_blob() { return sisl::blob{uintptr_cast(this), sizeof(*this)}; }
+    sisl::blob to_blob() { return sisl::blob{reinterpret_cast< uint8_t* >(this), sizeof(*this)}; }
 };
 #pragma pack()
 
@@ -151,9 +151,9 @@ public:
     home_store& with_data_service(cshared< ChunkSelector >& custom_chunk_selector = nullptr);
     home_store& with_log_service();
     home_store& with_index_service(std::unique_ptr< IndexServiceCallbacks > cbs,
-                                  cshared< ChunkSelector >& custom_chunk_selector = nullptr);
+                                   cshared< ChunkSelector >& custom_chunk_selector = nullptr);
     home_store& with_repl_data_service(cshared< repl_application >& repl_app,
-                                      cshared< ChunkSelector >& custom_chunk_selector = nullptr);
+                                       cshared< ChunkSelector >& custom_chunk_selector = nullptr);
     home_store& with_fault_containment(std::unique_ptr< FaultContainmentCallback > cb);
 
     bool start(const hs_input_params& input, hs_before_services_starting_cb_t svcs_starting_cb = nullptr);

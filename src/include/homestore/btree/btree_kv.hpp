@@ -269,7 +269,7 @@ public:
     sisl::blob serialize() const override {
         sisl::blob b;
         b.set_size(sizeof(bnode_link_info));
-        b.set_bytes(r_cast< const uint8_t* >(&info));
+        b.set_bytes(reinterpret_cast< const uint8_t* >(&info));
         return b;
     }
     uint32_t serialized_size() const override { return sizeof(bnode_link_info); }
@@ -278,7 +278,7 @@ public:
 
     void deserialize(const sisl::blob& b, bool copy) override {
         DEBUG_ASSERT_EQ(b.size(), sizeof(bnode_link_info), "BtreeLinkInfo deserialize received invalid blob");
-        auto other = r_cast< bnode_link_info const* >(b.cbytes());
+        auto other = reinterpret_cast< bnode_link_info const* >(b.cbytes());
         set_bnode_id(other->m_bnodeid);
         set_link_version(other->m_link_version);
     }

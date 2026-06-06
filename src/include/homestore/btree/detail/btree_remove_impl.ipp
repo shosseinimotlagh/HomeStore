@@ -274,15 +274,17 @@ btree_status_t Btree< K, V >::merge_nodes(const BtreeNodePtr& parent_node, const
 
     // string for detailed logging if assert is hit
     auto complete_info_str = [&]() {
-        std::string info_str = fmt::format("parent node {}, start_idx {}, end_idx {}\n",
-            parent_node->to_string(), start_idx, end_idx);
+        std::string info_str =
+            fmt::format("parent node {}, start_idx {}, end_idx {}\n", parent_node->to_string(), start_idx, end_idx);
 
         fmt::format_to(std::back_inserter(info_str),
-            "total_size {}, total_entries {}, total_entries_copied {}, balanced_size {}, available_size {}, num_nodes {}",
-            total_size, total_entries, total_entries_copied, balanced_size, available_size, num_nodes);
+                       "total_size {}, total_entries {}, total_entries_copied {}, balanced_size {}, available_size {}, "
+                       "num_nodes {}",
+                       total_size, total_entries, total_entries_copied, balanced_size, available_size, num_nodes);
 
-        fmt::format_to(std::back_inserter(info_str), "leftmost_src last_node_upto {}, src_cursor ith node {}, src_cursor nth_entry {}",
-            leftmost_src.last_node_upto, src_cursor.ith_node, src_cursor.nth_entry);
+        fmt::format_to(std::back_inserter(info_str),
+                       "leftmost_src last_node_upto {}, src_cursor ith node {}, src_cursor nth_entry {}",
+                       leftmost_src.last_node_upto, src_cursor.ith_node, src_cursor.nth_entry);
 
         for (auto i = 0u; i < old_nodes.size(); ++i) {
             fmt::format_to(std::back_inserter(info_str), "old child node {}, [{}]\n", i, old_nodes[i]->to_string());
@@ -353,7 +355,8 @@ btree_status_t Btree< K, V >::merge_nodes(const BtreeNodePtr& parent_node, const
             "MERGE disqualified for parent node {} leftmost_node {}! current size {} is more than balanced size {}",
             parent_node->to_string(), leftmost_node->to_string(), leftmost_node->occupied_size(), balanced_size);
         BT_NODE_DBG_ASSERT(false, leftmost_node,
-                           "Didn't expect current size is more than balanced size without rebalancing, info {}", complete_info_str());
+                           "Didn't expect current size is more than balanced size without rebalancing, info {}",
+                           complete_info_str());
         ret = btree_status_t::merge_not_required;
         goto out;
     }
@@ -365,9 +368,7 @@ btree_status_t Btree< K, V >::merge_nodes(const BtreeNodePtr& parent_node, const
     available_size = static_cast< int32_t >(balanced_size) - leftmost_node->occupied_size();
     total_size -= leftmost_node->occupied_size();
     total_entries -= leftmost_node->total_entries();
-    if (available_size > 0) {
-        total_size -= available_size;
-    }
+    if (available_size > 0) { total_size -= available_size; }
 
     if (leftmost_node->get_node_type() == btree_node_type::PREFIX) {
         auto cur_node = static_cast< FixedPrefixNode< K, V >* >(leftmost_node.get());
@@ -402,8 +403,8 @@ btree_status_t Btree< K, V >::merge_nodes(const BtreeNodePtr& parent_node, const
                 expected_holes = c_used_slot > init_holes ? 0 : (expected_holes - c_used_slot);
                 expected_tail = init_tail + (expected_holes > 0 ? 0 : (c_used_slot - init_holes));
                 BT_NODE_DBG_ASSERT_EQ(expected_tail >= init_tail, true, leftmost_node,
-                                      "Expected tail {} is not greater than initial tail {}, info {}",
-                                      expected_tail, init_tail, complete_info_str());
+                                      "Expected tail {} is not greater than initial tail {}, info {}", expected_tail,
+                                      init_tail, complete_info_str());
                 auto prefix_increased_size =
                     (expected_tail - init_tail) * FixedPrefixNode< K, V >::prefix_entry::size();
                 auto suffix_increased_size = cur_node->total_entries() * FixedPrefixNode< K, V >::suffix_entry::size();
@@ -414,7 +415,8 @@ btree_status_t Btree< K, V >::merge_nodes(const BtreeNodePtr& parent_node, const
             } else {
                 available_size -= old_nodes[i]->occupied_size();
             }
-            BT_NODE_DBG_ASSERT_EQ(available_size >= 0, true, leftmost_node, "negative available size, info {}", complete_info_str());
+            BT_NODE_DBG_ASSERT_EQ(available_size >= 0, true, leftmost_node, "negative available size, info {}",
+                                  complete_info_str());
             if (i >= old_nodes.size() - 1) {
                 src_cursor.ith_node = i + 1;
                 src_cursor.nth_entry = std::numeric_limits< uint32_t >::max();
@@ -444,8 +446,8 @@ btree_status_t Btree< K, V >::merge_nodes(const BtreeNodePtr& parent_node, const
             new_nodes.emplace_back(new_node);
         }
         if (!new_node) {
-            BT_NODE_DBG_ASSERT_EQ(total_entries, 0, parent_node, "No new node allocated but still have entries to copy, info {}",
-                complete_info_str());
+            BT_NODE_DBG_ASSERT_EQ(total_entries, 0, parent_node,
+                                  "No new node allocated but still have entries to copy, info {}", complete_info_str());
             break;
         }
 
@@ -474,7 +476,8 @@ btree_status_t Btree< K, V >::merge_nodes(const BtreeNodePtr& parent_node, const
         }
     }
 
-    BT_NODE_DBG_ASSERT_EQ(total_entries, 0, parent_node, "Did not copy all the entries from old to new nodes, info {}", complete_info_str());
+    BT_NODE_DBG_ASSERT_EQ(total_entries, 0, parent_node, "Did not copy all the entries from old to new nodes, info {}",
+                          complete_info_str());
 
     // There are degenerate case (especially if the first key/value is very big) that number of resultant nodes are
     // more than initial number of nodes before rebalance. In those cases, just give up the merging and hope for a
@@ -579,8 +582,8 @@ btree_status_t Btree< K, V >::merge_nodes(const BtreeNodePtr& parent_node, const
         for (const auto& node : new_nodes) {
             num_copied += node->total_entries();
         }
-        BT_NODE_DBG_ASSERT_EQ(num_copied, total_entries_copied, parent_node, "mismatch of total entries copied, info {}",
-                              complete_info_str());
+        BT_NODE_DBG_ASSERT_EQ(num_copied, total_entries_copied, parent_node,
+                              "mismatch of total entries copied, info {}", complete_info_str());
 
         // BT_DBG_ASSERT(!parent_node_step1.empty() && !parent_node_step2.empty() && !parent_node_step3.empty(),
         //               "Empty string");
@@ -602,9 +605,10 @@ btree_status_t Btree< K, V >::merge_nodes(const BtreeNodePtr& parent_node, const
                                       "mismatch of link version of old nodes in unsuccessful merge");
             }
             parent_node->get_nth_value(start_idx, &child_info, false /* copy */);
-            BT_NODE_DBG_ASSERT_EQ(child_info.link_version(), leftmost_node->link_version(), parent_node,
-                                  "parent_node, mismatch of link version of leftmost node in unsuccessful merge, info {}",
-                                  complete_info_str());
+            BT_NODE_DBG_ASSERT_EQ(
+                child_info.link_version(), leftmost_node->link_version(), parent_node,
+                "parent_node, mismatch of link version of leftmost node in unsuccessful merge, info {}",
+                complete_info_str());
         }
 
         if (leftmost_node->total_entries() && (start_idx < parent_node->total_entries())) {

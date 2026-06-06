@@ -49,10 +49,10 @@ void ResourceMgr::stop() {
 //
 void ResourceMgr::trigger_truncate() {
     if (m_is_stopped_.load()) {
-        // when we are here, it means home_store is shutting down and since this API is called in timer thread, the timer
-        // thread might already been triggered while RM is tring to cancel it;
-        // and since shutdown and timer thread happen parallel, by the time we are here, shutdown might already cleaned
-        // up all replication service instances. and it will throw heap-use-after-free;
+        // when we are here, it means home_store is shutting down and since this API is called in timer thread, the
+        // timer thread might already been triggered while RM is tring to cancel it; and since shutdown and timer thread
+        // happen parallel, by the time we are here, shutdown might already cleaned up all replication service
+        // instances. and it will throw heap-use-after-free;
         LOGINFO("Resource manager is stopped, so not triggering truncate");
         return;
     }
@@ -87,7 +87,8 @@ void ResourceMgr::start_timer() {
 
     m_res_audit_timer_hdl = iomanager.schedule_global_timer(
         res_mgr_timer_ms * 1000 * 1000, true /* recurring */, nullptr /* cookie */, iomgr::reactor_regex::all_worker,
-        [this](void*) {
+        [this](void*, uint64_t exp_count) {
+            if (exp_count > 1) { LOGINFO("resource audit timer expired {} times, running once", exp_count); }
             // all resource timely audit routine should arrive here;
             this->trigger_truncate();
         },

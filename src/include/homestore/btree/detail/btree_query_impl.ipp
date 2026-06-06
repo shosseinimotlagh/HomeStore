@@ -90,9 +90,9 @@ btree_status_t Btree< K, V >::do_traversal_query(const BtreeNodePtr& my_node, Bt
 
         uint32_t start_ind{0};
         uint32_t end_ind{0};
-        auto cur_count = to_variant_node(my_node)->multi_get(qreq.working_range(),
-                                                             qreq.batch_size() - uint32_cast(out_values.size()),
-                                                             start_ind, end_ind, &out_values, qreq.filter());
+        auto cur_count = to_variant_node(my_node)->multi_get(
+            qreq.working_range(), qreq.batch_size() - static_cast< uint32_t >(out_values.size()), start_ind, end_ind,
+            &out_values, qreq.filter());
         if (qreq.route_tracing) {
             append_route_trace(qreq, my_node, btree_event_t::READ, start_ind, start_ind + cur_count);
         }

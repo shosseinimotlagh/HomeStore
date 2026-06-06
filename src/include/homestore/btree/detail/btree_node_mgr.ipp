@@ -146,8 +146,8 @@ btree_status_t Btree< K, V >::upgrade_node_locks(const BtreeNodePtr& parent_node
 
     // If the node things have been changed between unlock and lock example, it has been made invalid (probably by merge
     // nodes) ask caller to start over again.
-    if(parent_prev_gen != parent_node->node_gen() || child_prev_gen != child_node->node_gen()) {
-            COUNTER_INCREMENT(m_metrics, btree_num_pc_gen_mismatch, 1);
+    if (parent_prev_gen != parent_node->node_gen() || child_prev_gen != child_node->node_gen()) {
+        COUNTER_INCREMENT(m_metrics, btree_num_pc_gen_mismatch, 1);
     }
     if (parent_node->is_node_deleted() || (parent_prev_gen != parent_node->node_gen()) ||
         child_node->is_node_deleted() || (child_prev_gen != child_node->node_gen())) {
@@ -198,9 +198,7 @@ btree_status_t Btree< K, V >::upgrade_node_lock(const BtreeNodePtr& node, lockty
 
     auto ret = lock_node(node, locktype_t::WRITE, context);
     if (ret != btree_status_t::success) { return ret; }
-    if(prev_gen != node->node_gen()) {
-        COUNTER_INCREMENT(m_metrics, btree_num_gen_mismatch, 1);
-    }
+    if (prev_gen != node->node_gen()) { COUNTER_INCREMENT(m_metrics, btree_num_gen_mismatch, 1); }
     if (node->is_node_deleted() || (prev_gen != node->node_gen())) {
         unlock_node(node, locktype_t::WRITE);
         return btree_status_t::retry;
@@ -307,7 +305,7 @@ void Btree< K, V >::free_node(const BtreeNodePtr& node, locktype_t cur_lock, voi
         node->set_node_deleted();
         unlock_node(node, cur_lock);
     }
-    node->is_leaf()?--m_total_leaf_nodes:--m_total_interior_nodes;
+    node->is_leaf() ? --m_total_leaf_nodes : --m_total_interior_nodes;
 
     free_node_impl(node, context);
     // intrusive_ptr_release(node.get());
@@ -335,7 +333,7 @@ void Btree< K, V >::_start_of_lock(const BtreeNodePtr& node, locktype_t ltype, c
     info.line = line;
 #endif
 
-    info.start_time = Clock::now();
+    info.start_time = sisl::Clock::now();
     info.node = node.get();
     if (ltype == locktype_t::WRITE) {
         bt_thread_vars()->wr_locked_nodes.push_back(info);
@@ -360,7 +358,7 @@ bool Btree< K, V >::remove_locked_node(const BtreeNodePtr& node, locktype_t ltyp
         if (info.node == node.get()) {
             *out_info = info;
             pnode_infos->pop_back();
-            LOGTRACEMOD(btree, "REMOVING node {} from {} locked nodes list, its size = {}",info.node->node_id(),
+            LOGTRACEMOD(btree, "REMOVING node {} from {} locked nodes list, its size = {}", info.node->node_id(),
                         (ltype == locktype_t::WRITE) ? "write" : "read", pnode_infos->size());
             return true;
         } else if (pnode_infos->size() > 1) {

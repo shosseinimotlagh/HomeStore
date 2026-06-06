@@ -48,7 +48,7 @@ private:
         node_buf_ptr_vec.emplace_back(ptr);
 
         auto new_node = this->init_node(ptr.get(), bnodeid_t{0}, true, is_leaf);
-        new_node->set_node_id(bnodeid_t{r_cast< std::uintptr_t >(new_node)});
+        new_node->set_node_id(bnodeid_t{reinterpret_cast< std::uintptr_t >(new_node)});
         new_node->m_refcount.increment();
         return BtreeNodePtr{new_node};
     }
@@ -56,7 +56,7 @@ private:
     btree_status_t write_node_impl(const BtreeNodePtr& node, void* context) { return btree_status_t::success; }
 
     btree_status_t read_node_impl(bnodeid_t id, BtreeNodePtr& node) const override {
-        node.reset(r_cast< BtreeNode* >(id));
+        node.reset(reinterpret_cast< BtreeNode* >(id));
         return btree_status_t::success;
     }
 

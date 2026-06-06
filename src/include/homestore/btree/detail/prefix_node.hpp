@@ -78,13 +78,13 @@ private:
 
         void write_kv(BtreeKey const& key, BtreeValue const& val) {
             if constexpr (std::is_base_of_v< BtreeIntervalKey, K > && std::is_base_of_v< BtreeIntervalValue, V >) {
-                sisl::blob const kblob = s_cast< K const& >(key).serialize_prefix();
-                sisl::blob const vblob = s_cast< V const& >(val).serialize_prefix();
+                sisl::blob const kblob = static_cast< K const& >(key).serialize_prefix();
+                sisl::blob const vblob = static_cast< V const& >(val).serialize_prefix();
 
                 DEBUG_ASSERT_EQ(kblob.size(), key_size(), "Prefix key size mismatch with serialized prefix size");
                 DEBUG_ASSERT_EQ(vblob.size(), value_size(), "Prefix value size mismatch with serialized prefix size");
 
-                uint8_t* cur_ptr = uintptr_cast(this) + sizeof(prefix_entry);
+                uint8_t* cur_ptr = reinterpret_cast< uint8_t* >(this) + sizeof(prefix_entry);
                 std::memcpy(cur_ptr, kblob.cbytes(), kblob.size());
                 cur_ptr += kblob.size();
                 std::memcpy(cur_ptr, vblob.cbytes(), vblob.size());
@@ -93,11 +93,11 @@ private:
 
         int compare(BtreeKey const& key, BtreeValue const& val) const {
             if constexpr (std::is_base_of_v< BtreeIntervalKey, K > && std::is_base_of_v< BtreeIntervalValue, V >) {
-                sisl::blob const kblob = s_cast< K const& >(key).serialize_prefix();
-                sisl::blob const vblob = s_cast< V const& >(val).serialize_prefix();
+                sisl::blob const kblob = static_cast< K const& >(key).serialize_prefix();
+                sisl::blob const vblob = static_cast< V const& >(val).serialize_prefix();
                 DEBUG_ASSERT_EQ(kblob.size(), key_size(), "Prefix key size mismatch with serialized prefix size");
                 DEBUG_ASSERT_EQ(vblob.size(), value_size(), "Prefix value size mismatch with serialized prefix size");
-                uint8_t const* cur_ptr = r_cast< uint8_t const* >(this) + sizeof(prefix_entry);
+                uint8_t const* cur_ptr = reinterpret_cast< uint8_t const* >(this) + sizeof(prefix_entry);
                 int cmp = std::memcmp(cur_ptr, kblob.cbytes(), kblob.size());
                 if (cmp) { return cmp; }
                 cmp = std::memcmp(cur_ptr + kblob.size(), vblob.cbytes(), vblob.size());
@@ -107,7 +107,7 @@ private:
         }
 
         sisl::blob key_buf() const {
-            return sisl::blob{r_cast< uint8_t const* >(this) + sizeof(prefix_entry), key_size()};
+            return sisl::blob{reinterpret_cast< uint8_t const* >(this) + sizeof(prefix_entry), key_size()};
         }
         sisl::blob val_buf() const { return sisl::blob{key_buf().cbytes() + key_buf().size(), value_size()}; }
     };
@@ -139,10 +139,10 @@ private:
             sisl::blob kblob;
             sisl::blob vblob;
 
-            uint8_t* cur_ptr = uintptr_cast(this) + sizeof(suffix_entry);
+            uint8_t* cur_ptr = reinterpret_cast< uint8_t* >(this) + sizeof(suffix_entry);
             if constexpr (std::is_base_of_v< BtreeIntervalKey, K > && std::is_base_of_v< BtreeIntervalValue, V >) {
-                kblob = s_cast< K const& >(key).serialize_suffix();
-                vblob = s_cast< V const& >(val).serialize_suffix();
+                kblob = static_cast< K const& >(key).serialize_suffix();
+                vblob = static_cast< V const& >(val).serialize_suffix();
             } else {
                 kblob = key.serialize();
                 vblob = val.serialize();
@@ -156,7 +156,7 @@ private:
         }
 
         sisl::blob key_buf() const {
-            return sisl::blob{const_cast< uint8_t* >(r_cast< uint8_t const* >(this) + sizeof(suffix_entry)),
+            return sisl::blob{const_cast< uint8_t* >(reinterpret_cast< uint8_t const* >(this) + sizeof(suffix_entry)),
                               key_size()};
         }
         sisl::blob val_buf() const { return sisl::blob{key_buf().bytes() + key_buf().size(), value_size()}; }
@@ -254,8 +254,8 @@ public:
                     if (prefix_slot == std::numeric_limits< uint16_t >::max()) {
                         prefix_slot = add_prefix(cur_key, val);
                     }
-                    V new_val{s_cast< V const& >(val)};
-                    new_val.shift(s_cast< K const& >(cur_key).distance(first_input_key), app_ctx);
+                    V new_val{static_cast< V const& >(val)};
+                    new_val.shift(static_cast< K const& >(cur_key).distance(first_input_key), app_ctx);
                     if (get_prefix_entry_c(prefix_slot)->compare(cur_key, new_val)) {
                         LOGTRACEMOD(btree, "Adding new prefix entry for key={} val={}", cur_key.to_string(),
                                     new_val.to_string());
@@ -318,7 +318,8 @@ public:
                 if (!filter_cb || filter_cb(cur_key, get_nth_value(idx, false))) {
                     suffix_entry* sentry = get_suffix_entry(idx);
                     deref_remove_prefix(sentry->prefix_slot);
-                    std::memmove(uintptr_cast(sentry), uintptr_cast(get_suffix_entry(idx + 1)),
+                    std::memmove(reinterpret_cast< uint8_t* >(sentry),
+                                 reinterpret_cast< uint8_t* >(get_suffix_entry(idx + 1)),
                                  (this->total_entries() - idx - 1) * suffix_entry::size());
                     this->dec_entries();
                     ++num_removed;
@@ -343,20 +344,20 @@ public:
         prefix_entry const* pentry = get_prefix_entry_c(sentry->prefix_slot);
         DEBUG_ASSERT(prefix_bitset_.is_bit_set(sentry->prefix_slot),
                      "Prefix slot number is in suffix entry, but corresponding bit is not set");
-        s_cast< BtreeIntervalKey& >(out_key).deserialize(pentry->key_buf(), sentry->key_buf(), true);
+        static_cast< BtreeIntervalKey& >(out_key).deserialize(pentry->key_buf(), sentry->key_buf(), true);
     }
 
     void get_nth_value(uint32_t idx, BtreeValue* out_val, bool) const override {
         if (idx == this->total_entries()) {
             DEBUG_ASSERT_EQ(this->is_leaf(), false, "get_nth_value out-of-bound");
             DEBUG_ASSERT_EQ(this->has_valid_edge(), true, "get_nth_value out-of-bound");
-            *(r_cast< BtreeLinkInfo* >(out_val)) = this->get_edge_value();
+            *(reinterpret_cast< BtreeLinkInfo* >(out_val)) = this->get_edge_value();
         } else {
             suffix_entry const* sentry = get_suffix_entry_c(idx);
             prefix_entry const* pentry = get_prefix_entry_c(sentry->prefix_slot);
             DEBUG_ASSERT(prefix_bitset_.is_bit_set(sentry->prefix_slot),
                          "Prefix slot number is in suffix entry, but corresponding bit is not set");
-            s_cast< BtreeIntervalValue* >(out_val)->deserialize(pentry->val_buf(), sentry->val_buf(), true);
+            static_cast< BtreeIntervalValue* >(out_val)->deserialize(pentry->val_buf(), sentry->val_buf(), true);
         }
     }
 
@@ -403,7 +404,7 @@ public:
     }
 
     uint32_t move_out_to_right_internal(const BtreeConfig& cfg, BtreeNode& on, bool by_size, uint32_t limit) {
-        FixedPrefixNode& dst_node = s_cast< FixedPrefixNode& >(on);
+        FixedPrefixNode& dst_node = static_cast< FixedPrefixNode& >(on);
 
         uint32_t dst_node_size = dst_node.occupied_size();
         uint32_t num_moved{0};
@@ -435,7 +436,8 @@ public:
                 uint16_t dst_prefix_slot = dst_node.alloc_prefix();
                 prefix_entry* dst_pentry = dst_node.get_prefix_entry(dst_prefix_slot);
 
-                std::memcpy(voidptr_cast(dst_pentry), c_voidptr_cast(get_prefix_entry_c(this_prefix_slot)),
+                std::memcpy(reinterpret_cast< void* >(dst_pentry),
+                            reinterpret_cast< void const* >(get_prefix_entry_c(this_prefix_slot)),
                             prefix_entry::size());
 
                 dst_pentry->ref_count = 1;
@@ -457,8 +459,8 @@ public:
 
         // Step 2: Move the suffixes and adjust the num_entries in source and destination. All tomove suffixes have
         // adjusted to their new prefix slot already as part of Step 1
-        std::memmove(uintptr_cast(dst_node.get_suffix_entry(0)), uintptr_cast(get_suffix_entry(idx + 1)),
-                     num_moved * suffix_entry::size());
+        std::memmove(reinterpret_cast< uint8_t* >(dst_node.get_suffix_entry(0)),
+                     reinterpret_cast< uint8_t* >(get_suffix_entry(idx + 1)), num_moved * suffix_entry::size());
         this->sub_entries(num_moved);
         dst_node.add_entries(num_moved);
 
@@ -544,7 +546,7 @@ public:
         } else {
             suffix_entry* sentry = get_suffix_entry(idx);
             deref_remove_prefix(sentry->prefix_slot);
-            std::memmove(uintptr_cast(sentry), uintptr_cast(get_suffix_entry(idx + 1)),
+            std::memmove(reinterpret_cast< uint8_t* >(sentry), reinterpret_cast< uint8_t* >(get_suffix_entry(idx + 1)),
                          (this->total_entries() - idx - 1) * suffix_entry::size());
             this->dec_entries();
         }
@@ -604,7 +606,7 @@ public:
 
     uint32_t copy_internal(BtreeConfig const& cfg, BtreeNode const& o, uint32_t start_idx, bool by_size,
                            uint32_t limit) {
-        FixedPrefixNode const& src_node = s_cast< FixedPrefixNode const& >(o);
+        FixedPrefixNode const& src_node = static_cast< FixedPrefixNode const& >(o);
 #ifdef _PRERELEASE
         if (by_size) {
             const uint32_t max_keys = this->max_keys_in_node();
@@ -622,7 +624,7 @@ public:
         // suffixes. At the end of this step, all prefixes that needs to be coped are copied with correct bitset
         // settings on both source and destination
         std::map< uint16_t, uint16_t > src_to_my_prefix;
-        uint16_t src_idx{s_cast< uint16_t >(start_idx)};
+        uint16_t src_idx{static_cast< uint16_t >(start_idx)};
         uint16_t my_prefix_slot{0};
         uint16_t my_idx = this->total_entries();
         uint32_t num_copied{0};
@@ -643,7 +645,8 @@ public:
 
                 my_prefix_slot = alloc_prefix();
                 prefix_entry* my_pentry = get_prefix_entry(my_prefix_slot);
-                std::memcpy(voidptr_cast(my_pentry), c_voidptr_cast(src_node.get_prefix_entry_c(src_prefix_slot)),
+                std::memcpy(reinterpret_cast< void* >(my_pentry),
+                            reinterpret_cast< void const* >(src_node.get_prefix_entry_c(src_prefix_slot)),
                             prefix_entry::size());
                 my_pentry->ref_count = 1;
 
@@ -658,7 +661,8 @@ public:
             }
 
             suffix_entry* my_sentry = get_suffix_entry(my_idx++);
-            std::memcpy(voidptr_cast(my_sentry), c_voidptr_cast(src_sentry), suffix_entry::size());
+            std::memcpy(reinterpret_cast< void* >(my_sentry), reinterpret_cast< void const* >(src_sentry),
+                        suffix_entry::size());
             my_sentry->prefix_slot = my_prefix_slot;
 
             ++src_idx;
@@ -759,8 +763,8 @@ private:
     }
 
     uint32_t available_size_without_compaction() const {
-        uint8_t const* suffix = r_cast< uint8_t const* >(get_suffix_entry_c(this->total_entries()));
-        uint8_t const* prefix = r_cast< uint8_t const* >(get_prefix_entry_c(cprefix_header()->tail_slot));
+        uint8_t const* suffix = reinterpret_cast< uint8_t const* >(get_suffix_entry_c(this->total_entries()));
+        uint8_t const* prefix = reinterpret_cast< uint8_t const* >(get_prefix_entry_c(cprefix_header()->tail_slot));
 
         if (suffix <= prefix + prefix_entry::size()) {
             return prefix - suffix + prefix_entry::size();
@@ -812,7 +816,7 @@ private:
             DEBUG_ASSERT_LT(to_slot, prefix_header()->used_slots,
                             "Couldn't find enough slots inside compactable area, not expected");
 
-            std::memcpy(uintptr_cast(get_prefix_entry(to_slot)), (void*)get_prefix_entry(from_slot),
+            std::memcpy(reinterpret_cast< uint8_t* >(get_prefix_entry(to_slot)), (void*)get_prefix_entry(from_slot),
                         prefix_entry::size());
             prefix_bitset_.reset_bit(from_slot);
             prefix_bitset_.set_bit(to_slot);
@@ -857,9 +861,9 @@ private:
                               sisl::CompactBitSet::size_multiples());
     }
 
-    prefix_node_header* prefix_header() { return r_cast< prefix_node_header* >(this->node_data_area()); }
+    prefix_node_header* prefix_header() { return reinterpret_cast< prefix_node_header* >(this->node_data_area()); }
     prefix_node_header const* cprefix_header() const {
-        return r_cast< prefix_node_header const* >(this->node_data_area_const());
+        return reinterpret_cast< prefix_node_header const* >(this->node_data_area_const());
     }
 
     uint8_t* bitset_area() { return this->node_data_area() + sizeof(prefix_node_header); }
@@ -869,22 +873,22 @@ private:
     uint8_t const* csuffix_kv_area() const { return cbitset_area() + (prefix_bitset_.size() / 8); }
 
     prefix_entry* get_prefix_entry(uint16_t slot_num) {
-        return r_cast< prefix_entry* >(
+        return reinterpret_cast< prefix_entry* >(
             this->node_data_area() +
             (this->node_data_size() - (static_cast< uint16_t >(slot_num + 1) * prefix_entry::size())));
     }
 
     prefix_entry const* get_prefix_entry_c(uint16_t slot_num) const {
-        return r_cast< prefix_entry const* >(
+        return reinterpret_cast< prefix_entry const* >(
             this->node_data_area_const() +
             (this->node_data_size() - (static_cast< uint16_t >(slot_num + 1) * prefix_entry::size())));
     }
 
     suffix_entry* get_suffix_entry(uint16_t idx) {
-        return r_cast< suffix_entry* >(suffix_kv_area() + (idx * suffix_entry::size()));
+        return reinterpret_cast< suffix_entry* >(suffix_kv_area() + (idx * suffix_entry::size()));
     }
     suffix_entry const* get_suffix_entry_c(uint16_t idx) const {
-        return r_cast< suffix_entry const* >(csuffix_kv_area() + (idx * suffix_entry::size()));
+        return reinterpret_cast< suffix_entry const* >(csuffix_kv_area() + (idx * suffix_entry::size()));
     }
 
     static constexpr uint32_t get_key_size() { return prefix_entry::key_size() + suffix_entry::key_size(); }

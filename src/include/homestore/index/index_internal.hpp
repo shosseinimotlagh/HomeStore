@@ -19,6 +19,7 @@
 #include <memory>
 #include <boost/intrusive_ptr.hpp>
 #include <sisl/utility/atomic_counter.hpp>
+#include <sisl/async/task.hpp>
 #include <homestore/blk.hpp>
 #include <homestore/homestore_decl.hpp>
 #include <homestore/btree/detail/btree_internal.hpp>
@@ -73,9 +74,12 @@ struct index_table_sb {
             chunk_id_ptr++;
         }
     }
-    chunk_num_t* get_chunk_ids_mutable() { return r_cast< chunk_num_t* >(uintptr_cast(this) + sizeof(index_table_sb)); }
+    chunk_num_t* get_chunk_ids_mutable() {
+        return reinterpret_cast< chunk_num_t* >(reinterpret_cast< uint8_t* >(this) + sizeof(index_table_sb));
+    }
     const chunk_num_t* get_chunk_ids() const {
-        return r_cast< const chunk_num_t* >(reinterpret_cast< const uint8_t* >(this) + sizeof(index_table_sb));
+        return reinterpret_cast< const chunk_num_t* >(reinterpret_cast< const uint8_t* >(this) +
+                                                      sizeof(index_table_sb));
     }
 };
 #pragma pack()
@@ -92,7 +96,9 @@ public:
     virtual void recovery_completed() = 0;
     virtual uint32_t ordinal() const = 0;
     virtual uint64_t used_size() const = 0;
-    virtual btree_status_t destroy() = 0;
+    // Async: destroy co_awaits a forced CP flush before removing the superblk. It must not be sync-waited from
+    // an iomgr worker reactor (the flush needs those reactors) -- co_await it, or sync_get() it off-reactor.
+    virtual sisl::async::task< btree_status_t > destroy() = 0;
     virtual void stop() = 0;
     virtual void repair_node(IndexBufferPtr const& buf) = 0;
     virtual void repair_root_node(IndexBufferPtr const& buf) = 0;
@@ -115,7 +121,7 @@ enum class index_buf_state_t : uint8_t {
 // m_up_buffer and each buffer is flushed only its wait_for_leaders reaches 0
 // which means all its dependent buffers are flushed.
 struct IndexBuffer : public sisl::ObjLifeCounter< IndexBuffer > {
-    blk_id m_blkid;                                                      // blk_id where this needs to be persisted
+    blk_id m_blkid;                                                     // blk_id where this needs to be persisted
     cp_id_t m_dirtied_cp_id{-1};                                        // Last CP that dirtied this index buffer
     cp_id_t m_created_cp_id{-1};                                        // CP id when this buffer is created.
     std::atomic< index_buf_state_t > m_state{index_buf_state_t::CLEAN}; // Is buffer yet to persist?

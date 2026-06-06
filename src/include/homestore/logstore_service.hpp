@@ -136,8 +136,9 @@ public:
      * @return std::shared_ptr< home_log_store >
      */
     sisl::async::task< shared< home_log_store > > open_log_store(logdev_id_t logdev_id, logstore_id_t store_id,
-                                                               bool append_mode, log_found_cb_t log_found_cb = nullptr,
-                                                               log_replay_done_cb_t log_replay_done_cb = nullptr);
+                                                                 bool append_mode,
+                                                                 log_found_cb_t log_found_cb = nullptr,
+                                                                 log_replay_done_cb_t log_replay_done_cb = nullptr);
 
     /**
      * @brief Close the log store instance and free-up the resources

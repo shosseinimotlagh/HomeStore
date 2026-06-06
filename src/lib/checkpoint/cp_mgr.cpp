@@ -48,8 +48,7 @@ CPManager::CPManager() :
         m_sb{"CPSuperBlock"} {
     meta_service().register_handler(
         "CPSuperBlock",
-        [this](meta_blk* mblk, sisl::byte_view buf, size_t size) { on_meta_blk_found(std::move(buf), mblk); },
-        nullptr);
+        [this](meta_blk* mblk, sisl::byte_view buf, size_t size) { on_meta_blk_found(std::move(buf), mblk); }, nullptr);
 
     resource_mgr().register_dirty_buf_exceed_cb([this]([[maybe_unused]] int64_t dirty_buf_count, bool critical) {
         LOGINFO("Dirty buffer exceeded count {} critical {}", dirty_buf_count, critical);
@@ -111,8 +110,11 @@ void CPManager::start_timer() {
     auto usecs = cp_timer_us();
     LOGINFO("cp timer is set to {} usec", usecs);
     iomanager.run_on_wait(m_timer_reactor, [this, usecs]() {
-        m_cp_timer_hdl = iomanager.schedule_thread_timer(usecs * 1000, true /* recurring */, nullptr /* cookie */,
-                                                         [this](void*) { detail::detach(trigger_cp_flush(false)); });
+        m_cp_timer_hdl = iomanager.schedule_thread_timer(
+            usecs * 1000, true /* recurring */, nullptr /* cookie */, [this](void*, uint64_t exp_count) {
+                if (exp_count > 1) { LOGINFO("cp timer expired {} times, running once", exp_count); }
+                detail::detach(trigger_cp_flush(false));
+            });
     });
 }
 
@@ -434,7 +436,12 @@ CPWatchdog::CPWatchdog(CPManager* cp_mgr) :
     LOGINFO("CP watchdog timer setting to : {} seconds", m_timer_sec);
     m_timer_hdl =
         iomanager.schedule_global_timer(m_timer_sec * 1000 * 1000 * 1000, true, nullptr, iomgr::reactor_regex::all_user,
-                                        [this](void* cookie) { cp_watchdog_timer(); });
+                                        [this](void*, uint64_t exp_count) {
+                                            if (exp_count > 1) {
+                                                LOGINFO("cp watchdog timer expired {} times, running once", exp_count);
+                                            }
+                                            cp_watchdog_timer();
+                                        });
 }
 
 void CPWatchdog::reset_cp() {
