@@ -2,7 +2,7 @@
 #include <sisl/grpc/generic_service.hpp>
 #include <sisl/grpc/rpc_call.hpp>
 #include <homestore/blkdata_service.hpp>
-#include <homestore/replication/repl_dev.h>
+#include <homestore/replication/repl_dev.hpp>
 #include <common/homestore_config.hpp>
 #include "replication/repl_dev/common.h"
 #include <libnuraft/nuraft.hxx>
@@ -12,7 +12,7 @@ namespace homestore {
 
 ReplServiceError repl_req_ctx::init(repl_key rkey, journal_type_t op_code, bool is_proposer,
                                     sisl::blob const& user_header, sisl::blob const& key, uint32_t data_size,
-                                    cshared< ReplDevListener >& listener) {
+                                    cshared< repl_dev_listener >& listener) {
     m_rkey = std::move(rkey);
 #ifndef NDEBUG
     if (data_size > 0) {
@@ -132,11 +132,17 @@ void repl_req_ctx::change_raft_journal_buf(raft_buf_ptr_t new_buf, bool adjust_h
     m_is_jentry_localize_pending = false;
 }
 
-ReplServiceError repl_req_ctx::alloc_local_blks(cshared< ReplDevListener >& listener, uint32_t data_size) {
+ReplServiceError repl_req_ctx::alloc_local_blks(cshared< repl_dev_listener >& listener, uint32_t data_size) {
     DEBUG_ASSERT(has_linked_data(), "Trying to allocate a block for non-inlined block");
 
     auto const hints_result = listener->get_blk_alloc_hints(m_header, data_size, repl_req_ptr_t(this));
-    if (!hints_result) { return hints_result.error(); }
+    if (!hints_result) {
+        // get_blk_alloc_hints reports failure through the unified error_condition; recover the ReplServiceError
+        // code (this layer still threads ReplServiceError internally).
+        auto const& ec = hints_result.error();
+        return (ec.category() == repl_error_category_inst()) ? static_cast< ReplServiceError >(ec.value())
+                                                             : ReplServiceError::FAILED;
+    }
 
     if (hints_result.value().committed_blk_id.has_value()) {
         // if the committed_blk_id is already present, use it and skip allocation and commitment
@@ -152,16 +158,15 @@ ReplServiceError repl_req_ctx::alloc_local_blks(cshared< ReplDevListener >& list
         return ReplServiceError::OK;
     }
 
-    std::vector< BlkId > blkids;
-    auto status = data_service().alloc_blks(sisl::round_up(uint32_cast(data_size), data_service().get_blk_size()),
-                                            hints_result.value(), blkids);
-    if (status != BlkAllocStatus::SUCCESS) {
-        LOGWARNMOD(replication, "[traceID={}] block allocation failure, repl_key=[{}], status=[{}]", rkey().traceID,
-                   rkey(), status);
+    auto blk_result = data_service().alloc_blk_list(
+        sisl::round_up(uint32_cast(data_size), data_service().get_blk_size()), hints_result.value());
+    if (!blk_result) {
+        LOGWARNMOD(replication, "[traceID={}] block allocation failure, repl_key=[{}], error=[{}]", rkey().traceID,
+                   rkey(), blk_result.error());
         return ReplServiceError::NO_SPACE_LEFT;
     }
 
-    for (auto& blkid : blkids) {
+    for (auto& blkid : blk_result.value()) {
         m_local_blkids.emplace_back(blkid);
     }
     add_state(repl_req_state_t::BLK_ALLOCATED);

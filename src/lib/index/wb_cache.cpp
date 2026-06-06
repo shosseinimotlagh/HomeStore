@@ -47,7 +47,7 @@ IndexWBCache::IndexWBCache(const std::shared_ptr< VirtualDev >& vdev, std::pair<
                            const std::shared_ptr< sisl::Evictor >& evictor, uint32_t node_size) :
         m_vdev{vdev},
         m_cache{evictor, HS_DYNAMIC_CONFIG(generic.cache_hashmap_nbuckets), node_size,
-                [](const BtreeNodePtr& node) -> BlkId {
+                [](const BtreeNodePtr& node) -> blk_id {
                     return static_cast< IndexBtreeNode* >(node.get())->m_idx_buf->m_blkid;
                 },
                 [](const sisl::CacheRecord& rec) -> bool {
@@ -98,7 +98,7 @@ BtreeNodePtr IndexWBCache::alloc_buf(uint32_t ordinal, node_initializer_t&& node
     auto cp_ctx = r_cast< IndexCPContext* >(cpg.context(cp_consumer_t::INDEX_SVC));
 
     // Alloc a block of data from underlying vdev
-    MultiBlkId blkid;
+    multi_blk_id blkid;
     // Ordinal used as a hint in the case of custom chunk selector exists
     blk_alloc_hints hints;
     hints.application_hint = ordinal;
@@ -144,7 +144,7 @@ void IndexWBCache::write_buf(const BtreeNodePtr& node, const IndexBufferPtr& buf
 }
 
 void IndexWBCache::read_buf(bnodeid_t id, BtreeNodePtr& node, node_initializer_t&& node_initializer) {
-    auto const blkid = BlkId{id};
+    auto const blkid = blk_id{id};
 
 retry:
     // Check if the blkid is already in cache, if notL load and put it into the cache
@@ -467,7 +467,7 @@ void IndexWBCache::load_buf(IndexBufferPtr const& buf) {
     }
 }
 
-IndexWBCache::DagMap IndexWBCache::generate_dag_buffers(std::map< BlkId, IndexBufferPtr >& bufmap) {
+IndexWBCache::DagMap IndexWBCache::generate_dag_buffers(std::map< blk_id, IndexBufferPtr >& bufmap) {
     std::vector< IndexBufferPtr > bufs;
     std::ranges::transform(bufmap, std::back_inserter(bufs), [](const auto& pair) { return pair.second; });
 
@@ -565,13 +565,13 @@ void IndexWBCache::recover(sisl::byte_view sb) {
     // relationship (up/down buf links) as it was by the cp that was flushing the buffers prior to unclean shutdown.
     auto cpg = cp_mgr().cp_guard();
     auto icp_ctx = r_cast< IndexCPContext* >(cpg.context(cp_consumer_t::INDEX_SVC));
-    std::map< BlkId, IndexBufferPtr > bufs = icp_ctx->recover(std::move(sb));
+    std::map< blk_id, IndexBufferPtr > bufs = icp_ctx->recover(std::move(sb));
 
     LOGINFOMOD(wbcache, "Detected unclean shutdown, prior cp={} had to flush {} nodes, recovering... ", icp_ctx->id(),
                bufs.size());
 
 #ifdef _PRERELEASE
-    auto detailed_log = [this](std::map< BlkId, IndexBufferPtr > const& bufs,
+    auto detailed_log = [this](std::map< blk_id, IndexBufferPtr > const& bufs,
                                std::vector< IndexBufferPtr > const& pending_bufs) {
         std::string log = fmt::format("\trecovered bufs (#of bufs = {})\n", bufs.size());
         for (auto const& [_, buf] : bufs) {

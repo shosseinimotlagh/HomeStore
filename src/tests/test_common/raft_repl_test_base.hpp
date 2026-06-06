@@ -28,12 +28,12 @@
 
 #include <gtest/gtest.h>
 #include <iomgr/iomgr_flip.hpp>
-#include <homestore/blk.h>
+#include <homestore/blk.hpp>
 #include <homestore/homestore.hpp>
 #include <homestore/homestore_decl.hpp>
 #include <homestore/blkdata_service.hpp>
 #include <homestore/replication_service.hpp>
-#include <homestore/replication/repl_dev.h>
+#include <homestore/replication/repl_dev.hpp>
 #include "common/homestore_config.hpp"
 #include "common/homestore_assert.hpp"
 #include "common/homestore_utils.hpp"
@@ -76,7 +76,7 @@ static std::unique_ptr< test_common::HSReplTestHelper > g_helper;
 static std::random_device g_rd{};
 static std::default_random_engine g_re{g_rd()};
 
-class TestReplicatedDB : public homestore::ReplDevListener {
+class TestReplicatedDB : public homestore::repl_dev_listener {
 public:
     struct Key {
         uint64_t id_;
@@ -87,7 +87,7 @@ public:
         int64_t lsn_;
         uint64_t data_size_;
         uint64_t data_pattern_;
-        MultiBlkId blkid_;
+        multi_blk_id blkid_;
         uint64_t id_;
     };
 
@@ -147,7 +147,7 @@ public:
     virtual ~TestReplicatedDB() = default;
 
     void on_commit(int64_t lsn, sisl::blob const& header, sisl::blob const& key,
-                   std::vector< MultiBlkId > const& blkids, cintrusive< repl_req_ctx >& ctx) override {
+                   std::vector< multi_blk_id > const& blkids, cintrusive< repl_req_ctx >& ctx) override {
         ASSERT_EQ(header.size(), sizeof(test_req::journal_header));
         ASSERT_EQ(blkids.size(), 1);
 
@@ -187,7 +187,7 @@ public:
 
     void on_restart() {
         LOGINFOMOD(replication, "restarted repl dev for [Replica={}] Group={}", g_helper->replica_num(),
-                   boost::uuids::to_string(repl_dev()->group_id()));
+                   boost::uuids::to_string(device()->group_id()));
     }
 
     void on_error(ReplServiceError error, const sisl::blob& header, const sisl::blob& key,
@@ -208,10 +208,10 @@ public:
         LOGINFOMOD(replication,
                    "[Replica={}] Received no_space_left at lsn={}, reset latch lsn since we don`t really handle it.",
                    g_helper->replica_num(), lsn);
-        repl_dev()->reset_latch_lsn();
+        device()->reset_latch_lsn();
     }
 
-    AsyncReplResult<> create_snapshot(shared< snapshot_context > context) override {
+    async_status create_snapshot(shared< snapshot_context > context) override {
         std::lock_guard< std::mutex > lock(m_snapshot_lock);
         auto s = std::dynamic_pointer_cast< nuraft_snapshot_context >(context)->nuraft_snapshot();
         LOGINFOMOD(replication, "[Replica={}] Got snapshot callback term={} idx={}", g_helper->replica_num(),
@@ -274,7 +274,7 @@ public:
         return 0;
     }
 
-    void snapshot_obj_write(uint64_t data_size, uint64_t data_pattern, MultiBlkId& out_blkids) {
+    void snapshot_obj_write(uint64_t data_size, uint64_t data_pattern, multi_blk_id& out_blkids) {
         auto block_size = SISL_OPTIONS["block_size"].as< uint32_t >();
         auto write_sgs = test_common::HSTestHelper::create_sgs(data_size, block_size, data_pattern);
         [[maybe_unused]] auto const r =
@@ -292,7 +292,7 @@ public:
         int64_t next_lsn = get_next_lsn(snp_data->offset);
         auto s = std::dynamic_pointer_cast< nuraft_snapshot_context >(context)->nuraft_snapshot();
         auto last_committed_idx =
-            std::dynamic_pointer_cast< RaftReplDev >(repl_dev())->raft_server()->get_committed_log_idx();
+            std::dynamic_pointer_cast< RaftReplDev >(device())->raft_server()->get_committed_log_idx();
         if (next_lsn == 0) {
             snp_data->offset = last_committed_lsn + 1;
             set_resync_msg_type_bit(snp_data->offset);
@@ -314,7 +314,7 @@ public:
                         g_helper->replica_num(), value.lsn_, value.data_size_, value.data_pattern_);
 
             // Write to data service and inmem map.
-            MultiBlkId out_blkids;
+            multi_blk_id out_blkids;
             if (value.data_size_ != 0) {
                 snapshot_obj_write(value.data_size_, value.data_pattern_, out_blkids);
                 value.blkid_ = out_blkids;
@@ -354,7 +354,7 @@ public:
 
     void free_user_snp_ctx(void*& user_snp_ctx) override {}
 
-    ReplResult< blk_alloc_hints > get_blk_alloc_hints(sisl::blob const& header, uint32_t data_size,
+    result< blk_alloc_hints > get_blk_alloc_hints(sisl::blob const& header, uint32_t data_size,
                                                       cintrusive< homestore::repl_req_ctx >& hs_ctx) override {
         auto jheader = r_cast< test_req::journal_header const* >(header.cbytes());
         Key k{.id_ = jheader->key_id};
@@ -411,18 +411,18 @@ public:
                 test_common::HSTestHelper::create_sgs(data_size, max_size_per_iov, req->jheader.data_pattern);
         }
 
-        repl_dev()->async_alloc_write(req->header_blob(), req->key_blob(), req->write_sgs, req, false, s_uniq_num);
+        device()->async_alloc_write(req->header_blob(), req->key_blob(), req->write_sgs, req, nullptr, s_uniq_num);
     }
 
     void validate_db_data() {
         g_helper->runner().set_num_tasks(inmem_db_.size());
-        while (!repl_dev()->is_ready_for_traffic()) {
+        while (!device()->is_ready_for_traffic()) {
             LOGINFO("not yet ready for traffic, waiting");
             std::this_thread::sleep_for(std::chrono::milliseconds{500});
         }
 
         LOGINFOMOD(replication, "[{}]: Total {} keys committed, validating them",
-                   boost::uuids::to_string(repl_dev()->group_id()), inmem_db_.size());
+                   boost::uuids::to_string(device()->group_id()), inmem_db_.size());
         auto it = inmem_db_.begin();
         g_helper->runner().set_task([this, &it]() {
             Key k;
@@ -437,7 +437,7 @@ public:
                 auto block_size = SISL_OPTIONS["block_size"].as< uint32_t >();
                 auto read_sgs = test_common::HSTestHelper::create_sgs(v.data_size_, block_size);
 
-                detail::detach_then(repl_dev()->async_read(v.blkid_, read_sgs, v.data_size_),
+                detail::detach_then(device()->async_read(v.blkid_, read_sgs, v.data_size_),
                                     [read_sgs, k, v](iomgr::io_result const& r) {
                                         LOGINFOMOD(replication, "Validating key={} value[blkid={} pattern={}]", k.id_,
                                                    v.blkid_.to_string(), v.data_pattern_);
@@ -469,19 +469,19 @@ public:
     }
 
     void create_snapshot() {
-        auto raft_repl_dev = std::dynamic_pointer_cast< RaftReplDev >(repl_dev());
+        auto raft_repl_dev = std::dynamic_pointer_cast< RaftReplDev >(device());
         ulong snapshot_idx = raft_repl_dev->raft_server()->create_snapshot();
         LOGINFO("Manually create snapshot got index {}", snapshot_idx);
     }
 
     void truncate(int num_reserved_entries) {
-        auto raft_repl_dev = std::dynamic_pointer_cast< RaftReplDev >(repl_dev());
+        auto raft_repl_dev = std::dynamic_pointer_cast< RaftReplDev >(device());
         // raft_repl_dev->truncate(num_reserved_entries);
         LOGINFO("Manually truncated");
     }
 
     repl_lsn_t get_truncation_upper_limit() {
-        auto raft_repl_dev = std::dynamic_pointer_cast< RaftReplDev >(repl_dev());
+        auto raft_repl_dev = std::dynamic_pointer_cast< RaftReplDev >(device());
         auto limit = raft_repl_dev->get_truncation_upper_limit();
         LOGINFO("Truncation upper limit is {}", limit);
         return limit;
@@ -519,14 +519,14 @@ public:
         for (auto const& db : dbs_) {
             if (db->is_zombie()) { continue; }
             run_on_leader(db, [this, db]() {
-                auto err = detail::sync_get(hs()->repl_service().remove_repl_dev(db->repl_dev()->group_id()));
-                ASSERT_EQ(err, ReplServiceError::OK) << "Error in destroying the group";
+                auto err = detail::sync_get(hs()->repl_service().remove_repl_dev(db->device()->group_id()));
+                ASSERT_TRUE(err.has_value()) << "Error in destroying the group: " << (err ? "" : err.error().message());
             });
         }
 
         for (auto const& db : dbs_) {
             if (db->is_zombie()) { continue; }
-            auto repl_dev = std::dynamic_pointer_cast< RaftReplDev >(db->repl_dev());
+            auto repl_dev = std::dynamic_pointer_cast< RaftReplDev >(db->device());
             if (!repl_dev) continue;
             int i = 0;
             bool force_leave = false;
@@ -551,7 +551,7 @@ public:
 
     void generate_writes(uint64_t data_size, uint32_t max_size_per_iov, shared< TestReplicatedDB > db = nullptr) {
         if (db == nullptr) { db = pick_one_db(); }
-        // LOGINFO("Writing on group_id={}", db->repl_dev()->group_id());
+        // LOGINFO("Writing on group_id={}", db->device()->group_id());
         db->db_write(data_size, max_size_per_iov);
     }
 
@@ -586,7 +586,7 @@ public:
         if (g_helper->replica_num() == replica) {
             for (auto const& db : dbs_) {
                 do {
-                    auto result = detail::sync_get(db->repl_dev()->become_leader());
+                    auto result = detail::sync_get(db->device()->become_leader());
                     if (!result) {
                         std::this_thread::sleep_for(std::chrono::milliseconds(1000));
                     } else {
@@ -598,7 +598,7 @@ public:
             for (auto const& db : dbs_) {
                 homestore::replica_id_t leader_uuid;
                 while (true) {
-                    leader_uuid = db->repl_dev()->get_leader_id();
+                    leader_uuid = db->device()->get_leader_id();
                     if (!leader_uuid.is_nil() && (g_helper->member_id(leader_uuid) == replica)) { break; }
 
                     LOGINFO("Waiting for replica={} to become leader", replica);
@@ -609,16 +609,16 @@ public:
     }
 
     void run_on_leader(std::shared_ptr< TestReplicatedDB > db, auto&& lambda) {
-        if (!db || !db->repl_dev() || db->is_zombie()) {
+        if (!db || !db->device() || db->is_zombie()) {
             // Spare which are not added to group will not have repl dev.
             return;
         }
 
         do {
-            auto leader_uuid = db->repl_dev()->get_leader_id();
+            auto leader_uuid = db->device()->get_leader_id();
 
             if (leader_uuid.is_nil()) {
-                LOGINFO("Waiting for leader to be elected for group={}", db->repl_dev()->group_id());
+                LOGINFO("Waiting for leader to be elected for group={}", db->device()->group_id());
                 std::this_thread::sleep_for(std::chrono::milliseconds{500});
             } else if (leader_uuid == g_helper->my_replica_id()) {
                 lambda();
@@ -631,10 +631,10 @@ public:
 
     void write_on_leader(uint32_t num_entries, bool wait_for_commit = true, shared< TestReplicatedDB > db = nullptr,
                          uint64_t* data_size = nullptr) {
-        if (dbs_[0]->repl_dev() == nullptr) return;
+        if (dbs_[0]->device() == nullptr) return;
 
         do {
-            auto repl_dev = dbs_[0]->repl_dev();
+            auto repl_dev = dbs_[0]->device();
             auto leader_uuid = repl_dev->get_leader_id();
 
             if (leader_uuid.is_nil()) {
@@ -671,7 +671,7 @@ public:
     }
     replica_id_t wait_and_get_leader_id() {
         do {
-            auto leader_uuid = dbs_[0]->repl_dev()->get_leader_id();
+            auto leader_uuid = dbs_[0]->device()->get_leader_id();
             if (leader_uuid.is_nil()) {
                 LOGINFO("Waiting for leader to be elected");
                 std::this_thread::sleep_for(std::chrono::milliseconds{500});
@@ -682,7 +682,7 @@ public:
     }
 
     ReplServiceError write_with_id(uint64_t id, bool wait_for_commit = true, shared< TestReplicatedDB > db = nullptr) {
-        if (dbs_[0]->repl_dev() == nullptr) return ReplServiceError::FAILED;
+        if (dbs_[0]->device() == nullptr) return ReplServiceError::FAILED;
         if (db == nullptr) { db = pick_one_db(); }
         LOGINFO("Writing data {} since I am the leader my_uuid={}", id,
                 boost::uuids::to_string(g_helper->my_replica_id()));
@@ -711,7 +711,7 @@ public:
                     test_common::HSTestHelper::create_sgs(data_size, block_size, req->jheader.data_pattern);
             }
 
-            db->repl_dev()->async_alloc_write(req->header_blob(), req->key_blob(), req->write_sgs, req);
+            db->device()->async_alloc_write(req->header_blob(), req->key_blob(), req->write_sgs, req);
         });
 
         if (!wait_for_commit) { return ReplServiceError::OK; }
@@ -732,8 +732,8 @@ public:
 
     void remove_db(std::shared_ptr< TestReplicatedDB > db, bool wait_for_removal) {
         this->run_on_leader(db, [this, db]() {
-            auto err = detail::sync_get(hs()->repl_service().remove_repl_dev(db->repl_dev()->group_id()));
-            ASSERT_EQ(err, ReplServiceError::OK) << "Error in destroying the group";
+            auto err = detail::sync_get(hs()->repl_service().remove_repl_dev(db->device()->group_id()));
+            ASSERT_TRUE(err.has_value()) << "Error in destroying the group: " << (err ? "" : err.error().message());
         });
 
         // Remove the db from the dbs_ list and check if count matches with repl_device
@@ -795,12 +795,12 @@ public:
         replica_member_info out{member_out, ""};
         replica_member_info in{member_in, ""};
         auto result = detail::sync_get(
-            hs()->repl_service().replace_member(db->repl_dev()->group_id(), task_id, out, in, commit_quorum));
+            hs()->repl_service().replace_member(db->device()->group_id(), task_id, out, in, commit_quorum));
         if (error == ReplServiceError::OK) {
-            ASSERT_EQ(result.has_value(), true) << "Error in replacing member, err=" << result.error();
+            ASSERT_EQ(result.has_value(), true) << "Error in replacing member, err=" << result.error().message();
         } else {
             ASSERT_EQ(result.has_value(), false);
-            ASSERT_EQ(result.error(), error) << "Error in replacing member, err=" << result.error();
+            ASSERT_EQ(result.error(), error) << "Error in replacing member, err=" << result.error().message();
         }
     }
 
@@ -821,13 +821,13 @@ public:
             LOGINFO("remove member, member={}", boost::uuids::to_string(member_id));
             while (true) {
                 auto result =
-                    detail::sync_get(hs()->repl_service().remove_member(db->repl_dev()->group_id(), member_id, 0));
+                    detail::sync_get(hs()->repl_service().remove_member(db->device()->group_id(), member_id, 0));
                 if (result.has_value() || result.error() == ReplServiceError::OK) {
                     LOGINFO("Member {} already removed", boost::uuids::to_string(member_id));
                     break;
                 }
                 ASSERT_EQ(result.error(), ReplServiceError::RETRY_REQUEST)
-                    << "Error in remove_member, err=" << result.error();
+                    << "Error in remove_member, err=" << result.error().message();
                 LOGINFO("Got retry request, retrying remove_member for member={}", boost::uuids::to_string(member_id));
                 std::this_thread::sleep_for(std::chrono::milliseconds(500));
             }
@@ -840,12 +840,12 @@ public:
         this->run_on_leader(db, [this, error, db, member, target]() {
             LOGINFO("flip learner to {}, member={}", target, boost::uuids::to_string(member.id));
             auto result =
-                detail::sync_get(hs()->repl_service().flip_learner_flag(db->repl_dev()->group_id(), member, target, 0));
+                detail::sync_get(hs()->repl_service().flip_learner_flag(db->device()->group_id(), member, target, 0));
             if (error == ReplServiceError::OK) {
-                ASSERT_EQ(result.has_value(), true) << "Error in flip_learner, err=" << result.error();
+                ASSERT_EQ(result.has_value(), true) << "Error in flip_learner, err=" << result.error().message();
             } else {
                 ASSERT_EQ(result.has_value(), false);
-                ASSERT_EQ(result.error(), error) << "Error in flip_learner, err=" << result.error();
+                ASSERT_EQ(result.error(), error) << "Error in flip_learner, err=" << result.error().message();
             }
         });
     }
@@ -855,12 +855,12 @@ public:
         this->run_on_leader(db, [this, error, db, task_id]() {
             LOGINFO("clean replace member task, task_id={}", task_id);
             auto result = detail::sync_get(
-                hs()->repl_service().clean_replace_member_task(db->repl_dev()->group_id(), task_id, 0));
+                hs()->repl_service().clean_replace_member_task(db->device()->group_id(), task_id, 0));
             if (error == ReplServiceError::OK) {
-                ASSERT_EQ(result.has_value(), true) << "Error in clean_replace_member_task, err=" << result.error();
+                ASSERT_EQ(result.has_value(), true) << "Error in clean_replace_member_task, err=" << result.error().message();
             } else {
                 ASSERT_EQ(result.has_value(), false);
-                ASSERT_EQ(result.error(), error) << "Error in clean_replace_member_task, err=" << result.error();
+                ASSERT_EQ(result.error(), error) << "Error in clean_replace_member_task, err=" << result.error().message();
             }
         });
     }
@@ -878,33 +878,33 @@ public:
                 others.emplace_back(replica_member_info{.id = m.first, .name = ""});
             }
         }
-        return hs()->repl_service().get_replace_member_status(db->repl_dev()->group_id(), task_id, out, in, others);
+        return hs()->repl_service().get_replace_member_status(db->device()->group_id(), task_id, out, in, others);
     }
 
-    void reconcile_leader(std::shared_ptr< TestReplicatedDB > db) { db->repl_dev()->reconcile_leader(); }
+    void reconcile_leader(std::shared_ptr< TestReplicatedDB > db) { db->device()->reconcile_leader(); }
 
     void yield_leadership(std::shared_ptr< TestReplicatedDB > db, bool immediate_yield, replica_id_t candidate) {
-        db->repl_dev()->yield_leadership(immediate_yield, candidate);
+        db->device()->yield_leadership(immediate_yield, candidate);
     }
 
     void check_replace_member_rollback_result(std::shared_ptr< TestReplicatedDB > db, std::string& task_id,
                                               replica_id_t member_out, replica_id_t member_in) {
         LOGINFO("check replace member rollback result, task_id={}, out={} in={}", task_id,
                 boost::uuids::to_string(member_out), boost::uuids::to_string(member_in));
-        auto rdev = std::dynamic_pointer_cast< RaftReplDev >(db->repl_dev());
+        auto rdev = std::dynamic_pointer_cast< RaftReplDev >(db->device());
         while (true) {
             auto ret = rdev->get_ongoing_replace_member_task();
             if (ret.has_value()) {
                 LOGDEBUG("replace member task still exists");
             } else {
                 ASSERT_EQ(ret.error(), ReplServiceError::RESULT_NOT_EXIST_YET)
-                    << "unknown error in get_ongoing_replace_member_task, error=" << ret.error();
+                    << "unknown error in get_ongoing_replace_member_task, error=" << ret.error().message();
                 break;
             }
         }
         LOGDEBUG("replace member task has been cleaned up");
         this->run_on_leader(db, [this, db, member_in]() {
-            std::vector< peer_info > peers = db->repl_dev()->get_replication_status();
+            std::vector< peer_info > peers = db->device()->get_replication_status();
             ASSERT_EQ(peers.size(), 3);
             for (auto pinfo : peers) {
                 LOGDEBUG("peer_info: id={} can_vote={} priority={}", pinfo.id_, pinfo.can_vote, pinfo.priority_);
@@ -915,12 +915,12 @@ public:
         });
 
         auto ret = hs()->repl_service().list_replace_member_tasks();
-        ASSERT_EQ(ret.has_value(), true) << "error in list_replace_member_tasks, error=" << ret.error();
+        ASSERT_EQ(ret.has_value(), true) << "error in list_replace_member_tasks, error=" << ret.error().message();
         ASSERT_EQ(ret.value().size(), 0);
     }
     bool group_exists(std::shared_ptr< TestReplicatedDB > db) {
-        if (!db->repl_dev()) return false;
-        return hs()->repl_service().get_repl_dev(db->repl_dev()->group_id()).has_value();
+        if (!db->device()) return false;
+        return hs()->repl_service().get_repl_dev(db->device()->group_id()).has_value();
     }
 
 protected:

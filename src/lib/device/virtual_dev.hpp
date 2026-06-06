@@ -37,7 +37,7 @@
 #include <homestore/checkpoint/cp_mgr.hpp>
 #include <homestore/homestore_decl.hpp>
 #include "device/device.h"
-#include <homestore/chunk_selector.h>
+#include <homestore/chunk_selector.hpp>
 
 namespace homestore {
 class PhysicalDev;
@@ -142,16 +142,16 @@ public:
     /// @brief This method allocates contigous blocks in the vdev
     /// @param nblks : Number of blocks to allocate
     /// @param hints : Hints about block allocation, (specific device to allocate, stream etc)
-    /// @param out_blkid : Reference to where allocated BlkId to be placed
+    /// @param out_blkid : Reference to where allocated blk_id to be placed
     /// @return BlkAllocStatus : Status about the allocation
-    virtual BlkAllocStatus alloc_contiguous_blks(blk_count_t nblks, blk_alloc_hints const& hints, BlkId& out_blkid);
+    virtual BlkAllocStatus alloc_contiguous_blks(blk_count_t nblks, blk_alloc_hints const& hints, blk_id& out_blkid);
 
     /// @brief This method allocates multiple contiguous blocks in the vdev
     /// @param nblks : Number of blocks to allocate
     /// @param hints : Hints about block allocation, (specific device to allocate, stream etc)
-    /// @param out_blkid : Reference to where allocated MultiBlkId to be placed
+    /// @param out_blkid : Reference to where allocated multi_blk_id to be placed
     /// @return BlkAllocStatus : Status about the allocation
-    virtual BlkAllocStatus alloc_n_contiguous_blks(blk_count_t nblks, blk_alloc_hints hints, MultiBlkId& out_blkid);
+    virtual BlkAllocStatus alloc_n_contiguous_blks(blk_count_t nblks, blk_alloc_hints hints, multi_blk_id& out_blkid);
 
     /// @brief This method allocates blocks in the vdev and it could be non-contiguous, hence multiple BlkIds are
     /// returned
@@ -159,36 +159,36 @@ public:
     /// @param hints : Hints about block allocation, (specific device to allocate, stream etc)
     /// @param out_blkid : Reference to the MultiBlkd which can hold multiple blkids.
     /// @return BlkAllocStatus : Status about the allocation
-    virtual BlkAllocStatus alloc_blks(blk_count_t nblks, blk_alloc_hints const& hints, MultiBlkId& out_blkid);
+    virtual BlkAllocStatus alloc_blks(blk_count_t nblks, blk_alloc_hints const& hints, multi_blk_id& out_blkid);
 
     virtual BlkAllocStatus alloc_blks(blk_count_t nblks, blk_alloc_hints const& hints,
-                                      std::vector< BlkId >& out_blkids);
+                                      std::vector< blk_id >& out_blkids);
 
     /// @brief Checks if a given block id is allocated in the in-memory version of the blk allocator
-    /// @param blkid : BlkId to check for allocation
+    /// @param blkid : blk_id to check for allocation
     /// @return true or false
-    virtual bool is_blk_alloced(BlkId const& blkid) const;
+    virtual bool is_blk_alloced(blk_id const& blkid) const;
 
     /// @brief Commits the blkid in on-disk version of the blk allocator. The blkid is assumed to be allocated using
     /// alloc_blk or alloc_contiguous_blk method earlier (either after reboot or prior to reboot). It is not required
     /// to call this method if alloc_blk is called and system is not restarted. Typical use case of this method is
     /// during recovery where alloc_blk is called but before it was checkpointed, it crashed and we are trying to
     /// recover Please note that even calling this method is not guaranteed to persisted until checkpoint is taken.
-    /// @param blkid BlkId to commit explicitly.
+    /// @param blkid blk_id to commit explicitly.
     /// @return Allocation Status
-    virtual BlkAllocStatus commit_blk(BlkId const& blkid);
+    virtual BlkAllocStatus commit_blk(blk_id const& blkid);
 
-    virtual void free_blk(BlkId const& b, VDevCPContext* vctx = nullptr, bool free_now = false);
+    virtual void free_blk(blk_id const& b, VDevCPContext* vctx = nullptr, bool free_now = false);
 
     /////////////////////// Write API related methods /////////////////////////////
     /// @brief Asynchornously write the buffer to the device on a given blkid
     /// @param buf : Buffer to write data from
     /// @param size : Size of the buffer
-    /// @param bid : BlkId which was previously allocated. It is expected that entire size was allocated previously.
+    /// @param bid : blk_id which was previously allocated. It is expected that entire size was allocated previously.
     /// @param part_of_batch : Is this write part of batch io. If true, caller is expected to call submit_batch at
     /// the end of the batch, otherwise this write request will not be queued.
     /// @return future< bool > Future result of success or failure
-    sisl::async::task< iomgr::io_result > async_write(const char* buf, uint32_t size, BlkId const& bid,
+    sisl::async::task< iomgr::io_result > async_write(const char* buf, uint32_t size, blk_id const& bid,
                                                       bool part_of_batch = false);
 
     sisl::async::task< iomgr::io_result > async_write(const char* buf, uint32_t size, cshared< Chunk >& chunk,
@@ -197,11 +197,11 @@ public:
     /// @brief Asynchornously write the buffer to the device on a given blkid from vector of buffer
     /// @param iov : Vector of buffer to write data from
     /// @param iovcnt : Count of buffer
-    /// @param bid  BlkId which was previously allocated. It is expected that entire size was allocated previously.
+    /// @param bid  blk_id which was previously allocated. It is expected that entire size was allocated previously.
     /// @param part_of_batch : Is this write part of batch io. If true, caller is expected to call submit_batch at
     /// the end of the batch, otherwise this write request will not be queued.
     /// @return future< bool > Future result of success or failure
-    sisl::async::task< iomgr::io_result > async_writev(const iovec* iov, int iovcnt, BlkId const& bid,
+    sisl::async::task< iomgr::io_result > async_writev(const iovec* iov, int iovcnt, blk_id const& bid,
                                                        bool part_of_batch = false);
 
     // TODO: This needs to be removed once Journal starting to use AppendBlkAllocator
@@ -211,9 +211,9 @@ public:
     /// @brief Synchronously write the buffer to the blkid
     /// @param buf : Buffer to write data from
     /// @param size : Size of the buffer
-    /// @param bid : BlkId which was previously allocated. It is expected that entire size was allocated previously.
+    /// @param bid : blk_id which was previously allocated. It is expected that entire size was allocated previously.
     /// @return ssize_t: Size of the data actually written.
-    std::error_code sync_write(const char* buf, uint32_t size, BlkId const& bid);
+    std::error_code sync_write(const char* buf, uint32_t size, blk_id const& bid);
 
     // TODO: This needs to be removed once Journal starting to use AppendBlkAllocator
     std::error_code sync_write(const char* buf, uint32_t size, cshared< Chunk >& chunk, uint64_t offset_in_chunk);
@@ -221,52 +221,52 @@ public:
     /// @brief Synchronously write the vector of buffers to the blkid
     /// @param iov : Vector of buffer to write data from
     /// @param iovcnt : Count of buffer
-    /// @param bid  BlkId which was previously allocated. It is expected that entire size was allocated previously.
+    /// @param bid  blk_id which was previously allocated. It is expected that entire size was allocated previously.
     /// @return ssize_t: Size of the data actually written.
-    std::error_code sync_writev(const iovec* iov, int iovcnt, BlkId const& bid);
+    std::error_code sync_writev(const iovec* iov, int iovcnt, blk_id const& bid);
 
     // TODO: This needs to be removed once Journal starting to use AppendBlkAllocator
     std::error_code sync_writev(const iovec* iov, int iovcnt, cshared< Chunk >& chunk, uint64_t offset_in_chunk);
 
     /////////////////////// Read API related methods /////////////////////////////
 
-    /// @brief Asynchronously read the data for a given BlkId.
+    /// @brief Asynchronously read the data for a given blk_id.
     /// @param buf : Buffer to read data to
     /// @param size : Size of the buffer
-    /// @param bid : BlkId from data needs to be read
+    /// @param bid : blk_id from data needs to be read
     /// @param part_of_batch : Is this read part of batch io. If true, caller is expected to call submit_batch at
     /// the end of the batch, otherwise this read request will not be queued.
     /// @return future< bool > Future result of success or failure
-    sisl::async::task< iomgr::io_result > async_read(char* buf, uint64_t size, BlkId const& bid,
+    sisl::async::task< iomgr::io_result > async_read(char* buf, uint64_t size, blk_id const& bid,
                                                      bool part_of_batch = false);
 
-    /// @brief Asynchronously read the data for a given BlkId to the vector of buffers
+    /// @brief Asynchronously read the data for a given blk_id to the vector of buffers
     /// @param iov : Vector of buffer to write read to
     /// @param iovcnt : Count of buffer
     /// @param size : Size of the actual data, it is really to optimize the iovec from iterating again to get size
-    /// @param bid : BlkId from data needs to be read
+    /// @param bid : blk_id from data needs to be read
     /// @param part_of_batch : Is this read part of batch io. If true, caller is expected to call submit_batch at
     /// the end of the batch, otherwise this read request will not be queued.
     /// @return future< bool > Future result of success or failure
-    sisl::async::task< iomgr::io_result > async_readv(iovec* iovs, int iovcnt, uint64_t size, BlkId const& bid,
+    sisl::async::task< iomgr::io_result > async_readv(iovec* iovs, int iovcnt, uint64_t size, blk_id const& bid,
                                                       bool part_of_batch = false);
 
-    /// @brief Synchronously read the data for a given BlkId.
+    /// @brief Synchronously read the data for a given blk_id.
     /// @param buf : Buffer to read data to
     /// @param size : Size of the buffer
-    /// @param bid : BlkId from data needs to be read
+    /// @param bid : blk_id from data needs to be read
     /// @return ssize_t: Size of the data actually read.
-    std::error_code sync_read(char* buf, uint32_t size, BlkId const& bid);
+    std::error_code sync_read(char* buf, uint32_t size, blk_id const& bid);
 
     // TODO: This needs to be removed once Journal starting to use AppendBlkAllocator
     std::error_code sync_read(char* buf, uint32_t size, cshared< Chunk >& chunk, uint64_t offset_in_chunk);
 
-    /// @brief Synchronously read the data for a given BlkId to vector of buffers
+    /// @brief Synchronously read the data for a given blk_id to vector of buffers
     /// @param iov : Vector of buffer to write read to
     /// @param iovcnt : Count of buffer
     /// @param size : Size of the actual data, it is really to optimize the iovec from iterating again to get size
     /// @return ssize_t: Size of the data actually read.
-    std::error_code sync_readv(iovec* iov, int iovcnt, BlkId const& bid);
+    std::error_code sync_readv(iovec* iov, int iovcnt, blk_id const& bid);
 
     // TODO: This needs to be removed once Journal starting to use AppendBlkAllocator
     std::error_code sync_readv(iovec* iov, int iovcnt, cshared< Chunk >& chunk, uint64_t offset_in_chunk);
@@ -317,22 +317,22 @@ public:
     // only use this method for testing.
     std::map< uint16_t, shared< Chunk > >& get_chunks_mutable() { return m_all_chunks; }
     shared< Chunk > get_next_chunk(cshared< Chunk >& chunk);
-    bool is_blk_exist(MultiBlkId const& b) const;
+    bool is_blk_exist(multi_blk_id const& b) const;
 
     ///////////////////////// Meta operations on vdev ////////////////////////
     void update_vdev_private(const sisl::blob& data);
 
 private:
-    uint64_t to_dev_offset(BlkId const& b, Chunk** chunk) const;
+    uint64_t to_dev_offset(blk_id const& b, Chunk** chunk) const;
     bool is_chunk_available(cshared< Chunk >& chunk) const;
-    BlkAllocStatus alloc_blks_from_chunk(blk_count_t nblks, blk_alloc_hints const& hints, MultiBlkId& out_blkid,
+    BlkAllocStatus alloc_blks_from_chunk(blk_count_t nblks, blk_alloc_hints const& hints, multi_blk_id& out_blkid,
                                          Chunk* chunk);
 };
 
 // place holder for future needs in which components underlying virtualdev needs cp flush context;
 class VDevCPContext : public CPContext {
 public:
-    sisl::ConcurrentInsertVector< BlkId > m_free_blkid_list;
+    sisl::ConcurrentInsertVector< blk_id > m_free_blkid_list;
 
 public:
     VDevCPContext(CP* cp);

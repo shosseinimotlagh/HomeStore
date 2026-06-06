@@ -50,9 +50,9 @@ blk_num_t FixedBlkAllocator::init_portion(BlkAllocPortion& portion, blk_num_t st
     return blk_num;
 }
 
-bool FixedBlkAllocator::is_blk_alloced(BlkId const& b, bool use_lock) const { return true; }
+bool FixedBlkAllocator::is_blk_alloced(blk_id const& b, bool use_lock) const { return true; }
 
-BlkAllocStatus FixedBlkAllocator::alloc([[maybe_unused]] blk_count_t nblks, blk_alloc_hints const&, BlkId& out_blkid) {
+BlkAllocStatus FixedBlkAllocator::alloc([[maybe_unused]] blk_count_t nblks, blk_alloc_hints const&, blk_id& out_blkid) {
 #ifdef _PRERELEASE
     if (iomgr_flip::instance()->test_flip("fixed_blkalloc_no_blks")) { return BlkAllocStatus::SPACE_FULL; }
 #endif
@@ -70,13 +70,13 @@ retry:
             goto retry;
         }
     }
-    out_blkid = BlkId{blk_num, 1, m_chunk_id};
+    out_blkid = blk_id{blk_num, 1, m_chunk_id};
     return BlkAllocStatus::SUCCESS;
 }
 
-BlkAllocStatus FixedBlkAllocator::alloc_contiguous(BlkId& out_blkid) { return alloc(1, {}, out_blkid); }
+BlkAllocStatus FixedBlkAllocator::alloc_contiguous(blk_id& out_blkid) { return alloc(1, {}, out_blkid); }
 
-BlkAllocStatus FixedBlkAllocator::reserve_on_cache(BlkId const& b) {
+BlkAllocStatus FixedBlkAllocator::reserve_on_cache(blk_id const& b) {
     std::lock_guard lg(m_reserve_blk_mtx);
     if (m_state == state_t::RECOVERING) { m_reserved_blks.insert(b.blk_num()); }
     return BlkAllocStatus::SUCCESS;
@@ -100,7 +100,7 @@ void FixedBlkAllocator::recovery_completed() {
     m_state = state_t::ACTIVE;
 }
 
-void FixedBlkAllocator::free(BlkId const& b) {
+void FixedBlkAllocator::free(blk_id const& b) {
     HS_DBG_ASSERT_EQ(b.blk_count(), 1, "Multiple blk free for FixedBlkAllocator? allocated by different allocator?");
 
     const auto pushed = m_free_blk_q.write(b.blk_num());

@@ -191,7 +191,7 @@ struct hs_engine_config {
     uint64_t max_chunks{MAX_CHUNKS}; // These 3 parameters can be ONLY changed with upgrade/revert from device manager
     uint64_t max_vdevs{MAX_VDEVS};
     uint64_t max_pdevs{MAX_PDEVS};
-    uint32_t max_blks_in_blkentry{1}; // Max blks a represents in a single BlkId entry
+    uint32_t max_blks_in_blkentry{1}; // Max blks a represents in a single blk_id entry
 
     nlohmann::json to_json() const;
 };

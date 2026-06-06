@@ -137,7 +137,7 @@ public:
         return d;
     }
 
-    void validate_data(std::shared_ptr< HomeLogStore > log_store, const test_log_data* d,
+    void validate_data(std::shared_ptr< home_log_store > log_store, const test_log_data* d,
                        const logstore_seq_num_t lsn) {
         const char c = static_cast< char >((lsn % 94) + 33);
         const std::string actual = d->get_data_str();
@@ -147,7 +147,7 @@ public:
                                     << " size=" << d->size;
     }
 
-    void insert_sync(std::shared_ptr< HomeLogStore > log_store, logstore_seq_num_t lsn, uint32_t fixed_size = 0) {
+    void insert_sync(std::shared_ptr< home_log_store > log_store, logstore_seq_num_t lsn, uint32_t fixed_size = 0) {
         bool io_memory{false};
         auto* d = prepare_data(lsn, io_memory, fixed_size);
         log_store->write_and_flush(lsn, {uintptr_cast(d), d->total_size(), false});
@@ -159,7 +159,7 @@ public:
         }
     }
 
-    void insert_batch_sync(std::shared_ptr< HomeLogStore > log_store, logstore_seq_num_t& lsn, int64_t batch,
+    void insert_batch_sync(std::shared_ptr< home_log_store > log_store, logstore_seq_num_t& lsn, int64_t batch,
                            uint32_t fixed_size = 0) {
         bool io_memory{false};
         std::vector< test_log_data* > data_vector;
@@ -185,7 +185,7 @@ public:
         }
     }
 
-    void kickstart_inserts(std::shared_ptr< HomeLogStore > log_store, logstore_seq_num_t& cur_lsn, int64_t batch,
+    void kickstart_inserts(std::shared_ptr< home_log_store > log_store, logstore_seq_num_t& cur_lsn, int64_t batch,
                            uint32_t fixed_size = 0) {
         auto last = cur_lsn + batch;
         for (; cur_lsn < last; cur_lsn++) {
@@ -193,14 +193,14 @@ public:
         }
     }
 
-    void read_verify(std::shared_ptr< HomeLogStore > log_store, logstore_seq_num_t lsn) {
+    void read_verify(std::shared_ptr< home_log_store > log_store, logstore_seq_num_t lsn) {
         auto b = log_store->read_sync(lsn);
         auto* d = r_cast< test_log_data const* >(b.bytes());
         ASSERT_EQ(d->total_size(), b.size()) << "Size Mismatch for lsn=" << log_store->get_store_id() << ":" << lsn;
         validate_data(log_store, d, lsn);
     }
 
-    void read_all_verify(std::shared_ptr< HomeLogStore > log_store) {
+    void read_all_verify(std::shared_ptr< home_log_store > log_store) {
         const auto trunc_upto = log_store->truncated_upto();
         const auto upto = log_store->get_contiguous_completed_seq_num(-1);
 
@@ -220,7 +220,7 @@ public:
         }
     }
 
-    void rollback_validate(std::shared_ptr< HomeLogStore > log_store, logstore_seq_num_t& cur_lsn,
+    void rollback_validate(std::shared_ptr< home_log_store > log_store, logstore_seq_num_t& cur_lsn,
                            uint32_t num_lsns_to_rollback) {
         cur_lsn -= num_lsns_to_rollback;
         auto const upto_lsn = cur_lsn - 1;
@@ -228,7 +228,7 @@ public:
         read_all_verify(log_store);
     }
 
-    void truncate_validate(std::shared_ptr< HomeLogStore > log_store, logstore_seq_num_t* trunc_lsn = nullptr) {
+    void truncate_validate(std::shared_ptr< home_log_store > log_store, logstore_seq_num_t* trunc_lsn = nullptr) {
         auto upto = log_store->get_contiguous_completed_seq_num(-1);
         if (trunc_lsn && *trunc_lsn != upto) {
             LOGWARN("Truncate issued upto {} but real upto lsn in log store is {}", *trunc_lsn, upto);
@@ -241,7 +241,7 @@ public:
         logstore_service().device_truncate();
     }
 
-    void rollback_records_validate(std::shared_ptr< HomeLogStore > log_store, uint32_t expected_count) {
+    void rollback_records_validate(std::shared_ptr< home_log_store > log_store, uint32_t expected_count) {
         auto actual_count = log_store->get_logdev()->log_dev_meta().num_rollback_records(log_store->get_store_id());
         ASSERT_EQ(actual_count, expected_count);
     }
@@ -701,7 +701,7 @@ TEST_F(LogDevTest, TruncateLogsAfterFlushAndRestart) {
 
 TEST_F(LogDevTest, CreateRemoveLogDev) {
     auto num_logdev = SISL_OPTIONS["num_logdevs"].as< uint32_t >();
-    std::vector< std::shared_ptr< HomeLogStore > > log_stores;
+    std::vector< std::shared_ptr< home_log_store > > log_stores;
     auto vdev = logstore_service().get_vdev();
 
     // Create log dev, logstore, write some io. Delete all of them and
@@ -754,7 +754,7 @@ TEST_F(LogDevTest, CreateRemoveLogDev) {
 
 TEST_F(LogDevTest, DeleteUnopenedLogDev) {
     auto num_logdev = SISL_OPTIONS["num_logdevs"].as< uint32_t >();
-    std::vector< std::shared_ptr< HomeLogStore > > log_stores;
+    std::vector< std::shared_ptr< home_log_store > > log_stores;
     auto vdev = logstore_service().get_vdev();
 
     // Test deletion of unopened logdev.

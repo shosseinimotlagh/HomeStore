@@ -15,7 +15,7 @@
 #include <vector>
 
 #include <iomgr/iomgr.hpp>
-#include <homestore/crc.h>
+#include <homestore/crc.hpp>
 #include <sisl/logging/logging.h>
 
 #include <boost/uuid/random_generator.hpp>

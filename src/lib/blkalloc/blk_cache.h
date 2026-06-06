@@ -28,7 +28,7 @@
 #include <fmt/ostream.h>
 #include <sisl/utility/enum.hpp>
 
-#include <homestore/blk.h>
+#include <homestore/blk.hpp>
 #include "common/homestore_assert.hpp"
 
 namespace homestore {

@@ -5,13 +5,13 @@
 #include <variant>
 
 #include <sisl/utility/enum.hpp>
-#include <homestore/replication/repl_decls.h>
+#include <homestore/replication/repl_decls.hpp>
 #include <homestore/meta_service.hpp>
 
 namespace homestore {
 
-class ReplDev;
-class ReplDevListener;
+class repl_dev;
+class repl_dev_listener;
 struct hs_stats;
 
 ENUM(repl_impl_type, uint8_t,
@@ -20,26 +20,26 @@ ENUM(repl_impl_type, uint8_t,
      solo             // For single node - no replication
 );
 
-class ReplApplication;
+class repl_application;
 
-class ReplicationService {
+class replication_service {
 public:
-    ReplicationService() = default;
-    virtual ~ReplicationService() = default;
+    replication_service() = default;
+    virtual ~replication_service() = default;
 
     /// @brief Creates the Repl Device to which eventually user can read locally and write to the quorom of the members
     /// @param group_id Unique ID indicating the group. This is the key for several lookup structures
     /// @param members List of members to form this group
     /// @param listener state machine listener of all the events happening on the repl_dev (commit, precommit etc)
-    /// @return A Future ReplDev on success or Future ReplServiceError upon error
-    virtual AsyncReplResult< shared< ReplDev > > create_repl_dev(group_id_t group_id,
+    /// @return A Future repl_dev on success or Future ReplServiceError upon error
+    virtual async_result< shared< repl_dev > > create_repl_dev(group_id_t group_id,
                                                                  std::set< replica_id_t > const& members) = 0;
 
     /// @brief Removes the entire Repl Device. The underlying replica group is marked as destroy_pending and all its
     /// resources are not released until garbage collection of repl devices kick in.
     /// @param group_id Group ID to be removed
     /// @return A Future which gets called after schedule to release (before garbage collection is kicked in)
-    virtual sisl::async::task< ReplServiceError > remove_repl_dev(group_id_t group_id) = 0;
+    virtual async_status remove_repl_dev(group_id_t group_id) = 0;
 
     /// @brief Replace one of the members with a new one.
     /// @param group_id Group where the replace member happens
@@ -49,7 +49,7 @@ public:
     /// @param member_in The member which is going to be added in place of member_out
     /// @param commit_quorum Commit quorum to be used for this operation. If 0, it will use the default commit quorum.
     /// @return A Future on replace the member accepted or Future ReplServiceError upon error
-    virtual AsyncReplResult<> replace_member(group_id_t group_id, std::string& task_id,
+    virtual async_status replace_member(group_id_t group_id, std::string& task_id,
                                              const replica_member_info& member_out,
                                              const replica_member_info& member_in, uint32_t commit_quorum = 0,
                                              uint64_t trace_id = 0) const = 0;
@@ -62,7 +62,7 @@ public:
     /// @param wait_and_verify Whether to wait and verify the operation (default: true).
     /// @param trace_id Optional trace ID for tracking (default: 0).
     /// @return A future result indicating success or error.
-    virtual AsyncReplResult<> flip_learner_flag(group_id_t group_id, const replica_member_info& member, bool target,
+    virtual async_status flip_learner_flag(group_id_t group_id, const replica_member_info& member, bool target,
                                                 uint32_t commit_quorum, bool wait_and_verify = true,
                                                 uint64_t trace_id = 0) const = 0;
 
@@ -73,7 +73,7 @@ public:
     /// @param wait_and_verify Whether to wait and verify the operation (default: true).
     /// @param trace_id Optional trace ID for tracking (default: 0).
     /// @return A future result indicating success or error.
-    virtual AsyncReplResult<> remove_member(group_id_t group_id, const replica_id_t& member, uint32_t commit_quorum,
+    virtual async_status remove_member(group_id_t group_id, const replica_id_t& member, uint32_t commit_quorum,
                                             bool wait_and_verify = true, uint64_t trace_id = 0) const = 0;
 
     /// @brief Clean the replace member task.
@@ -82,13 +82,13 @@ public:
     /// @param commit_quorum The commit quorum required for this operation.
     /// @param trace_id Optional trace ID for tracking (default: 0).
     /// @return A future result indicating success or error.
-    virtual AsyncReplResult<> clean_replace_member_task(group_id_t group_id, const std::string& task_id,
+    virtual async_status clean_replace_member_task(group_id_t group_id, const std::string& task_id,
                                                         uint32_t commit_quorum, uint64_t trace_id = 0) const = 0;
 
     /// @brief Lists all replace member tasks.
     /// @param trace_id Optional trace ID for tracking (default: 0).
     /// @return A result containing a vector of replace_member_task objects.
-    virtual ReplResult< std::vector< replace_member_task > > list_replace_member_tasks(uint64_t trace_id = 0) const = 0;
+    virtual result< std::vector< replace_member_task > > list_replace_member_tasks(uint64_t trace_id = 0) const = 0;
 
     /// @brief Get status of member replacement.
     /// @param group_id Group where the replace member happens
@@ -108,7 +108,7 @@ public:
     /// raft and destroy all repl dev among members. This function is mainly used for cleaning up local resources when
     /// the repl dev is leaked.
     /// @param group_id Group where the replace member happens
-    virtual ReplServiceError destroy_repl_dev(group_id_t group_id, uint64_t trace_id = 0) = 0;
+    virtual status destroy_repl_dev(group_id_t group_id, uint64_t trace_id = 0) = 0;
 
     /// @brief Trigger a snapshot creation manually for a given group id
     /// @param group_id Group id for which snapshot creation is requested
@@ -120,12 +120,12 @@ public:
 
     /// @brief Get the repl dev for a given group id if it is already created or opened
     /// @param group_id Group id interested in
-    /// @return ReplDev is opened or ReplServiceError::SERVER_NOT_FOUND if it doesn't exist
-    virtual ReplResult< shared< ReplDev > > get_repl_dev(group_id_t group_id) const = 0;
+    /// @return repl_dev is opened or ReplServiceError::SERVER_NOT_FOUND if it doesn't exist
+    virtual result< shared< repl_dev > > get_repl_dev(group_id_t group_id) const = 0;
 
     /// @brief Iterate over all repl devs and then call the callback provided
     /// @param cb Callback with repl dev
-    virtual void iterate_repl_devs(std::function< void(cshared< ReplDev >&) > const& cb) = 0;
+    virtual void iterate_repl_devs(std::function< void(cshared< repl_dev >&) > const& cb) = 0;
 
     /// @brief get the capacity stats form underlying backend;
     /// @return the capacity stats;
@@ -135,7 +135,7 @@ public:
 };
 
 //////////////// Application which uses Replication needs to be provide the following callbacks ////////////////
-class ReplApplication {
+class repl_application {
 public:
     // Returns the required implementation type of replication
     virtual repl_impl_type get_impl_type() const = 0;
@@ -145,8 +145,8 @@ public:
     virtual bool need_timeline_consistency() const = 0;
 
     // Called when the repl dev is found upon restart of the homestore instance. The caller should return an instance of
-    // Listener corresponding to the ReplDev which will be used to perform the precommit/commit/rollback.
-    virtual shared< ReplDevListener > create_repl_dev_listener(group_id_t group_id) = 0;
+    // Listener corresponding to the repl_dev which will be used to perform the precommit/commit/rollback.
+    virtual shared< repl_dev_listener > create_repl_dev_listener(group_id_t group_id) = 0;
 
     // Called when the repl dev is destroyed. This interface provides the application a chance to cleanup any resources
     // assocated with this listener;

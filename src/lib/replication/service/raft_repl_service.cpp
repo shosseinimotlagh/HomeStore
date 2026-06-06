@@ -87,12 +87,12 @@ int32_t RaftReplService::compute_raft_follower_priority() {
     return priority;
 }
 
-RaftReplService::RaftReplService(cshared< ReplApplication >& repl_app) : GenericReplService{repl_app} {
+RaftReplService::RaftReplService(cshared< repl_application >& repl_app) : GenericReplService{repl_app} {
     m_config_sb_bufs.reserve(100);
     meta_service().register_handler(
         get_meta_blk_name() + "_raft_config",
         [this](meta_blk* mblk, sisl::byte_view buf, size_t) {
-            m_config_sb_bufs.emplace_back(std::pair(std::move(buf), voidptr_cast(mblk)));
+            m_config_sb_bufs.emplace_back(std::pair(std::move(buf), mblk));
         },
         nullptr, false, std::optional< meta_subtype_vec_t >({get_meta_blk_name()}));
 }
@@ -148,10 +148,10 @@ void RaftReplService::start() {
     r_params.return_method_ = nuraft::raft_params::async_handler;
     m_msg_mgr->register_mgr_type(params.default_group_type_, r_params);
 
-    // Step 3: Load all the repl devs from the cached superblks. This step creates the ReplDev instances and adds to
+    // Step 3: Load all the repl devs from the cached superblks. This step creates the repl_dev instances and adds to
     // list. It is still not joined the Raft group yet
     for (auto const& [buf, mblk] : m_sb_bufs) {
-        load_repl_dev(buf, voidptr_cast(mblk));
+        load_repl_dev(buf, mblk);
     }
     m_sb_bufs.clear();
 
@@ -162,7 +162,7 @@ void RaftReplService::start() {
     //
     // We need to first load the repl_dev with its config and then attach the raft config to that repl dev.
     for (auto const& [buf, mblk] : m_config_sb_bufs) {
-        auto rdev = raft_group_config_found(buf, voidptr_cast(mblk));
+        auto rdev = raft_group_config_found(buf, mblk);
         // if repl_dev is in destroy_pending state, it will not be loaded.
         if (rdev) rdev->on_restart();
     }
@@ -317,7 +317,7 @@ bool RaftReplService::wait_for_cert(const std::string& filepath) {
     return false;
 }
 
-RaftReplDev* RaftReplService::raft_group_config_found(sisl::byte_view const& buf, void* meta_cookie) {
+RaftReplDev* RaftReplService::raft_group_config_found(sisl::byte_view const& buf, meta_blk* meta_cookie) {
     json_superblk group_config;
     auto& js = group_config.load(buf, meta_cookie);
 
@@ -366,7 +366,7 @@ shared< nuraft_mesg::mesg_state_mgr > RaftReplService::create_state_mgr(int32_t 
     rd_sb->group_id = group_id;
     rd_sb->is_timeline_consistent = m_repl_app->need_timeline_consistency();
 
-    // Create a new instance of Raft ReplDev (which is the state manager this method is looking for)
+    // Create a new instance of Raft repl_dev (which is the state manager this method is looking for)
     auto rdev = std::make_shared< RaftReplDev >(*this, std::move(rd_sb), false /* load_existing */);
 
     // Create a raft config for this repl_dev and assign it to the repl_dev
@@ -385,9 +385,9 @@ shared< nuraft_mesg::mesg_state_mgr > RaftReplService::create_state_mgr(int32_t 
     return std::dynamic_pointer_cast< nuraft_mesg::mesg_state_mgr >(rdev);
 }
 
-AsyncReplResult< shared< ReplDev > > RaftReplService::create_repl_dev(group_id_t group_id,
+async_result< shared< repl_dev > > RaftReplService::create_repl_dev(group_id_t group_id,
                                                                       std::set< replica_id_t > const& members) {
-    if (is_stopping()) return make_async_error< shared< ReplDev > >(ReplServiceError::STOPPING);
+    if (is_stopping()) return make_async_error< shared< repl_dev > >(ReplServiceError::STOPPING);
     init_req_counter counter(pending_request_num);
     // TODO: All operations are made sync here for convenience to caller. However, we should attempt to make this async
     // and do deferValue to a seperate dedicated hs thread for these kind of operations and wakeup the caller. It
@@ -396,7 +396,7 @@ AsyncReplResult< shared< ReplDev > > RaftReplService::create_repl_dev(group_id_t
         // Create a new RAFT group and add all members. create_group() will call the create_state_mgr which will create
         // the repl_dev instance and add it to the map.
         if (auto const status = detail::sync_get(m_msg_mgr->create_group(group_id, "homestore_replication")); !status) {
-            return make_async_error< shared< ReplDev > >(to_repl_error(status.error()));
+            return make_async_error< shared< repl_dev > >(to_repl_error(status.error()));
         }
 
         auto follower_priority = compute_raft_follower_priority();
@@ -415,14 +415,14 @@ AsyncReplResult< shared< ReplDev > > RaftReplService::create_repl_dev(group_id_t
                 LOGWARNMOD(replication, "Groupid={}, add member={} failed with error={}",
                            boost::uuids::to_string(group_id), boost::uuids::to_string(member),
                            result.error().message());
-                return make_async_error< shared< ReplDev > >(to_repl_error(result.error()));
+                return make_async_error< shared< repl_dev > >(to_repl_error(result.error()));
             }
         }
     }
 
     auto result = get_repl_dev(group_id);
-    return result ? make_async_success< shared< ReplDev > >(result.value())
-                  : make_async_error< shared< ReplDev > >(ReplServiceError::SERVER_NOT_FOUND);
+    return result ? make_async_success< shared< repl_dev > >(result.value())
+                  : make_async_error< shared< repl_dev > >(ReplServiceError::SERVER_NOT_FOUND);
 }
 
 // Remove repl_dev for raft is a 3 step process.
@@ -452,17 +452,20 @@ AsyncReplResult< shared< ReplDev > > RaftReplService::create_repl_dev(group_id_t
 // It merely needs to cleanup the superblk. Given that logstore is not opened, HomeLogStoreService will automatically
 // purge any unopened logstores.
 //
-sisl::async::task< ReplServiceError > RaftReplService::remove_repl_dev(group_id_t group_id) {
-    if (is_stopping()) co_return ReplServiceError::STOPPING;
+async_status RaftReplService::remove_repl_dev(group_id_t group_id) {
+    if (is_stopping()) co_return std::unexpected(ReplServiceError::STOPPING);
     init_req_counter counter(pending_request_num);
 
     auto rdev_result = get_repl_dev(group_id);
-    if (!rdev_result) co_return ReplServiceError::SERVER_NOT_FOUND;
+    if (!rdev_result) co_return std::unexpected(ReplServiceError::SERVER_NOT_FOUND);
 
-    co_return co_await std::dynamic_pointer_cast< RaftReplDev >(rdev_result.value())->destroy_group();
+    // destroy_group() still threads ReplServiceError internally; convert its non-OK result to the error_condition.
+    auto const ec = co_await std::dynamic_pointer_cast< RaftReplDev >(rdev_result.value())->destroy_group();
+    if (ec != ReplServiceError::OK) co_return std::unexpected(ec);
+    co_return ok();
 }
 
-void RaftReplService::load_repl_dev(sisl::byte_view const& buf, void* meta_cookie) {
+void RaftReplService::load_repl_dev(sisl::byte_view const& buf, meta_blk* meta_cookie) {
     // Load the superblk
     superblk< raft_repl_dev_superblk > rd_sb{get_meta_blk_name()};
     rd_sb.load(buf, meta_cookie);
@@ -480,7 +483,7 @@ void RaftReplService::load_repl_dev(sisl::byte_view const& buf, void* meta_cooki
     }
 
     if (rd_sb->destroy_pending == 0x1) {
-        LOGINFOMOD(replication, "ReplDev group_id={} was destroyed, reclaim the stale resource", group_id);
+        LOGINFOMOD(replication, "repl_dev group_id={} was destroyed, reclaim the stale resource", group_id);
         // if we do not add the repl_dev to m_rd_map, it will not be permanently destroyed since gc thread finds the
         // pending destroy repl_dev only from m_rd_map. so, we should try to reclaim all the repl_dev stale resources
         // here.
@@ -499,7 +502,7 @@ void RaftReplService::load_repl_dev(sisl::byte_view const& buf, void* meta_cooki
         return;
     }
 
-    // Create an instance of ReplDev from loaded superblk
+    // Create an instance of repl_dev from loaded superblk
     auto rdev = std::make_shared< RaftReplDev >(*this, std::move(rd_sb), true /* load_existing */);
 
     // Add the RaftReplDev to the list of repl_devs
@@ -512,7 +515,7 @@ void RaftReplService::load_repl_dev(sisl::byte_view const& buf, void* meta_cooki
 // In this function, it only invokes replDev start_replace_member. There is
 // a background reaper thread helps periodically check the member_in replication status, after in_member has caught up,
 // will trigger replDev complete_replace_member.
-AsyncReplResult<> RaftReplService::replace_member(group_id_t group_id, std::string& task_id,
+async_status RaftReplService::replace_member(group_id_t group_id, std::string& task_id,
                                                   const replica_member_info& member_out,
                                                   const replica_member_info& member_in, uint32_t commit_quorum,
                                                   uint64_t trace_id) const {
@@ -524,10 +527,10 @@ AsyncReplResult<> RaftReplService::replace_member(group_id_t group_id, std::stri
     auto e = co_await std::dynamic_pointer_cast< RaftReplDev >(rdev_result.value())
                  ->start_replace_member(task_id, member_out, member_in, commit_quorum, trace_id);
     if (!e) co_return std::unexpected(e.error());
-    co_return ReplResult<>{std::monostate{}};
+    co_return status{std::monostate{}};
 }
 
-AsyncReplResult<> RaftReplService::flip_learner_flag(group_id_t group_id, const replica_member_info& member,
+async_status RaftReplService::flip_learner_flag(group_id_t group_id, const replica_member_info& member,
                                                      bool target, uint32_t commit_quorum, bool wait_and_verify,
                                                      uint64_t trace_id) const {
     if (is_stopping()) co_return std::unexpected(ReplServiceError::STOPPING);
@@ -537,10 +540,10 @@ AsyncReplResult<> RaftReplService::flip_learner_flag(group_id_t group_id, const 
     auto e = co_await std::dynamic_pointer_cast< RaftReplDev >(rdev_result.value())
                  ->flip_learner_flag(member, target, commit_quorum, wait_and_verify, trace_id);
     if (!e) co_return std::unexpected(e.error());
-    co_return ReplResult<>{std::monostate{}};
+    co_return status{std::monostate{}};
 }
 
-AsyncReplResult<> RaftReplService::remove_member(group_id_t group_id, const replica_id_t& member,
+async_status RaftReplService::remove_member(group_id_t group_id, const replica_id_t& member,
                                                  uint32_t commit_quorum, bool wait_and_verify,
                                                  uint64_t trace_id) const {
     if (is_stopping()) co_return std::unexpected(ReplServiceError::STOPPING);
@@ -550,10 +553,10 @@ AsyncReplResult<> RaftReplService::remove_member(group_id_t group_id, const repl
     auto e = co_await std::dynamic_pointer_cast< RaftReplDev >(rdev_result.value())
                  ->remove_member(member, commit_quorum, wait_and_verify, trace_id);
     if (!e) co_return std::unexpected(e.error());
-    co_return ReplResult<>{std::monostate{}};
+    co_return status{std::monostate{}};
 }
 
-AsyncReplResult<> RaftReplService::clean_replace_member_task(group_id_t group_id, const std::string& task_id,
+async_status RaftReplService::clean_replace_member_task(group_id_t group_id, const std::string& task_id,
                                                              uint32_t commit_quorum, uint64_t trace_id) const {
     if (is_stopping()) co_return std::unexpected(ReplServiceError::STOPPING);
     init_req_counter counter(pending_request_num);
@@ -562,10 +565,10 @@ AsyncReplResult<> RaftReplService::clean_replace_member_task(group_id_t group_id
     auto e = co_await std::dynamic_pointer_cast< RaftReplDev >(rdev_result.value())
                  ->clean_replace_member_task(task_id, commit_quorum, trace_id);
     if (!e) co_return std::unexpected(e.error());
-    co_return ReplResult<>{std::monostate{}};
+    co_return status{std::monostate{}};
 }
 
-ReplResult< std::vector< replace_member_task > > RaftReplService::list_replace_member_tasks(uint64_t trace_id) const {
+result< std::vector< replace_member_task > > RaftReplService::list_replace_member_tasks(uint64_t trace_id) const {
     if (is_stopping()) return std::unexpected(ReplServiceError::STOPPING);
     init_req_counter counter(pending_request_num);
     std::vector< replace_member_task > tasks;
@@ -595,21 +598,21 @@ ReplaceMemberStatus RaftReplService::get_replace_member_status(group_id_t group_
         ->get_replace_member_status(task_id, member_out, member_in, others, trace_id);
 }
 
-ReplServiceError RaftReplService::destroy_repl_dev(group_id_t group_id, uint64_t trace_id) {
+status RaftReplService::destroy_repl_dev(group_id_t group_id, uint64_t trace_id) {
     auto rdev_result = get_repl_dev(group_id);
     if (!rdev_result) {
         LOGINFOMOD(replication, "repl dev group_id={} not found, maybe already destroyed, trace_id={}",
                    boost::uuids::to_string(group_id), trace_id);
-        return ReplServiceError::OK;
+        return ok();
     }
     std::dynamic_pointer_cast< RaftReplDev >(rdev_result.value())->force_leave();
-    return ReplServiceError::OK;
+    return ok();
 }
 
 void RaftReplService::trigger_snapshot_creation(group_id_t group_id, repl_lsn_t compact_lsn, bool wait_for_commit) {
     auto rdev_result = get_repl_dev(group_id);
     if (!rdev_result) {
-        LOGWARNMOD(replication, "ReplDev group_id={} not found while scheduling snapshot creation",
+        LOGWARNMOD(replication, "repl_dev group_id={} not found while scheduling snapshot creation",
                    boost::uuids::to_string(group_id));
         return;
     }
@@ -713,7 +716,7 @@ void RaftReplService::gc_repl_devs() {
                 (get_elapsed_time_sec(rdev->destroyed_time()) >=
                  HS_DYNAMIC_CONFIG(generic.repl_dev_cleanup_interval_sec))) {
                 LOGINFOMOD(replication,
-                           "ReplDev group_id={} was destroyed, shutting down the raft group in delayed fashion now",
+                           "repl_dev group_id={} was destroyed, shutting down the raft group in delayed fashion now",
                            rdev->group_id());
                 groups_to_leave.push_back(rdev->group_id());
             }
@@ -740,7 +743,7 @@ void RaftReplService::flush_durable_commit_lsn() {
         // FIXUP: is it safe to access rdev_parent here?
         auto rdev = std::dynamic_pointer_cast< RaftReplDev >(rdev_parent.second);
         if (rdev->get_stage() == repl_dev_stage_t::UNREADY) {
-            LOGINFOMOD(replication, "ReplDev group_id={} is UNREADY, skip flushing durable commit lsn",
+            LOGINFOMOD(replication, "repl_dev group_id={} is UNREADY, skip flushing durable commit lsn",
                        boost::uuids::to_string(rdev->group_id()));
             continue;
         }
@@ -757,12 +760,12 @@ void RaftReplService::monitor_replace_member_replication_status() {
 }
 
 ///////////////////// RaftReplService CP Callbacks /////////////////////////////
-int ReplSvcCPContext::add_repl_dev_ctx(ReplDev* dev, cshared< ReplDevCPContext > dev_ctx) {
+int ReplSvcCPContext::add_repl_dev_ctx(repl_dev* dev, cshared< ReplDevCPContext > dev_ctx) {
     m_cp_ctx_map.emplace(dev, dev_ctx);
     return 0;
 }
 
-cshared< ReplDevCPContext > ReplSvcCPContext::get_repl_dev_ctx(ReplDev* dev) {
+cshared< ReplDevCPContext > ReplSvcCPContext::get_repl_dev_ctx(repl_dev* dev) {
     if (m_cp_ctx_map.count(dev) == 0) {
         // it is possible if a repl dev added during the cp flush
         return std::make_shared< ReplDevCPContext >();
@@ -776,7 +779,7 @@ std::unique_ptr< CPContext > RaftReplServiceCPHandler::on_switchover_cp(CP* cur_
         // Add cp info from all devices to current cp.
         // We dont need taking cp_guard as cp_mgr already taken it in do_trigger_cp_flush
         auto cur_cp_ctx = s_cast< ReplSvcCPContext* >(cur_cp->context(cp_consumer_t::REPLICATION_SVC));
-        repl_service().iterate_repl_devs([cur_cp, cur_cp_ctx](cshared< ReplDev >& repl_dev) {
+        repl_service().iterate_repl_devs([cur_cp, cur_cp_ctx](cshared< repl_dev >& repl_dev) {
             // we need collecting the LSN of each repl dev and put it into current CP.
             // There is no dirty buffers accumulated to new_cp yet, as the cp_mgr ensure replication_svc
             // is the first one being called during cp switchover.
@@ -791,7 +794,7 @@ std::unique_ptr< CPContext > RaftReplServiceCPHandler::on_switchover_cp(CP* cur_
 
 sisl::async::task< bool > RaftReplServiceCPHandler::cp_flush(CP* cp) {
     auto cp_ctx = s_cast< ReplSvcCPContext* >(cp->context(cp_consumer_t::REPLICATION_SVC));
-    repl_service().iterate_repl_devs([cp, cp_ctx](cshared< ReplDev >& repl_dev) {
+    repl_service().iterate_repl_devs([cp, cp_ctx](cshared< repl_dev >& repl_dev) {
         auto dev_ctx = cp_ctx->get_repl_dev_ctx(repl_dev.get());
         std::static_pointer_cast< RaftReplDev >(repl_dev)->cp_flush(cp, dev_ctx);
     });
@@ -800,7 +803,7 @@ sisl::async::task< bool > RaftReplServiceCPHandler::cp_flush(CP* cp) {
 
 void RaftReplServiceCPHandler::cp_cleanup(CP* cp) {
     repl_service().iterate_repl_devs(
-        [cp](cshared< ReplDev >& repl_dev) { std::static_pointer_cast< RaftReplDev >(repl_dev)->cp_cleanup(cp); });
+        [cp](cshared< repl_dev >& repl_dev) { std::static_pointer_cast< RaftReplDev >(repl_dev)->cp_cleanup(cp); });
 }
 
 int RaftReplServiceCPHandler::cp_progress_percent() { return 100; }

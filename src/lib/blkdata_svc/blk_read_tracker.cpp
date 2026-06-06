@@ -16,7 +16,7 @@
 #include "common/homestore_assert.hpp"
 
 namespace homestore {
-static BlkId extract_key(const BlkTrackRecord& rec) { return rec.m_key; }
+static blk_id extract_key(const BlkTrackRecord& rec) { return rec.m_key; }
 
 BlkReadTracker::BlkReadTracker() : m_pending_reads_map(s_expected_num_records, extract_key, nullptr /* access_cb */) {}
 
@@ -24,7 +24,7 @@ BlkReadTracker::~BlkReadTracker() = default;
 
 // BlkReadTrackerMetrics& BlkReadTracker::get_metrics() { return m_metrics; }
 
-void BlkReadTracker::merge(const BlkId& blkid, int64_t new_ref_count,
+void BlkReadTracker::merge(const blk_id& blkid, int64_t new_ref_count,
                            const std::shared_ptr< blk_track_waiter >& waiter) {
     HS_DBG_ASSERT(new_ref_count ? waiter == nullptr : waiter != nullptr, "Invalid waiter");
 
@@ -35,7 +35,7 @@ void BlkReadTracker::merge(const BlkId& blkid, int64_t new_ref_count,
     [[maybe_unused]] bool waiter_rescheduled{false};
     // everything is aligned after this point, so we don't need to handle sub_range in a base blkid;
     while (cur_base_blk_num <= last_base_blk_num) {
-        BlkId base_blkid{cur_base_blk_num, entries_per_record(), blkid.chunk_num()};
+        blk_id base_blkid{cur_base_blk_num, entries_per_record(), blkid.chunk_num()};
 
         if (new_ref_count > 0) {
             // This is an insert operation
@@ -73,10 +73,10 @@ void BlkReadTracker::merge(const BlkId& blkid, int64_t new_ref_count,
     // be called automatically when this function exits (waiter's destrctor will be called);
 }
 
-void BlkReadTracker::insert(const BlkId& blkid) { merge(blkid, 1, nullptr); }
-void BlkReadTracker::remove(const BlkId& blkid) { merge(blkid, -1, nullptr); }
+void BlkReadTracker::insert(const blk_id& blkid) { merge(blkid, 1, nullptr); }
+void BlkReadTracker::remove(const blk_id& blkid) { merge(blkid, -1, nullptr); }
 
-void BlkReadTracker::wait_on(MultiBlkId const& blkids, after_remove_cb_t&& after_remove_cb) {
+void BlkReadTracker::wait_on(multi_blk_id const& blkids, after_remove_cb_t&& after_remove_cb) {
     if (blkids.num_pieces() == 1) {
         merge(blkids, 0, std::make_shared< blk_track_waiter >(std::move(after_remove_cb)));
     } else {

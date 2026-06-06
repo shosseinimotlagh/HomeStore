@@ -169,7 +169,7 @@ public:
         shared< ChunkSelector > custom_chunk_selector{nullptr};
         shared< ChunkSelector > index_chunk_selector{nullptr};
         IndexServiceCallbacks* index_svc_cbs{nullptr};
-        shared< ReplApplication > repl_app{nullptr};
+        shared< repl_application > repl_app{nullptr};
         chunk_num_t num_chunks{1};
         uint64_t chunk_size{32 * 1024 * 1024}; // Chunk size in MB.
         uint64_t min_chunk_size{0};
@@ -203,14 +203,14 @@ public:
     }
 
     virtual void shutdown_homestore(bool cleanup = true) {
-        if (homestore::HomeStore::safe_instance() == nullptr) {
+        if (homestore::home_store::safe_instance() == nullptr) {
             /* Already shutdown */
             return;
         }
 
-        homestore::HomeStore::instance()->shutdown();
+        homestore::home_store::instance()->shutdown();
         iomanager.stop(); // Stop iomanager first in case any fiber is still referencing homestore resources
-        homestore::HomeStore::reset_instance();
+        homestore::home_store::reset_instance();
 
         if (cleanup) {
             remove_files(m_generated_devs);
@@ -224,11 +224,11 @@ public:
 
 #ifdef _PRERELEASE
     void wait_for_crash_recovery(bool check_will_crash = false) {
-        if (check_will_crash && !homestore::HomeStore::instance()->crash_simulator().will_crash()) { return; }
+        if (check_will_crash && !homestore::home_store::instance()->crash_simulator().will_crash()) { return; }
         LOGDEBUG("Waiting for m_crash_recovered future");
         m_crash_recovered.get_future().get();
         m_crash_recovered = std::promise< void >();
-        homestore::HomeStore::instance()->crash_simulator().set_will_crash(false);
+        homestore::home_store::instance()->crash_simulator().set_will_crash(false);
     }
 #endif
 
@@ -438,7 +438,7 @@ private:
         LOGINFO("Initialize and start HomeStore with app_mem_size = {}", homestore::in_bytes(app_mem_size));
 
         using namespace homestore;
-        auto hsi = HomeStore::instance();
+        auto hsi = home_store::instance();
         for (auto& [svc, tp] : m_token.svc_params_) {
             if (svc == HS_SERVICE::DATA) {
                 hsi->with_data_service(tp.custom_chunk_selector);

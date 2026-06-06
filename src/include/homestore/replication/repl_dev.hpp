@@ -11,7 +11,7 @@
 #include <sisl/fds/utils.hpp>
 #include <sisl/grpc/generic_service.hpp>
 #include <sisl/grpc/rpc_client.hpp>
-#include <homestore/replication/repl_decls.h>
+#include <homestore/replication/repl_decls.hpp>
 #include <homestore/blkdata_service.hpp>
 #include <libnuraft/snapshot.hxx>
 
@@ -24,8 +24,9 @@ class log_entry;
 } // namespace nuraft
 
 namespace homestore {
-class ReplDev;
-class ReplDevListener;
+class repl_dev;
+class repl_dev_listener;
+class io_batch; // homestore/blkdata_service.hpp -- RAII batch token; passed by pointer to the async IO ops below
 struct repl_req_ctx;
 using raft_buf_ptr_t = nuraft::ptr< nuraft::buffer >;
 using raft_cluster_config_ptr_t = nuraft::ptr< nuraft::cluster_config >;
@@ -40,10 +41,33 @@ using repl_dest_t = std::variant< replica_id_t, repl_role_regex, svr_id_t >;
 ENUM(repl_data_rpc_error_code, uint8_t, SUCCESS, TIMEOUT, SERVER_NOT_FOUND, CANCELLED, SERVER_ALREADY_EXISTS,
      TERM_MISMATCH, BAD_REQUEST, FAILED, UNKNOWN, NOT_SUPPORTED);
 
-template < typename T >
-using DataRpcAsyncResult = sisl::async::task< Result< T, repl_data_rpc_error_code > >;
+// Register repl_data_rpc_error_code as a std::error_condition enum so the data-rpc surface unifies on result<T>
+// while its codes stay branchable (r.error() == repl_data_rpc_error_code::SERVER_NOT_FOUND).
+class repl_data_rpc_error_category : public std::error_category {
+public:
+    const char* name() const noexcept override { return "homestore.data_rpc"; }
+    std::string message(int ev) const override {
+        return std::string{enum_name(static_cast< repl_data_rpc_error_code >(ev))};
+    }
+};
+inline std::error_category const& repl_data_rpc_error_category_inst() noexcept {
+    static repl_data_rpc_error_category inst;
+    return inst;
+}
+inline std::error_condition make_error_condition(repl_data_rpc_error_code e) noexcept {
+    return std::error_condition{static_cast< int >(e), repl_data_rpc_error_category_inst()};
+}
+} // namespace homestore
 
-using NullDataRpcAsyncResult = AsyncResult< std::monostate, repl_data_rpc_error_code >;
+template <>
+struct std::is_error_condition_enum< homestore::repl_data_rpc_error_code > : std::true_type {};
+
+namespace homestore {
+
+template < typename T >
+using DataRpcAsyncResult = async_result< T >;
+
+using NullDataRpcAsyncResult = async_status;
 
 ENUM(repl_req_state_t, uint32_t,
      INIT = 0,               // Initial state
@@ -96,8 +120,8 @@ struct repl_key {
 using repl_snapshot = nuraft::snapshot;
 using repl_snapshot_ptr = nuraft::ptr< nuraft::snapshot >;
 
-// Consumers of ReplDevListener don't have to know what underlying snapshot context implementation is used by the
-// ReplDev. The state of the snapshot can be exported with serialize() and loaded with
+// Consumers of repl_dev_listener don't have to know what underlying snapshot context implementation is used by the
+// repl_dev. The state of the snapshot can be exported with serialize() and loaded with
 // repl_dev.deserialize_snapshot_context().
 class snapshot_context {
 public:
@@ -120,7 +144,7 @@ struct snapshot_obj {
     snapshot_obj(void*& ctx) : user_ctx(ctx) {}
 };
 
-// HomeStore has some meta information to be transmitted during the baseline resync,
+// home_store has some meta information to be transmitted during the baseline resync,
 // Although now only dsn needs to be synced, this structure is defined as a general message, and we can easily add data
 // if needed in the future.
 struct snp_repl_dev_data {
@@ -139,7 +163,7 @@ public:
     repl_req_ctx() { m_start_time = Clock::now(); }
     virtual ~repl_req_ctx();
     ReplServiceError init(repl_key rkey, journal_type_t op_code, bool is_proposer, sisl::blob const& user_header,
-                          sisl::blob const& key, uint32_t data_size, cshared< ReplDevListener >& listener);
+                          sisl::blob const& key, uint32_t data_size, cshared< repl_dev_listener >& listener);
 
     /////////////////////// All getters ///////////////////////
     repl_key const& rkey() const { return m_rkey; }
@@ -153,7 +177,7 @@ public:
 
     sisl::blob const& header() const { return m_header; }
     sisl::blob const& key() const { return m_key; }
-    MultiBlkId const& local_blkid() const {
+    multi_blk_id const& local_blkid() const {
         // Currently used by raft repl dev only where a single blob is expected.
         // Code checks if its a valid blkid so return a dummy blkid.
         if (!m_local_blkids.empty())
@@ -162,8 +186,8 @@ public:
             return dummy_blkid;
     }
 
-    std::vector< MultiBlkId >& local_blkids() { return m_local_blkids; }
-    RemoteBlkId const& remote_blkid() const { return m_remote_blkid; }
+    std::vector< multi_blk_id >& local_blkids() { return m_local_blkids; }
+    remote_blk_id const& remote_blkid() const { return m_remote_blkid; }
     const char* data() const {
         DEBUG_ASSERT(m_data != nullptr,
                      "m_data is nullptr, use before save_pushed/fetched_data or after release_data()");
@@ -194,7 +218,7 @@ public:
     /// @param listener Listener associated with the repl_dev
     /// @param data_size Size of the data for which blks are to be allocated
     /// @return Any error in getting hints or allocating blkids
-    ReplServiceError alloc_local_blks(cshared< ReplDevListener >& listener, uint32_t data_size);
+    ReplServiceError alloc_local_blks(cshared< repl_dev_listener >& listener, uint32_t data_size);
 
     /// @brief  This method creates the journal entry for the repl_req. It will allocate the buffer for the journal
     /// entry and build the basic journal entry
@@ -228,8 +252,8 @@ public:
     /// @return true if the request didn't receive the data already, false otherwise
     bool save_fetched_data(sisl::GenericClientResponse const& fetched_data, uint8_t const* data, uint32_t data_size);
 
-    void set_remote_blkid(RemoteBlkId const& rbid) { m_remote_blkid = rbid; }
-    void set_local_blkids(std::vector< MultiBlkId > const& lbids) { m_local_blkids = std::move(lbids); }
+    void set_remote_blkid(remote_blk_id const& rbid) { m_remote_blkid = rbid; }
+    void set_local_blkids(std::vector< multi_blk_id > const& lbids) { m_local_blkids = std::move(lbids); }
     void set_is_volatile(bool is_volatile) { m_is_volatile.store(is_volatile); }
     void set_lsn(int64_t lsn);
     void add_state(repl_req_state_t s);
@@ -262,9 +286,9 @@ private:
     std::atomic< bool > m_is_volatile{true};                   // Is the log still in memory and not flushed to disk yet
 
     /////////////// Data related section /////////////////
-    static inline MultiBlkId dummy_blkid;
-    std::vector< MultiBlkId > m_local_blkids; // Local BlkId for the data
-    RemoteBlkId m_remote_blkid;               // Corresponding remote blkid for the data
+    static inline multi_blk_id dummy_blkid;
+    std::vector< multi_blk_id > m_local_blkids; // Local blk_id for the data
+    remote_blk_id m_remote_blkid;               // Corresponding remote blkid for the data
     uint8_t const* m_data;                    // Raw data pointer containing the actual data
 
     /////////////// Journal/Buf related section /////////////////
@@ -285,14 +309,14 @@ private:
 };
 
 //
-// Callbacks to be implemented by ReplDev users.
+// Callbacks to be implemented by repl_dev users.
 //
-class ReplDevListener {
+class repl_dev_listener {
 public:
-    virtual ~ReplDevListener() = default;
+    virtual ~repl_dev_listener() = default;
 
-    void set_repl_dev(shared< ReplDev > rdev) { m_repl_dev = rdev; }
-    shared< ReplDev > repl_dev() { return m_repl_dev.lock(); }
+    void set_repl_dev(shared< repl_dev > rdev) { m_repl_dev = rdev; }
+    shared< repl_dev > device() { return m_repl_dev.lock(); }
 
     /// @brief Called when the log entry has been committed in the replica set.
     ///
@@ -306,7 +330,7 @@ public:
     /// @param ctx - Context passed as part of the replica_set::write() api
     ///
     virtual void on_commit(int64_t lsn, sisl::blob const& header, sisl::blob const& key,
-                           std::vector< MultiBlkId > const& blkids, cintrusive< repl_req_ctx >& ctx) = 0;
+                           std::vector< multi_blk_id > const& blkids, cintrusive< repl_req_ctx >& ctx) = 0;
 
     /// @brief periodically called to notify the lastest committed lsn to the listener.
     /// NOTE: this callback will block the thread of flushing the latest committed lsn into repl_dev superblk as DC_LSN,
@@ -314,7 +338,7 @@ public:
     ///
     /// @param lsn - The lasted committed log sequence number so far
     ///
-    virtual void notify_committed_lsn(int64_t lsn) = 0;
+    virtual void notify_committed_lsn(int64_t lsn) {}
 
     /// @brief Called when the log entry has been received by the replica dev.
     ///
@@ -335,7 +359,9 @@ public:
     /// @param key - Key originally passed with repl_dev::write() api
     /// @param ctx - Context passed as part of the replica_set::write() api
     virtual bool on_pre_commit(int64_t lsn, const sisl::blob& header, const sisl::blob& key,
-                               cintrusive< repl_req_ctx >& ctx) = 0;
+                               cintrusive< repl_req_ctx >& ctx) {
+        return true;
+    }
 
     /// @brief Called when the log entry has been rolled back by the replica set.
     ///
@@ -347,19 +373,19 @@ public:
     /// NOTE: Listener should do the free any resources created as part of pre-commit.
     ///
     /// @param lsn - The log sequence number getting rolled back
-    /// @param header - Header originally passed with ReplDev::async_alloc_write() api
-    /// @param key - Key originally passed with ReplDev::async_alloc_write() api
-    /// @param ctx - Context passed as part of the ReplDev::async_alloc_write() api
+    /// @param header - Header originally passed with repl_dev::async_alloc_write() api
+    /// @param key - Key originally passed with repl_dev::async_alloc_write() api
+    /// @param ctx - Context passed as part of the repl_dev::async_alloc_write() api
     virtual void on_rollback(int64_t lsn, const sisl::blob& header, const sisl::blob& key,
-                             cintrusive< repl_req_ctx >& ctx) = 0;
+                             cintrusive< repl_req_ctx >& ctx) {}
 
     /// @brief Called when the config log entry has been rolled back.
     /// @param lsn - The log sequence number getting rolled back
-    virtual void on_config_rollback(int64_t lsn) = 0;
+    virtual void on_config_rollback(int64_t lsn) {}
 
     /// @brief Called when the replDev is created after restart. The consumer is expected to recover all the modules
     /// necessary to replay/commit the logs.
-    virtual void on_restart() = 0;
+    virtual void on_restart() {}
 
     /// @brief Called when the async_alloc_write call failed to initiate replication
     ///
@@ -368,11 +394,11 @@ public:
     ///
     /// NOTE: Listener should do the free any resources created as part of pre-commit.
     ///
-    /// @param header - Header originally passed with ReplDev::async_alloc_write() api
-    /// @param key - Key originally passed with ReplDev::async_alloc_write() api
-    /// @param ctx - Context passed as part of the ReplDev::async_alloc_write() api
+    /// @param header - Header originally passed with repl_dev::async_alloc_write() api
+    /// @param key - Key originally passed with repl_dev::async_alloc_write() api
+    /// @param ctx - Context passed as part of the repl_dev::async_alloc_write() api
     virtual void on_error(ReplServiceError error, const sisl::blob& header, const sisl::blob& key,
-                          cintrusive< repl_req_ctx >& ctx) = 0;
+                          cintrusive< repl_req_ctx >& ctx) {}
 
     /// @brief Called when replication module is trying to allocate a block to write the value
     ///
@@ -385,37 +411,39 @@ public:
     /// @return Expected to return blk_alloc_hints for this write. If the hints are not available, then return the
     /// error. It is to be noted this method should return error only in very abnornal cases as in some code flow, an
     /// error would result in a crash or stall of the entire commit thread.
-    virtual ReplResult< blk_alloc_hints > get_blk_alloc_hints(sisl::blob const& header, uint32_t data_size,
-                                                              cintrusive< homestore::repl_req_ctx >& hs_ctx) = 0;
+    virtual result< blk_alloc_hints > get_blk_alloc_hints(sisl::blob const& header, uint32_t data_size,
+                                                          cintrusive< homestore::repl_req_ctx >& hs_ctx) {
+        return blk_alloc_hints{};
+    }
 
     /// @brief Called when the repl_dev is being destroyed. The consumer is expected to clean up any related resources.
     /// However, it is expected that this call be idempotent. It is possible in rare scenarios that this can be called
     /// after restart in case crash happened during the destroy.
-    virtual void on_destroy(const group_id_t& group_id) = 0;
+    virtual void on_destroy(const group_id_t& group_id) {}
 
     /// @brief Called when start replace member.
     virtual void on_start_replace_member(const std::string& task_id, const replica_member_info& member_out,
-                                         const replica_member_info& member_in, trace_id_t tid) = 0;
+                                         const replica_member_info& member_in, trace_id_t tid) {}
 
     /// @brief Called when complete replace member.
     virtual void on_complete_replace_member(const std::string& task_id, const replica_member_info& member_out,
-                                            const replica_member_info& member_in, trace_id_t tid) = 0;
+                                            const replica_member_info& member_in, trace_id_t tid) {}
 
     /// @brief Called when clean replace member task (rollback).
     virtual void on_clean_replace_member_task(const std::string& task_id, const replica_member_info& member_out,
-                                              const replica_member_info& member_in, trace_id_t tid) = 0;
+                                              const replica_member_info& member_in, trace_id_t tid) {}
 
     /// @brief Called when remove a member.
-    virtual void on_remove_member(const replica_id_t& member, trace_id_t tid) = 0;
+    virtual void on_remove_member(const replica_id_t& member, trace_id_t tid) {}
 
     /// @brief Called when the snapshot is being created by nuraft
-    virtual AsyncReplResult<> create_snapshot(shared< snapshot_context > context) = 0;
+    virtual async_status create_snapshot(shared< snapshot_context > context) { co_return ok(); }
 
     /// @brief Called when nuraft does the baseline resync and in the end apply snapshot.
-    virtual bool apply_snapshot(shared< snapshot_context > context) = 0;
+    virtual bool apply_snapshot(shared< snapshot_context > context) { return true; }
 
     /// @brief Get the last snapshot saved.
-    virtual shared< snapshot_context > last_snapshot() = 0;
+    virtual shared< snapshot_context > last_snapshot() { return nullptr; }
 
     /// @brief Called on the leader side when the follower wants to do baseline resync and leader
     /// uses offset given by the follower to the know the current state of the follower.
@@ -423,15 +451,15 @@ public:
     /// times on the leader till all the data is transferred to the follower. is_last_obj in
     /// snapshot_obj will be true once all the data has been trasnferred. After this the raft on
     /// the follower side can do the incremental resync.
-    virtual int read_snapshot_obj(shared< snapshot_context > context, shared< snapshot_obj > snp_obj) = 0;
+    virtual int read_snapshot_obj(shared< snapshot_context > context, shared< snapshot_obj > snp_obj) { return 0; }
 
     /// @brief Called on the follower when the leader sends the data during the baseline resyc.
     /// is_last_obj in in snapshot_obj will be true once all the data has been transfered.
     /// After this the raft on the follower side can do the incremental resync.
-    virtual void write_snapshot_obj(shared< snapshot_context > context, shared< snapshot_obj > snp_obj) = 0;
+    virtual void write_snapshot_obj(shared< snapshot_context > context, shared< snapshot_obj > snp_obj) {}
 
     /// @brief Free up user-defined context inside the snapshot_obj that is allocated during read_snapshot_obj.
-    virtual void free_user_snp_ctx(void*& user_snp_ctx) = 0;
+    virtual void free_user_snp_ctx(void*& user_snp_ctx) {}
 
     /// @brief ask upper layer to decide which data should be returned.
     // @param header - header of the log entry.
@@ -439,7 +467,7 @@ public:
     // @param sgs - sgs to be filled with data
     // @param lsn - lsn of the log entry
     virtual sisl::async::task< iomgr::io_result > on_fetch_data(const int64_t lsn, const sisl::blob& header,
-                                                                const MultiBlkId& blkid, sisl::sg_list& sgs) {
+                                                                const multi_blk_id& blkid, sisl::sg_list& sgs) {
         // default implementation is reading by blkid directly
         co_return co_await data_service().async_read(blkid, sgs, sgs.size);
     }
@@ -447,7 +475,7 @@ public:
     /// @brief ask upper layer to handle no_space_left event
     // @param lsn - on which repl_lsn no_space_left happened
     // @param header - on which header no_space_left happened when trying to allocate blk
-    virtual void on_no_space_left(repl_lsn_t lsn, sisl::blob const& header) = 0;
+    virtual void on_no_space_left(repl_lsn_t lsn, sisl::blob const& header) {}
 
     /// @brief when restart, after all the logs are replayed and before joining raft group, notify the upper layer
     virtual void on_log_replay_done(const group_id_t& group_id) {};
@@ -457,13 +485,13 @@ public:
     virtual void on_become_follower(const group_id_t& group_id) {};
 
 private:
-    std::weak_ptr< ReplDev > m_repl_dev;
+    std::weak_ptr< repl_dev > m_repl_dev;
 };
 
-class ReplDev {
+class repl_dev {
 public:
-    ReplDev() = default;
-    virtual ~ReplDev() { detach_listener(); }
+    repl_dev() = default;
+    virtual ~repl_dev() { detach_listener(); }
 
     /// @brief Allocates blkids from the storage engine to write the value into. Storage
     /// engine returns a blkid_list in cases where single contiguous blocks are not
@@ -472,18 +500,18 @@ public:
     /// @param data_size - Size of the data.
     /// @param hints - Specify block allocation hints.
     /// @param out_blkids - List of bilkid's which may not be contiguous.
-    virtual std::error_code alloc_blks(uint32_t data_size, const blk_alloc_hints& hints,
-                                       std::vector< MultiBlkId >& out_blkids) = 0;
+    virtual status alloc_blks(uint32_t data_size, const blk_alloc_hints& hints,
+                              std::vector< multi_blk_id >& out_blkids) = 0;
 
     /// @brief  Write data locally using the specified blkid's. Data is split across the blkids.
     /// @param blkids - List of blkid's where data will be written.
     /// @param value - vector of io buffers that contain value for the key.
-    /// @param part_of_batch - Is write is part of a batch. If part of the batch, then submit_batch needs to be called
-    /// at the end
+    /// @param batch - Optional batch token from data_service().begin_batch(); pass `&batch` to accumulate this write
+    /// into that batch (the token submits on destruction).
     /// @return A Future with std::error_code to notify if it has successfully write the data or any error code in case
     /// of failure
-    virtual sisl::async::task< iomgr::io_result > async_write(const std::vector< MultiBlkId >& blkids,
-                                                              sisl::sg_list const& value, bool part_of_batch = false,
+    virtual sisl::async::task< iomgr::io_result > async_write(const std::vector< multi_blk_id >& blkids,
+                                                              sisl::sg_list const& value, io_batch* batch = nullptr,
                                                               trace_id_t tid = 0) = 0;
 
     /// @brief Creates a log/journal entry with <header, key, blkid> and calls the on_commit listener callback.
@@ -494,7 +522,7 @@ public:
     /// the journal entry).
     /// @param data_size - Size of the data.
     /// @param ctx - User supplied context which will be passed to listener callbacks
-    virtual void async_write_journal(const std::vector< MultiBlkId >& blkids, sisl::blob const& header,
+    virtual void async_write_journal(const std::vector< multi_blk_id >& blkids, sisl::blob const& header,
                                      sisl::blob const& key, uint32_t data_size, repl_req_ptr_t ctx,
                                      trace_id_t tid = 0) = 0;
 
@@ -516,34 +544,34 @@ public:
     /// @param value - vector of io buffers that contain value for the key. It is an optional field and if the value
     /// list size is 0, then only key is written to replicadev without data.
     /// @param ctx - User supplied context which will be passed to listener callbacks
-    /// @param part_of_batch Is write is part of a batch. If part of the batch, then submit_batch needs to be called at
-    /// the end
+    /// @param batch - Optional batch token from data_service().begin_batch(); pass `&batch` to accumulate this write
+    /// into that batch (the token submits on destruction).
     virtual void async_alloc_write(sisl::blob const& header, sisl::blob const& key, sisl::sg_list const& value,
-                                   repl_req_ptr_t ctx, bool part_of_batch = false, trace_id_t tid = 0) = 0;
+                                   repl_req_ptr_t ctx, io_batch* batch = nullptr, trace_id_t tid = 0) = 0;
 
     /// @brief Reads the data and returns a future to continue on
     /// @param bid Block id to read
     /// @param sgs Scatter gather buffer list to which blkids are to be read into
     /// @param size Total size of the data read
-    /// @param part_of_batch Is read is part of a batch. If part of the batch, then submit_batch needs to be called at
-    /// the end
+    /// @param batch - Optional batch token from data_service().begin_batch(); pass `&batch` to accumulate this read
+    /// into that batch (the token submits on destruction).
     /// @return A Future with std::error_code to notify if it has successfully read the data or any error code in case
     /// of failure
-    virtual sisl::async::task< iomgr::io_result > async_read(MultiBlkId const& blkid, sisl::sg_list& sgs, uint32_t size,
-                                                             bool part_of_batch = false, trace_id_t tid = 0) = 0;
+    virtual sisl::async::task< iomgr::io_result > async_read(multi_blk_id const& blkid, sisl::sg_list& sgs, uint32_t size,
+                                                             io_batch* batch = nullptr, trace_id_t tid = 0) = 0;
 
     /// @brief After data is replicated and on_commit to the listener is called. the blkids can be freed.
     ///
     /// @param lsn - LSN of the old blkids that is being freed
     /// @param blkids - blkids to be freed.
-    virtual sisl::async::task< iomgr::io_result > async_free_blks(int64_t lsn, MultiBlkId const& blkid,
+    virtual sisl::async::task< iomgr::io_result > async_free_blks(int64_t lsn, multi_blk_id const& blkid,
                                                                   trace_id_t tid = 0) = 0;
 
     /// @brief Try to switch the current replica where this method called to become a leader.
     /// @return True if it is successful, false otherwise.
-    virtual AsyncReplResult<> become_leader() = 0;
+    virtual async_status become_leader() = 0;
 
-    /// @brief Checks if this replica is the leader in this ReplDev
+    /// @brief Checks if this replica is the leader in this repl_dev
     /// @return true or false
     virtual bool is_leader() const = 0;
 
@@ -614,7 +642,7 @@ public:
 
     virtual std::shared_ptr< snapshot_context > deserialize_snapshot_context(sisl::io_blob_safe& snp_ctx) = 0;
 
-    virtual void attach_listener(shared< ReplDevListener > listener) { m_listener = std::move(listener); }
+    virtual void attach_listener(shared< repl_dev_listener > listener) { m_listener = std::move(listener); }
 
     virtual void detach_listener() {
         if (m_listener) {
@@ -627,7 +655,7 @@ public:
 
     virtual void flush_durable_commit_lsn() {}
 
-    virtual shared< ReplDevListener > get_listener() { return m_listener; }
+    virtual shared< repl_dev_listener > get_listener() { return m_listener; }
 
     // we have no shutdown for repl_dev, since shutdown repl_dev is done by repl_service
     void stop() {
@@ -666,7 +694,7 @@ public:
                                sisl::io_blob_list_t const& cli_buf) = 0;
 
 protected:
-    shared< ReplDevListener > m_listener;
+    shared< repl_dev_listener > m_listener;
 
     // graceful shutdown related
 protected:

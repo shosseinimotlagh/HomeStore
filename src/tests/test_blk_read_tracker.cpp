@@ -43,18 +43,18 @@ public:
         return static_cast< op_type_t >(rand() % static_cast< uint8_t >(op_type_t::max_op));
     }
 
-    void gen_random_blkids(std::vector< BlkId >& out_bids, blk_count_t nblks) {
+    void gen_random_blkids(std::vector< blk_id >& out_bids, blk_count_t nblks) {
         for (auto i = 0ul; i < nblks; ++i) {
             out_bids.emplace_back(gen_random_blkid());
         }
     }
 
-    BlkId gen_random_blkid() {
+    blk_id gen_random_blkid() {
         static thread_local std::random_device rd;
         static thread_local std::default_random_engine re{rd()};
         std::uniform_int_distribution< blk_num_t > blk_num{0, 1000};
         std::uniform_int_distribution< blk_count_t > nblks{0, 64};
-        return BlkId{blk_num(re), nblks(re), static_cast< chunk_num_t >(0ul) /* chunk_num */};
+        return blk_id{blk_num(re), nblks(re), static_cast< chunk_num_t >(0ul) /* chunk_num */};
     }
 
 private:
@@ -79,14 +79,14 @@ TEST_F(BlkReadTrackerTest, TestBaiscInsertRemoveWithNoWaiter) {
         // first  : {0, 1, nblks-1},
         // second : { nblks, nblk+1, ..., 2*nblk -1},
         // so on so forth;
-        get_inst()->insert(BlkId{start_blk_num, nblks, 0});
+        get_inst()->insert(blk_id{start_blk_num, nblks, 0});
         start_blk_num += nblks;
     }
 
     LOGINFO("Step 3: remove {} BlkIds, with nblks {} from hash map.", nblkids, nblks);
     start_blk_num = 0;
     for (uint32_t i = 0; i < nblkids; ++i) {
-        get_inst()->remove(BlkId{start_blk_num, nblks, 0});
+        get_inst()->remove(blk_id{start_blk_num, nblks, 0});
         start_blk_num += nblks;
     }
 }
@@ -100,14 +100,14 @@ TEST_F(BlkReadTrackerTest, TestOverlapInsertThenRemoveWithNoWaiter) {
 
     LOGINFO("Step 2: read olverlaped BlkIds to hash map.");
 
-    // insert same BlkId to accumulate ref_cnt;
-    BlkId b{100, 64, 10};
+    // insert same blk_id to accumulate ref_cnt;
+    blk_id b{100, 64, 10};
     get_inst()->insert(b);
     get_inst()->insert(b);
     get_inst()->insert(b);
 
     // different chunk
-    BlkId c{100, 64, 2};
+    blk_id c{100, 64, 2};
     get_inst()->insert(c);
     get_inst()->insert(c);
 
@@ -118,14 +118,14 @@ TEST_F(BlkReadTrackerTest, TestOverlapInsertThenRemoveWithNoWaiter) {
     get_inst()->remove(c);
     get_inst()->remove(c);
 
-    // differnt BlkId with same base ID (after alignment)
-    get_inst()->insert(BlkId{70, 51, 5});
-    get_inst()->insert(BlkId{72, 50, 5});
-    get_inst()->insert(BlkId{68, 44, 5});
+    // differnt blk_id with same base ID (after alignment)
+    get_inst()->insert(blk_id{70, 51, 5});
+    get_inst()->insert(blk_id{72, 50, 5});
+    get_inst()->insert(blk_id{68, 44, 5});
 
-    get_inst()->remove(BlkId{70, 51, 5});
-    get_inst()->remove(BlkId{72, 50, 5});
-    get_inst()->remove(BlkId{68, 44, 5});
+    get_inst()->remove(blk_id{70, 51, 5});
+    get_inst()->remove(blk_id{72, 50, 5});
+    get_inst()->remove(blk_id{68, 44, 5});
 }
 
 /*
@@ -133,7 +133,7 @@ TEST_F(BlkReadTrackerTest, TestOverlapInsertThenRemoveWithNoWaiter) {
  * */
 TEST_F(BlkReadTrackerTest, TestInsertWithWaiter) {
 
-    BlkId b{16, 20, 0};
+    blk_id b{16, 20, 0};
     get_inst()->insert(b);
 
     bool called{false};
@@ -156,7 +156,7 @@ TEST_F(BlkReadTrackerTest, TestInsertWithWaiter) {
  * free bid callback should be called after read completes
  * */
 TEST_F(BlkReadTrackerTest, TestInsRmWithWaiterOnSameBid) {
-    BlkId b{16, 20, 0};
+    blk_id b{16, 20, 0};
     LOGINFO("Step 1: read blkid: {} into hash map.", b);
     get_inst()->insert(b);
 
@@ -191,12 +191,12 @@ TEST_F(BlkReadTrackerTest, TestInsRmeWithWaiterOverlapOneRead) {
     LOGINFO("Step 1: set entries per record to {}.", align);
     get_inst()->set_entries_per_record(align);
 
-    BlkId b{16, 40, 0};
+    blk_id b{16, 40, 0};
     LOGINFO("Step 2: read on blkid: {}. ", b.to_string());
     get_inst()->insert(b);
 
     bool called{false};
-    BlkId free_bid{10, 8, 0};
+    blk_id free_bid{10, 8, 0};
     LOGINFO("Step 3: free blkid: {}.", free_bid);
     get_inst()->wait_on(free_bid, [&called, &free_bid]() {
         LOGMSG_ASSERT_EQ(called, false, "not expecting wait_on callback to be called more than once!");
@@ -204,7 +204,7 @@ TEST_F(BlkReadTrackerTest, TestInsRmeWithWaiterOverlapOneRead) {
         LOGINFO("wait_on callback triggered on blkid: {}.", free_bid.to_string());
     });
 
-    BlkId c{64, 8, 0};
+    blk_id c{64, 8, 0};
     LOGINFO("Step 4: read on blkid: {}.", c.to_string());
     get_inst()->insert(c);
 
@@ -236,11 +236,11 @@ TEST_F(BlkReadTrackerTest, TestInsRmWithWaiterOverlapMultiReads0) {
     LOGINFO("Step 1: set entries per record to {}.", align);
     get_inst()->set_entries_per_record(align);
 
-    BlkId b{35, 20, 0};
+    blk_id b{35, 20, 0};
     LOGINFO("Step 2: read 1 blkid: {}.", b.to_string());
     get_inst()->insert(b);
 
-    BlkId free_bid{36, 2, 0};
+    blk_id free_bid{36, 2, 0};
     LOGINFO("Step 3: free blkid: {}.", free_bid.to_string());
     bool called{false};
     get_inst()->wait_on(free_bid, [&free_bid, &called]() {
@@ -249,7 +249,7 @@ TEST_F(BlkReadTrackerTest, TestInsRmWithWaiterOverlapMultiReads0) {
         LOGINFO("wait on callback triggered on blkid: {}", free_bid.to_string());
     });
 
-    BlkId c{40, 5, 0};
+    blk_id c{40, 5, 0};
     LOGINFO("Step 4: read 2 blkid: {}.", c.to_string());
     get_inst()->insert(c);
 
@@ -282,17 +282,17 @@ TEST_F(BlkReadTrackerTest, TestInsRmWithWaiterOverlapMultiReads1) {
     get_inst()->set_entries_per_record(align);
 
     // Read-1 covers two base id: {32, 8, 1}, {40, 8, 1}
-    BlkId b{35, 12, 1};
+    blk_id b{35, 12, 1};
     LOGINFO("Step 2: read 1 blkid: {}. ", b.to_string());
     get_inst()->insert(b);
 
     // Read-2 covers three base ids: {48, 8, 1}, {56, 8, 1}, {64, 8, 0}
-    BlkId c{48, 16, 1};
+    blk_id c{48, 16, 1};
     LOGINFO("Step 3: read 2 blkid: {}. ", c.to_string());
     get_inst()->insert(c);
 
     // free blk wait on two base ids: {40, 8, 1}, {48, 8, 1}
-    BlkId free_bid{44, 6, 1};
+    blk_id free_bid{44, 6, 1};
     bool called{false};
     LOGINFO("Step 4: free blkid: {}.", free_bid);
     get_inst()->wait_on(free_bid, [&free_bid, &called]() {
@@ -331,11 +331,11 @@ TEST_F(BlkReadTrackerTest, TestInsRmWithWaiterOverlapMultiReads2) {
     LOGINFO("Step 1: set entries per record to {}.", align);
     get_inst()->set_entries_per_record(align);
 
-    BlkId b{16, 40, 0};
+    blk_id b{16, 40, 0};
     LOGINFO("Step 2: read-1 on blkid: {}. ", b.to_string());
     get_inst()->insert(b);
 
-    BlkId free_bid{10, 8, 0};
+    blk_id free_bid{10, 8, 0};
     LOGINFO("Step 3: free on blkid: {}. ", free_bid.to_string());
     bool called{false};
     get_inst()->wait_on(free_bid, [&free_bid, &called]() {
@@ -344,7 +344,7 @@ TEST_F(BlkReadTrackerTest, TestInsRmWithWaiterOverlapMultiReads2) {
         LOGINFO("wait on callback triggered on free_bid: {}", free_bid.to_string());
     });
 
-    BlkId c{5, 4, 0};
+    blk_id c{5, 4, 0};
     LOGINFO("Step 4: read-2 on blkid: {}.", c.to_string());
     get_inst()->insert(c);
 
@@ -371,7 +371,7 @@ TEST_F(BlkReadTrackerTest, TestThreadedInsertAndRemove) {
     LOGINFO("Step 1: set entries per record to {}.", align);
     get_inst()->set_entries_per_record(align);
 
-    std::vector< BlkId > bids{{10, 8, 0}, {20, 5, 0}, {25, 6, 0}, {43, 16, 0}, {56, 4, 0}, {72, 18, 0}, {122, 4, 0}};
+    std::vector< blk_id > bids{{10, 8, 0}, {20, 5, 0}, {25, 6, 0}, {43, 16, 0}, {56, 4, 0}, {72, 18, 0}, {122, 4, 0}};
 
     const auto repeat = 100ul;
     std::vector< std::thread > op_threads;
@@ -417,7 +417,7 @@ TEST_F(BlkReadTrackerTest, TestThreadedInsertWaitonThenRemove) {
     LOGINFO("Step 1: set entries per record to {}.", align);
     get_inst()->set_entries_per_record(align);
 
-    std::vector< BlkId > bids{{12, 6, 0}, {18, 5, 0}, {25, 8, 0}, {36, 16, 0}, {57, 4, 0}, {66, 18, 0}, {92, 14, 0}};
+    std::vector< blk_id > bids{{12, 6, 0}, {18, 5, 0}, {25, 8, 0}, {36, 16, 0}, {57, 4, 0}, {66, 18, 0}, {92, 14, 0}};
     const auto repeat = 100ul;
     std::vector< std::thread > op_threads;
     for (const auto& b : bids) {
@@ -486,7 +486,7 @@ TEST_F(BlkReadTrackerTest, TestThreadedInsertRemoveAndWait2) {
     get_inst()->set_entries_per_record(align);
 
     std::mutex mtx;
-    std::list< BlkId > inserted_bids;
+    std::list< blk_id > inserted_bids;
 
     std::atomic< uint32_t > outstanding_wait_bids_cnt = 0ul;
 
@@ -502,14 +502,14 @@ TEST_F(BlkReadTrackerTest, TestThreadedInsertRemoveAndWait2) {
             }
 
             if (op == op_type_t::insert) {
-                BlkId b = gen_random_blkid();
+                blk_id b = gen_random_blkid();
                 get_inst()->insert(b);
                 {
                     std::unique_lock lg(mtx);
                     inserted_bids.push_front(b);
                 }
             } else if (op == op_type_t::remove) {
-                BlkId rm_b;
+                blk_id rm_b;
                 {
                     std::unique_lock lg(mtx);
                     if (inserted_bids.size() == 0) {
@@ -522,7 +522,7 @@ TEST_F(BlkReadTrackerTest, TestThreadedInsertRemoveAndWait2) {
 
                 get_inst()->remove(rm_b);
             } else if (op == op_type_t::wait_on) {
-                BlkId wait_b;
+                blk_id wait_b;
                 {
                     std::unique_lock lg(mtx);
                     if (inserted_bids.size() == 0) {

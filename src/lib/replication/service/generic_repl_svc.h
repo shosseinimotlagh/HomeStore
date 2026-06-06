@@ -24,7 +24,7 @@
 #include <sisl/async/task.hpp>
 #include <homestore/homestore.hpp>
 #include <homestore/replication_service.hpp>
-#include <homestore/replication/repl_dev.h>
+#include <homestore/replication/repl_dev.hpp>
 #include <homestore/checkpoint/cp_mgr.hpp>
 #include <homestore/superblk_handler.hpp>
 
@@ -34,24 +34,24 @@ static std::string const PUSH_DATA{"push_data"};
 static std::string const FETCH_DATA{"fetch_data"};
 
 struct repl_dev_superblk;
-class GenericReplService : public ReplicationService {
+class GenericReplService : public replication_service {
 protected:
-    shared< ReplApplication > m_repl_app;
+    shared< repl_application > m_repl_app;
     std::shared_mutex m_rd_map_mtx;
-    std::map< group_id_t, shared< ReplDev > > m_rd_map;
+    std::map< group_id_t, shared< repl_dev > > m_rd_map;
     replica_id_t m_my_uuid;
-    std::vector< std::pair< sisl::byte_view, void* > > m_sb_bufs;
+    std::vector< std::pair< sisl::byte_view, meta_blk* > > m_sb_bufs;
 
 public:
-    static std::shared_ptr< GenericReplService > create(cshared< ReplApplication >& repl_app);
+    static std::shared_ptr< GenericReplService > create(cshared< repl_application >& repl_app);
 
-    GenericReplService(cshared< ReplApplication >& repl_app);
+    GenericReplService(cshared< repl_application >& repl_app);
     virtual ~GenericReplService();
     virtual void start() = 0;
     meta_sub_type get_meta_blk_name() const override { return "repl_dev"; }
 
-    ReplResult< shared< ReplDev > > get_repl_dev(group_id_t group_id) const override;
-    void iterate_repl_devs(std::function< void(cshared< ReplDev >&) > const& cb) override;
+    result< shared< repl_dev > > get_repl_dev(group_id_t group_id) const override;
+    void iterate_repl_devs(std::function< void(cshared< repl_dev >&) > const& cb) override;
 
     hs_stats get_cap_stats() const override;
     replica_id_t get_my_repl_uuid() const { return m_my_uuid; }
@@ -61,8 +61,8 @@ public:
     repl_impl_type get_impl_type() const { return m_repl_app->get_impl_type(); }
 
 protected:
-    virtual void add_repl_dev(group_id_t group_id, shared< ReplDev > rdev);
-    virtual void load_repl_dev(sisl::byte_view const& buf, void* meta_cookie) = 0;
+    virtual void add_repl_dev(group_id_t group_id, shared< repl_dev > rdev);
+    virtual void load_repl_dev(sisl::byte_view const& buf, meta_blk* meta_cookie) = 0;
 
     // graceful shutdown related
 protected:
@@ -81,32 +81,32 @@ protected:
 // TODO: implement graceful shutdown for soloReplService
 class SoloReplService : public GenericReplService {
 public:
-    SoloReplService(cshared< ReplApplication >& repl_app);
+    SoloReplService(cshared< repl_application >& repl_app);
     ~SoloReplService() override;
     void start() override;
     void stop() override;
 
-    AsyncReplResult< shared< ReplDev > > create_repl_dev(group_id_t group_id,
+    async_result< shared< repl_dev > > create_repl_dev(group_id_t group_id,
                                                          std::set< replica_id_t > const& members) override;
-    sisl::async::task< ReplServiceError > remove_repl_dev(group_id_t group_id) override;
-    void load_repl_dev(sisl::byte_view const& buf, void* meta_cookie) override;
-    AsyncReplResult<> replace_member(group_id_t group_id, std::string& task_id, const replica_member_info& member_out,
+    async_status remove_repl_dev(group_id_t group_id) override;
+    void load_repl_dev(sisl::byte_view const& buf, meta_blk* meta_cookie) override;
+    async_status replace_member(group_id_t group_id, std::string& task_id, const replica_member_info& member_out,
                                      const replica_member_info& member_in, uint32_t commit_quorum = 0,
                                      uint64_t trace_id = 0) const override;
-    AsyncReplResult<> flip_learner_flag(group_id_t group_id, const replica_member_info& member, bool target,
+    async_status flip_learner_flag(group_id_t group_id, const replica_member_info& member, bool target,
                                         uint32_t commit_quorum, bool wait_and_verify = true,
                                         uint64_t trace_id = 0) const override;
-    AsyncReplResult<> remove_member(group_id_t group_id, const replica_id_t& member, uint32_t commit_quorum,
+    async_status remove_member(group_id_t group_id, const replica_id_t& member, uint32_t commit_quorum,
                                     bool wait_and_verify = true, uint64_t trace_id = 0) const override;
-    AsyncReplResult<> clean_replace_member_task(group_id_t group_id, const std::string& task_id, uint32_t commit_quorum,
+    async_status clean_replace_member_task(group_id_t group_id, const std::string& task_id, uint32_t commit_quorum,
                                                 uint64_t trace_id = 0) const override;
-    ReplResult< std::vector< replace_member_task > > list_replace_member_tasks(uint64_t trace_id = 0) const override;
+    result< std::vector< replace_member_task > > list_replace_member_tasks(uint64_t trace_id = 0) const override;
     ReplaceMemberStatus get_replace_member_status(group_id_t group_id, std::string& task_id,
                                                   const replica_member_info& member_out,
                                                   const replica_member_info& member_in,
                                                   const std::vector< replica_member_info >& others,
                                                   uint64_t trace_id = 0) const override;
-    ReplServiceError destroy_repl_dev(group_id_t group_id, uint64_t trace_id = 0) override;
+    status destroy_repl_dev(group_id_t group_id, uint64_t trace_id = 0) override;
     void trigger_snapshot_creation(group_id_t group_id, repl_lsn_t compact_lsn, bool wait_for_commit) override;
 };
 
@@ -121,5 +121,5 @@ public:
     int cp_progress_percent() override;
 };
 
-extern ReplicationService& repl_service();
+extern replication_service& repl_service();
 } // namespace homestore

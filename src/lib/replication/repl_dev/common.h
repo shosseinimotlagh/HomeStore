@@ -16,9 +16,9 @@
 
 #include <boost/intrusive_ptr.hpp>
 #include <random>
-#include <homestore/replication/repl_decls.h>
+#include <homestore/replication/repl_decls.hpp>
 #include <homestore/replication_service.hpp>
-#include <homestore/replication/repl_dev.h>
+#include <homestore/replication/repl_dev.hpp>
 #include <homestore/logstore/log_store.hpp>
 #include <homestore/superblk_handler.hpp>
 
@@ -41,7 +41,7 @@ struct repl_journal_entry {
     uint32_t user_header_size;
     uint32_t key_size;
     uint32_t value_size;
-    // Followed by user_header, then key, then MultiBlkId/value
+    // Followed by user_header, then key, then multi_blk_id/value
 
     std::string to_string() const {
         return fmt::format("version={}.{}, code={}, server_id={}, dsn={}, header_size={}, key_size={}, value_size={}",
@@ -81,21 +81,21 @@ struct repl_dev_superblk {
 
 #pragma pack()
 
-// These return a ready AsyncReplResult (= task< ReplResult< V > >). They are coroutines so a plain (non-coroutine)
-// caller returning AsyncReplResult< V > can simply `return make_async_error<>(...)` and hand the task up.
+// These return a ready async_result (= task< result< V > >). They are coroutines so a plain (non-coroutine)
+// caller returning async_result< V > can simply `return make_async_error<>(...)` and hand the task up.
 template < class V = std::monostate >
-sisl::async::task< ReplResult< V > > make_async_error(ReplServiceError err) {
+sisl::async::task< result< V > > make_async_error(std::error_condition err) {
     co_return std::unexpected(err);
 }
 
 template < class V >
-sisl::async::task< ReplResult< V > > make_async_success(V v) {
-    co_return ReplResult< V >{std::move(v)};
+sisl::async::task< result< V > > make_async_success(V v) {
+    co_return result< V >{std::move(v)};
 }
 
 template < class V = std::monostate >
-sisl::async::task< ReplResult< V > > make_async_success() {
-    co_return ReplResult< V >{std::monostate{}};
+sisl::async::task< result< V > > make_async_success() {
+    co_return result< V >{std::monostate{}};
 }
 
 inline uint64_t generateRandomTraceId() {

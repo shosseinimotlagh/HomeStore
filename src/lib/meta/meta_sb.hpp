@@ -23,7 +23,7 @@
 #include <sstream>
 #include <string>
 
-#include <homestore/blk.h>
+#include <homestore/blk.hpp>
 #include <homestore/homestore.hpp>
 
 namespace homestore {
@@ -99,8 +99,8 @@ struct MetaSubRegInfo {
 struct meta_blk_sb {
     uint32_t magic; // ssb magic
     uint32_t version;
-    BlkId next_bid; // next metablk
-    BlkId bid;
+    blk_id next_bid; // next metablk
+    blk_id bid;
     uint8_t migrated;
     uint8_t pad[7];
     std::string to_string() const {
@@ -121,10 +121,10 @@ struct meta_blk_hdr_s {
     uint32_t version;
     uint32_t gen_cnt; // generation count, bump on every update
     crc32_t crc;
-    BlkId next_bid;         // next metablk
-    BlkId prev_bid;         // previous metablk
-    BlkId ovf_bid;          // overflow blk id;
-    BlkId bid;              // current blk id; might not be needd;
+    blk_id next_bid;         // next metablk
+    blk_id prev_bid;         // previous metablk
+    blk_id ovf_bid;          // overflow blk id;
+    blk_id bid;              // current blk id; might not be needd;
     uint64_t context_sz;    // total size of context data; if compressed is true, it is the round up of compressed size
                             // that is written to disk; if compressed is false, it is the original size of context data;
     uint64_t compressed_sz; // compressed size before round up to align_size, used for decompress
@@ -175,8 +175,8 @@ struct meta_blk {
 struct meta_blk_ovf_hdr_s {
     uint32_t magic; // ovf magic
     uint32_t nbids; // number of data blkids stored in data_bid;
-    BlkId next_bid; // next ovf blk id;
-    BlkId bid;      // self blkid
+    blk_id next_bid; // next ovf blk id;
+    blk_id bid;      // self blkid
     uint64_t context_sz;
 };
 #pragma pack()
@@ -198,11 +198,11 @@ struct meta_blk_ovf_hdr {
 
     // NOTE: The data_bid area starts immediately after this structure as represented in the code below
     // This was to replace a zero size array which is illegal in C++
-    const BlkId* get_data_bid() const {
-        return reinterpret_cast< const BlkId* >(reinterpret_cast< const uint8_t* >(this) + sizeof(meta_blk_ovf_hdr));
+    const blk_id* get_data_bid() const {
+        return reinterpret_cast< const blk_id* >(reinterpret_cast< const uint8_t* >(this) + sizeof(meta_blk_ovf_hdr));
     }
-    BlkId* get_data_bid_mutable() {
-        return reinterpret_cast< BlkId* >(reinterpret_cast< uint8_t* >(this) + sizeof(meta_blk_ovf_hdr));
+    blk_id* get_data_bid_mutable() {
+        return reinterpret_cast< blk_id* >(reinterpret_cast< uint8_t* >(this) + sizeof(meta_blk_ovf_hdr));
     }
 
     [[nodiscard]] std::string to_string(const bool include_data_bid = false) const {
@@ -211,7 +211,7 @@ struct meta_blk_ovf_hdr {
                         h.next_bid, h.bid, h.nbids, h.context_sz)};
 
         if (include_data_bid) {
-            const BlkId* const data_bid{get_data_bid()};
+            const blk_id* const data_bid{get_data_bid()};
             for (uint32_t i{0}; i < h.nbids; ++i) {
                 ovf_hdr_str += data_bid[i].to_string();
                 ovf_hdr_str += " ";
@@ -225,7 +225,7 @@ struct meta_blk_ovf_hdr {
 
 #pragma pack(1)
 struct meta_vdev_context : public hs_vdev_context {
-    BlkId first_blkid;
+    blk_id first_blkid;
 
     sisl::blob to_blob() { return sisl::blob{uintptr_cast(this), sizeof(*this)}; }
 };

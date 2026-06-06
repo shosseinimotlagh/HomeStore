@@ -27,7 +27,7 @@ AppendBlkAllocator::AppendBlkAllocator(const BlkAllocConfig& cfg, bool need_form
     // TODO: try to make all append_blk_allocator instances use same client type to reduce metablk's cache footprint;
     meta_service().register_handler(
         get_name(),
-        [this](meta_blk* mblk, sisl::byte_view buf, size_t size) { on_meta_blk_found(std::move(buf), (void*)mblk); },
+        [this](meta_blk* mblk, sisl::byte_view buf, size_t size) { on_meta_blk_found(std::move(buf), mblk); },
         nullptr);
 
     if (need_format) {
@@ -46,7 +46,7 @@ AppendBlkAllocator::AppendBlkAllocator(const BlkAllocConfig& cfg, bool need_form
     // for recovery boot, fields will also be recovered from metablks;
 }
 
-void AppendBlkAllocator::on_meta_blk_found(const sisl::byte_view& buf, void* meta_cookie) {
+void AppendBlkAllocator::on_meta_blk_found(const sisl::byte_view& buf, meta_blk* meta_cookie) {
     m_sb.load(buf, meta_cookie);
 
     HS_REL_ASSERT_EQ(m_sb->magic, append_blkalloc_sb_magic, "Invalid AppendBlkAlloc metablk, magic mismatch");
@@ -61,13 +61,13 @@ void AppendBlkAllocator::on_meta_blk_found(const sisl::byte_view& buf, void* met
 //
 // alloc a single block;
 //
-BlkAllocStatus AppendBlkAllocator::alloc_contiguous(BlkId& bid) { return alloc(1, blk_alloc_hints{}, bid); }
+BlkAllocStatus AppendBlkAllocator::alloc_contiguous(blk_id& bid) { return alloc(1, blk_alloc_hints{}, bid); }
 
 //
 // For append blk allocator, the assumption is only one writer will append data on one chunk.
 // If we want to change above design, we can open this api for vector allocation;
 //
-BlkAllocStatus AppendBlkAllocator::alloc(blk_count_t nblks, const blk_alloc_hints& hint, BlkId& out_bid) {
+BlkAllocStatus AppendBlkAllocator::alloc(blk_count_t nblks, const blk_alloc_hints& hint, blk_id& out_bid) {
     auto avail_blks = available_blks();
     if (hint.reserved_blks) {
         avail_blks = avail_blks > hint.reserved_blks.value() ? avail_blks - hint.reserved_blks.value() : 0;
@@ -86,7 +86,7 @@ BlkAllocStatus AppendBlkAllocator::alloc(blk_count_t nblks, const blk_alloc_hint
     }
 
     // Push 1 blk to the vector which has all the requested nblks;
-    out_bid = BlkId{m_last_append_offset.fetch_add(nblks), nblks, m_chunk_id};
+    out_bid = blk_id{m_last_append_offset.fetch_add(nblks), nblks, m_chunk_id};
     LOGDEBUG("chunk {} has successfully allocated nblks: {}, totally used blks: {}, available_blks: {}, actual "
              "available_blks(exclude reserved blks): {}, last_append_offset: {}",
              m_chunk_id, nblks, get_used_blks(), available_blks(), avail_blks, m_last_append_offset.load());
@@ -95,7 +95,7 @@ BlkAllocStatus AppendBlkAllocator::alloc(blk_count_t nblks, const blk_alloc_hint
 }
 
 // Reserve on disk will update the commit_offset with the new_offset, if its above the current commit_offset.
-BlkAllocStatus AppendBlkAllocator::reserve_on_disk(BlkId const& blkid) {
+BlkAllocStatus AppendBlkAllocator::reserve_on_disk(blk_id const& blkid) {
     HS_DBG_ASSERT(is_blk_alloced(blkid), "Trying to reserve on disk for unallocated blkid={}", blkid);
 
     auto new_offset = blkid.blk_num() + blkid.blk_count();
@@ -115,7 +115,7 @@ BlkAllocStatus AppendBlkAllocator::reserve_on_disk(BlkId const& blkid) {
 
 // Given that AppendBlkAllocator uses highest of all offsets during the commit during recovery, we don't need to
 // individually recover each block.
-BlkAllocStatus AppendBlkAllocator::reserve_on_cache(BlkId const& blkid) {
+BlkAllocStatus AppendBlkAllocator::reserve_on_cache(blk_id const& blkid) {
     auto new_offset = blkid.blk_num() + blkid.blk_count();
     auto cur_offset = m_last_append_offset.load();
     do {
@@ -144,12 +144,12 @@ void AppendBlkAllocator::cp_flush(CP* cp) {
 }
 
 // free operation books keeping "total freeable" space
-void AppendBlkAllocator::free(const BlkId& bid) {
+void AppendBlkAllocator::free(const blk_id& bid) {
     m_freeable_nblks.fetch_add(bid.blk_count());
     m_is_dirty.store(true);
 }
 
-bool AppendBlkAllocator::is_blk_alloced(const BlkId& in_bid, bool) const {
+bool AppendBlkAllocator::is_blk_alloced(const blk_id& in_bid, bool) const {
     // blk_num starts from 0;
     return in_bid.blk_num() < get_used_blks();
 }
@@ -176,7 +176,7 @@ void AppendBlkAllocator::reset() {
     m_is_dirty.store(true);
 }
 
-bool AppendBlkAllocator::is_blk_alloced_on_disk(BlkId const& bid, bool use_lock) const {
+bool AppendBlkAllocator::is_blk_alloced_on_disk(blk_id const& bid, bool use_lock) const {
     std::lock_guard lg(m_sb_mtx);
     return bid.blk_num() < m_sb->commit_offset;
 }

@@ -57,34 +57,34 @@
  * If HS see write error/read error during recovery then it panic the system.
  */
 namespace homestore {
-HomeStoreSafePtr HomeStore::s_instance{nullptr};
+HomeStoreSafePtr home_store::s_instance{nullptr};
 
 static std::unique_ptr< FaultContainmentCallback > s_fc_cb;
 static std::unique_ptr< IndexServiceCallbacks > s_index_cbs;
 static shared< ChunkSelector > s_custom_data_chunk_selector{nullptr};
 static shared< ChunkSelector > s_custom_index_chunk_selector{nullptr};
-static shared< ReplApplication > s_repl_app{nullptr};
+static shared< repl_application > s_repl_app{nullptr};
 std::string version = PACKAGE_VERSION;
 
-HomeStore* HomeStore::instance() {
-    if (s_instance == nullptr) { s_instance = std::make_shared< HomeStore >(); }
+home_store* home_store::instance() {
+    if (s_instance == nullptr) { s_instance = std::make_shared< home_store >(); }
     return s_instance.get();
 }
 
-HomeStore& HomeStore::with_fault_containment(std::unique_ptr< FaultContainmentCallback > cb) {
+home_store& home_store::with_fault_containment(std::unique_ptr< FaultContainmentCallback > cb) {
     m_services.svcs |= HS_SERVICE::FAULT_CMT;
     s_fc_cb = std::move(cb);
     return *this;
 }
 
-HomeStore& HomeStore::with_data_service(cshared< ChunkSelector >& custom_chunk_selector) {
+home_store& home_store::with_data_service(cshared< ChunkSelector >& custom_chunk_selector) {
     m_services.svcs |= HS_SERVICE::DATA;
     m_services.svcs &= ~HS_SERVICE::REPLICATION; // ReplicationDataSvc or DataSvc are mutually exclusive
     s_custom_data_chunk_selector = std::move(custom_chunk_selector);
     return *this;
 }
 
-HomeStore& HomeStore::with_index_service(std::unique_ptr< IndexServiceCallbacks > cbs,
+home_store& home_store::with_index_service(std::unique_ptr< IndexServiceCallbacks > cbs,
                                          cshared< ChunkSelector >& custom_chunk_selector) {
     m_services.svcs |= HS_SERVICE::INDEX;
     s_index_cbs = std::move(cbs);
@@ -92,12 +92,12 @@ HomeStore& HomeStore::with_index_service(std::unique_ptr< IndexServiceCallbacks 
     return *this;
 }
 
-HomeStore& HomeStore::with_log_service() {
+home_store& home_store::with_log_service() {
     m_services.svcs |= HS_SERVICE::LOG;
     return *this;
 }
 
-HomeStore& HomeStore::with_repl_data_service(cshared< ReplApplication >& repl_app,
+home_store& home_store::with_repl_data_service(cshared< repl_application >& repl_app,
                                              cshared< ChunkSelector >& custom_chunk_selector) {
     m_services.svcs |= HS_SERVICE::REPLICATION | HS_SERVICE::LOG;
     m_services.svcs &= ~HS_SERVICE::DATA; // ReplicationDataSvc or DataSvc are mutually exclusive
@@ -107,13 +107,13 @@ HomeStore& HomeStore::with_repl_data_service(cshared< ReplApplication >& repl_ap
 }
 
 #ifdef _PRERELEASE
-HomeStore& HomeStore::with_crash_simulator(std::function< void(void) > cb) {
+home_store& home_store::with_crash_simulator(std::function< void(void) > cb) {
     m_crash_simulator = std::make_unique< CrashSimulator >(std::move(cb));
     return *this;
 }
 #endif
 
-bool HomeStore::start(const hs_input_params& input, hs_before_services_starting_cb_t svcs_starting_cb) {
+bool home_store::start(const hs_input_params& input, hs_before_services_starting_cb_t svcs_starting_cb) {
     auto& hs_config = HomeStoreStaticConfig::instance();
     hs_config.input = input;
 
@@ -169,25 +169,25 @@ bool HomeStore::start(const hs_input_params& input, hs_before_services_starting_
 #endif
 
     LOGINFO("Homestore is loading with following services: {}", m_services.list());
-    if (has_meta_service()) { m_meta_service = std::make_unique< MetaBlkService >(); }
+    if (has_meta_service()) { m_meta_service = std::make_unique< meta_blk_service >(); }
     if (has_index_service()) {
         m_index_service =
             std::make_unique< IndexService >(std::move(s_index_cbs), std::move(s_custom_index_chunk_selector));
     }
     if (has_repl_data_service()) {
-        m_log_service = std::make_unique< LogStoreService >();
-        m_data_service = std::make_unique< BlkDataService >(std::move(s_custom_data_chunk_selector));
+        m_log_service = std::make_unique< log_store_service >();
+        m_data_service = std::make_unique< blk_data_service >(std::move(s_custom_data_chunk_selector));
         m_repl_service = GenericReplService::create(std::move(s_repl_app));
     } else {
-        if (has_log_service()) { m_log_service = std::make_unique< LogStoreService >(); }
+        if (has_log_service()) { m_log_service = std::make_unique< log_store_service >(); }
         if (has_data_service()) {
-            m_data_service = std::make_unique< BlkDataService >(std::move(s_custom_data_chunk_selector));
+            m_data_service = std::make_unique< blk_data_service >(std::move(s_custom_data_chunk_selector));
         }
     }
     if (has_fc_service()) { m_fc_service = std::make_unique< FaultContainmentService >(std::move(s_fc_cb)); }
 
     m_cp_mgr = std::make_unique< CPManager >();
-    m_dev_mgr = std::make_unique< DeviceManager >(input.devices, bind_this(HomeStore::create_vdev_cb, 2));
+    m_dev_mgr = std::make_unique< DeviceManager >(input.devices, bind_this(home_store::create_vdev_cb, 2));
 
     if (!m_dev_mgr->is_first_time_boot()) {
         m_dev_mgr->load_devices();
@@ -203,7 +203,7 @@ bool HomeStore::start(const hs_input_params& input, hs_before_services_starting_
     }
 }
 
-void HomeStore::format_and_start(std::map< uint32_t, hs_format_params >&& format_opts) {
+void home_store::format_and_start(std::map< uint32_t, hs_format_params >&& format_opts) {
     std::map< HSDevType, float > total_pct_by_type = {{HSDevType::Fast, 0.0f}, {HSDevType::Data, 0.0f}};
     // Accumulate total percentage of services on each device type
     for (const auto& [svc_type, fparams] : format_opts) {
@@ -274,7 +274,7 @@ void HomeStore::format_and_start(std::map< uint32_t, hs_format_params >&& format
     do_start();
 }
 
-void HomeStore::do_start() {
+void home_store::do_start() {
     const auto& inp_params = HomeStoreStaticConfig::instance().input;
 
     uint64_t cache_size = resource_mgr().get_cache_size();
@@ -316,7 +316,7 @@ void HomeStore::do_start() {
     m_init_done = true;
 }
 
-void HomeStore::shutdown() {
+void home_store::shutdown() {
     if (!m_init_done) {
         LOGWARN("Homestore shutdown is called before init is completed");
         return;
@@ -381,7 +381,7 @@ void HomeStore::shutdown() {
 }
 
 #if 0
-cap_attrs HomeStore::get_system_capacity() const {
+cap_attrs home_store::get_system_capacity() const {
     cap_attrs cap;
     // if (has_data_service()) {
     //     cap.used_data_size = get_data_blkstore()->used_size();
@@ -404,20 +404,20 @@ cap_attrs HomeStore::get_system_capacity() const {
 }
 #endif
 
-bool HomeStore::is_first_time_boot() const { return m_dev_mgr->is_first_time_boot(); }
+bool home_store::is_first_time_boot() const { return m_dev_mgr->is_first_time_boot(); }
 
-bool HomeStore::has_index_service() const { return m_services.svcs & HS_SERVICE::INDEX; }
-bool HomeStore::has_data_service() const { return m_services.svcs & HS_SERVICE::DATA; }
-bool HomeStore::has_repl_data_service() const { return m_services.svcs & HS_SERVICE::REPLICATION; }
-bool HomeStore::has_meta_service() const { return m_services.svcs & HS_SERVICE::META; }
-bool HomeStore::has_log_service() const {
+bool home_store::has_index_service() const { return m_services.svcs & HS_SERVICE::INDEX; }
+bool home_store::has_data_service() const { return m_services.svcs & HS_SERVICE::DATA; }
+bool home_store::has_repl_data_service() const { return m_services.svcs & HS_SERVICE::REPLICATION; }
+bool home_store::has_meta_service() const { return m_services.svcs & HS_SERVICE::META; }
+bool home_store::has_log_service() const {
     auto const s = m_services.svcs;
     return (s & HS_SERVICE::LOG);
 }
-bool HomeStore::has_fc_service() const { return (m_services.svcs & HS_SERVICE::FAULT_CMT); }
+bool home_store::has_fc_service() const { return (m_services.svcs & HS_SERVICE::FAULT_CMT); }
 
 #if 0
-void HomeStore::init_cache() {
+void home_store::init_cache() {
     auto& hs_config = HomeStoreStaticConfig::instance();
     const auto& input = hs_config.input;
 
@@ -428,7 +428,7 @@ void HomeStore::init_cache() {
      * Note :- This restriction will go away once btree start supporinting higher size value.
      */
     hs_config.engine.max_blks_in_blkentry =
-        std::min(static_cast< uint32_t >(BlkId::max_blks_in_op()), get_indx_mgr_page_size() / (4 * 2));
+        std::min(static_cast< uint32_t >(blk_id::max_blks_in_op()), get_indx_mgr_page_size() / (4 * 2));
     hs_config.engine.min_io_size = std::min(input.min_virtual_page_size, get_indx_mgr_page_size());
     hs_config.engine.memvec_max_io_size = {static_cast< uint64_t >(
         HS_STATIC_CONFIG(engine.min_io_size) * ((static_cast< uint64_t >(1) << MEMPIECE_ENCODE_MAX_BITS) - 1))};
@@ -445,7 +445,7 @@ void HomeStore::init_cache() {
 }
 #endif
 
-shared< VirtualDev > HomeStore::create_vdev_cb(const vdev_info& vinfo, bool load_existing) {
+shared< VirtualDev > home_store::create_vdev_cb(const vdev_info& vinfo, bool load_existing) {
     shared< VirtualDev > ret_vdev;
     auto& hs_config = HomeStoreStaticConfig::instance();
     auto vdev_context = r_cast< const hs_vdev_context* >(vinfo.get_user_private());
@@ -475,13 +475,13 @@ shared< VirtualDev > HomeStore::create_vdev_cb(const vdev_info& vinfo, bool load
     return ret_vdev;
 }
 
-uint64_t HomeStore::pct_to_size(float pct, HSDevType dev_type) const {
+uint64_t home_store::pct_to_size(float pct, HSDevType dev_type) const {
     uint64_t sz = uint64_cast((pct * static_cast< double >(m_dev_mgr->total_capacity(dev_type))) / 100);
     return sisl::round_up(sz, m_dev_mgr->optimal_page_size(dev_type));
 }
 
-/////////////////////////////////////////// static HomeStore member functions /////////////////////////////////
-// void HomeStore::fake_reboot() {}
+/////////////////////////////////////////// static home_store member functions /////////////////////////////////
+// void home_store::fake_reboot() {}
 
 #if 0
 std::string cap_attrs::to_string() const {

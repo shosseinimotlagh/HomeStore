@@ -352,7 +352,7 @@ TEST_F(RaftReplDevTest, RemoveReplDev) {
     // repl dev.
     if (g_helper->replica_num() == 1) {
         // Skip deleting this group during teardown.
-        LOGINFO("Set zombie on group={}", dbs_.back()->repl_dev()->group_id());
+        LOGINFO("Set zombie on group={}", dbs_.back()->device()->group_id());
         dbs_.back()->set_zombie();
     } else {
         this->remove_db(dbs_.back(), true /* wait_for_removal */);
@@ -818,7 +818,7 @@ TEST_F(RaftReplDevTest, NuraftStateTransition) {
     LOGINFO("Homestore replica={} setup completed", g_helper->replica_num());
     g_helper->sync_for_test_start();
     // Get the RaftReplDev instance
-    auto repl_dev = std::dynamic_pointer_cast< RaftReplDev >(dbs_[0]->repl_dev());
+    auto repl_dev = std::dynamic_pointer_cast< RaftReplDev >(dbs_[0]->device());
     ASSERT_NE(repl_dev, nullptr);
     LOGINFO("Step 0: Got RaftReplDev instance for group_id={}", repl_dev->group_id_str());
 
@@ -899,10 +899,10 @@ TEST_F(RaftReplDevTest, Schedule_Snapshot_Creation) {
     g_helper->sync_for_verify_start();
     // we check snapshot creation on follower1
     if (g_helper->replica_num() == 1) {
-        auto repl_dev = std::dynamic_pointer_cast< RaftReplDev >(dbs_[0]->repl_dev());
+        auto repl_dev = std::dynamic_pointer_cast< RaftReplDev >(dbs_[0]->device());
         auto group_id = repl_dev->group_id();
         auto current_truncation_upper_limit = repl_dev->m_truncation_upper_limit.load();
-        LOGINFO("group={} current_truncation_upper_limit={}", dbs_.back()->repl_dev()->group_id(),
+        LOGINFO("group={} current_truncation_upper_limit={}", dbs_.back()->device()->group_id(),
                 current_truncation_upper_limit);
         ASSERT_EQ(current_truncation_upper_limit, 0);
         LOGINFO("Trigger scheduled snapshot creation on follower1");

@@ -9,8 +9,10 @@
 
 #include <sisl/async/task.hpp>
 #include <sisl/logging/logging.h>
+#include <system_error>
 #include <homestore/homestore_decl.hpp>
-#include <homestore/blk.h>
+#include <homestore/blk.hpp>
+#include <homestore/error.hpp>
 #include <sisl/fds/buffer.hpp>
 
 SISL_LOGGING_DECL(replication)
@@ -54,31 +56,53 @@ ENUM(ReplaceMemberStatus, int32_t,
       UNKNOWN = 5);
 // clang-format on
 
+// Register ReplServiceError as a std::error_condition enum so replication failures flow through the one
+// homestore::result<T> error surface (std::error_condition) while staying branchable at the call site:
+//     if (r.error() == ReplServiceError::NOT_LEADER) { ... }
+class repl_error_category : public std::error_category {
+public:
+    const char* name() const noexcept override { return "homestore.replication"; }
+    std::string message(int ev) const override {
+        return std::string{enum_name(static_cast< ReplServiceError >(ev))};
+    }
+};
+inline std::error_category const& repl_error_category_inst() noexcept {
+    static repl_error_category inst;
+    return inst;
+}
+inline std::error_condition make_error_condition(ReplServiceError e) noexcept {
+    return std::error_condition{static_cast< int >(e), repl_error_category_inst()};
+}
+} // namespace homestore
+
+template <>
+struct std::is_error_condition_enum< homestore::ReplServiceError > : std::true_type {};
+
+namespace homestore {
+
+// Replication reports through homestore's one error surface: result<V> / async_result<V> (error ==
+// std::error_condition). ReplServiceError's codes ride inside the error_condition, so callers still branch on
+// `r.error() == ReplServiceError::NOT_LEADER`. (Result/AsyncResult remain for the data-rpc surface, which still
+// carries repl_data_rpc_error_code.)
 template < typename V, typename E >
 using Result = std::expected< V, E >;
-
-template < class V = std::monostate >
-using ReplResult = Result< V, ReplServiceError >;
 
 template < class V, class E >
 using AsyncResult = sisl::async::task< Result< V, E > >;
 
-template < class V = std::monostate >
-using AsyncReplResult = AsyncResult< V, ReplServiceError >;
-
-using blkid_list_t = boost::container::small_vector< BlkId, 4 >;
+using blkid_list_t = boost::container::small_vector< blk_id, 4 >;
 
 // Fully qualified domain pba, unique pba id across replica set
-struct RemoteBlkId {
-    RemoteBlkId() = default;
-    RemoteBlkId(int32_t s, const MultiBlkId& b) : server_id{s}, blkid{b} {}
+struct remote_blk_id {
+    remote_blk_id() = default;
+    remote_blk_id(int32_t s, const multi_blk_id& b) : server_id{s}, blkid{b} {}
     int32_t server_id{0};
-    MultiBlkId blkid;
+    multi_blk_id blkid;
 
-    bool operator==(RemoteBlkId const& o) const { return (server_id == o.server_id) && (blkid == o.blkid); }
+    bool operator==(remote_blk_id const& o) const { return (server_id == o.server_id) && (blkid == o.blkid); }
 };
 
-using remote_blkid_list_t = boost::container::small_vector< RemoteBlkId, 4 >;
+using remote_blkid_list_t = boost::container::small_vector< remote_blk_id, 4 >;
 
 using replica_id_t = uuid_t;
 using group_id_t = uuid_t;
@@ -117,9 +141,9 @@ struct replace_member_task {
 // hash function definitions
 namespace std {
 template <>
-struct hash< homestore::RemoteBlkId > {
-    size_t operator()(homestore::RemoteBlkId const& fqbid) const noexcept {
-        return std::hash< uint64_t >()(fqbid.server_id) + std::hash< homestore::MultiBlkId >()(fqbid.blkid);
+struct hash< homestore::remote_blk_id > {
+    size_t operator()(homestore::remote_blk_id const& fqbid) const noexcept {
+        return std::hash< uint64_t >()(fqbid.server_id) + std::hash< homestore::multi_blk_id >()(fqbid.blkid);
     }
 };
 } // namespace std

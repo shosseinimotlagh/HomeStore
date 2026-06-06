@@ -33,17 +33,17 @@ public:
 
     void load() override;
 
-    BlkAllocStatus alloc_contiguous(BlkId& bid) override;
-    BlkAllocStatus alloc(blk_count_t nblks, blk_alloc_hints const& hints, BlkId& out_blkid) override;
-    BlkAllocStatus reserve_on_cache(BlkId const& b) override;
-    void free(BlkId const& b) override;
+    BlkAllocStatus alloc_contiguous(blk_id& bid) override;
+    BlkAllocStatus alloc(blk_count_t nblks, blk_alloc_hints const& hints, blk_id& out_blkid) override;
+    BlkAllocStatus reserve_on_cache(blk_id const& b) override;
+    void free(blk_id const& b) override;
     void recovery_completed() override;
 
     blk_num_t available_blks() const override;
     blk_num_t get_used_blks() const override;
     blk_num_t get_defrag_nblks() const override;
     void reset() override;
-    bool is_blk_alloced(BlkId const& in_bid, bool use_lock = false) const override;
+    bool is_blk_alloced(blk_id const& in_bid, bool use_lock = false) const override;
     std::string to_string() const override;
 
 private:

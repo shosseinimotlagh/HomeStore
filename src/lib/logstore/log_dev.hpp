@@ -514,8 +514,8 @@ public:
     uint32_t num_rollback_records(logstore_id_t store_id) const;
     bool is_rolled_back(logstore_id_t store_id, logid_t logid) const;
 
-    void logdev_super_blk_found(const sisl::byte_view& buf, void* meta_cookie);
-    void rollback_super_blk_found(const sisl::byte_view& buf, void* meta_cookie);
+    void logdev_super_blk_found(const sisl::byte_view& buf, meta_blk* meta_cookie);
+    void rollback_super_blk_found(const sisl::byte_view& buf, meta_blk* meta_cookie);
     void destroy();
 
 private:
@@ -537,8 +537,8 @@ private:
     bool m_rollback_info_dirty{false};
 };
 
-class HomeStore;
-typedef std::shared_ptr< HomeStore > HomeStoreSafePtr;
+class home_store;
+typedef std::shared_ptr< home_store > HomeStoreSafePtr;
 class JournalVirtualDev;
 
 class log_stream_reader {
@@ -568,19 +568,19 @@ private:
 };
 
 struct logstore_info {
-    std::shared_ptr< HomeLogStore > log_store;
+    std::shared_ptr< home_log_store > log_store;
     bool append_mode;
     log_found_cb_t log_found_cb{nullptr};
     log_replay_done_cb_t log_replay_done_cb{nullptr};
-    std::shared_ptr< sisl::async::shared_awaitable< std::shared_ptr< HomeLogStore > > > promise{
-        std::make_shared< sisl::async::shared_awaitable< std::shared_ptr< HomeLogStore > > >()};
+    std::shared_ptr< sisl::async::shared_awaitable< std::shared_ptr< home_log_store > > > promise{
+        std::make_shared< sisl::async::shared_awaitable< std::shared_ptr< home_log_store > > >()};
 };
 
 static std::string const logdev_sb_meta_name{"Logdev_sb"};
 static std::string const logdev_rollback_sb_meta_name{"Logdev_rollback_sb"};
 
 class LogDev : public std::enable_shared_from_this< LogDev > {
-    friend class HomeLogStore;
+    friend class home_log_store;
 
 public:
     static inline int64_t flush_data_threshold_size() {
@@ -693,8 +693,8 @@ public:
     /// @param append_mode Is this log store is append mode or not. If append mode, write_async call fails and only
     /// append_async calls succeed.
     ///
-    /// @return shared< HomeLogStore > : The newly created log store
-    shared< HomeLogStore > create_new_log_store(bool append_mode = false);
+    /// @return shared< home_log_store > : The newly created log store
+    shared< home_log_store > create_new_log_store(bool append_mode = false);
 
     /// @brief Open the log store which was created under this log device. It expects that log store id is already
     /// created. Behavior of opening a log store which was never created is unknown. One can create log store in
@@ -705,8 +705,8 @@ public:
     /// @param store_id Store id to open the log store
     /// @param append_mode Is this log store is append mode or not. If append mode, write_async call fails and only
     /// append_async calls succeed.
-    /// @return future< shared< HomeLogStore > > : Future which will be set with the log store once it is opened
-    sisl::async::task< shared< HomeLogStore > > open_log_store(logstore_id_t store_id, bool append_mode,
+    /// @return future< shared< home_log_store > > : Future which will be set with the log store once it is opened
+    sisl::async::task< shared< home_log_store > > open_log_store(logstore_id_t store_id, bool append_mode,
                                                                log_found_cb_t log_found_cb = nullptr,
                                                                log_replay_done_cb_t log_replay_done_cb = nullptr);
 

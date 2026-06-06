@@ -45,7 +45,7 @@ public:
     LogStoreServiceMetrics& operator=(LogStoreServiceMetrics&&) noexcept = delete;
 };
 
-class HomeLogStore;
+class home_log_store;
 class LogDev;
 struct logdev_key;
 class VirtualDev;
@@ -65,20 +65,20 @@ struct logstore_service_super_block {
 };
 #pragma pack()
 
-class LogStoreService {
-    friend class HomeLogStore;
+class log_store_service {
+    friend class home_log_store;
     friend class LogDev;
 
 public:
-    LogStoreService();
-    ~LogStoreService();
-    LogStoreService(const LogStoreService&) = delete;
-    LogStoreService(LogStoreService&&) noexcept = delete;
-    LogStoreService& operator=(const LogStoreService&) = delete;
-    LogStoreService& operator=(LogStoreService&&) noexcept = delete;
+    log_store_service();
+    ~log_store_service();
+    log_store_service(const log_store_service&) = delete;
+    log_store_service(log_store_service&&) noexcept = delete;
+    log_store_service& operator=(const log_store_service&) = delete;
+    log_store_service& operator=(log_store_service&&) noexcept = delete;
 
     /**
-     * @brief Start the entire LogStoreService set and does recover the existing logstores. Really this is the first
+     * @brief Start the entire log_store_service set and does recover the existing logstores. Really this is the first
      * method to be executed on log store.
      *
      * @param format If set to true, will not recover, but create a fresh log store set.
@@ -86,7 +86,7 @@ public:
     void start(bool format);
 
     /**
-     * @brief Stop the LogStoreService. It resets all parameters and can be restarted with start method.
+     * @brief Stop the log_store_service. It resets all parameters and can be restarted with start method.
      *
      */
     void stop();
@@ -122,9 +122,9 @@ public:
      * @param append_mode: If the log store have to be in append mode, user can call append_async and do not need to
      * maintain the log_idx. Else user is expected to keep track of the log idx. Default to false
      *
-     * @return std::shared_ptr< HomeLogStore >
+     * @return std::shared_ptr< home_log_store >
      */
-    std::shared_ptr< HomeLogStore > create_new_log_store(logdev_id_t logdev_id, bool append_mode = false);
+    std::shared_ptr< home_log_store > create_new_log_store(logdev_id_t logdev_id, bool append_mode = false);
 
     /**
      * @brief Open an existing log store and does a recovery. It then creates an instance of this logstore and
@@ -133,9 +133,9 @@ public:
      * @param store_id: Store ID of the log store to open
      * @param append_mode: Append or not.
      * @param on_open_cb: Callback to be called once log store is opened.
-     * @return std::shared_ptr< HomeLogStore >
+     * @return std::shared_ptr< home_log_store >
      */
-    sisl::async::task< shared< HomeLogStore > > open_log_store(logdev_id_t logdev_id, logstore_id_t store_id,
+    sisl::async::task< shared< home_log_store > > open_log_store(logdev_id_t logdev_id, logstore_id_t store_id,
                                                                bool append_mode, log_found_cb_t log_found_cb = nullptr,
                                                                log_replay_done_cb_t log_replay_done_cb = nullptr);
 
@@ -183,10 +183,10 @@ public:
 private:
     std::shared_ptr< LogDev > create_new_logdev_internal(logdev_id_t logdev_id, flush_mode_t flush_mode,
                                                          uuid_t pid = boost::uuids::nil_uuid());
-    void on_meta_blk_found(const sisl::byte_view& buf, void* meta_cookie);
+    void on_meta_blk_found(const sisl::byte_view& buf, meta_blk* meta_cookie);
     logdev_id_t get_next_logdev_id();
-    void logdev_super_blk_found(const sisl::byte_view& buf, void* meta_cookie);
-    void rollback_super_blk_found(const sisl::byte_view& buf, void* meta_cookie);
+    void logdev_super_blk_found(const sisl::byte_view& buf, meta_blk* meta_cookie);
+    void rollback_super_blk_found(const sisl::byte_view& buf, meta_blk* meta_cookie);
     void start_threads();
     void flush();
 
@@ -214,5 +214,5 @@ private:
     void decr_pending_request_num() const { pending_request_num--; }
 };
 
-extern LogStoreService& logstore_service();
+extern log_store_service& logstore_service();
 } // namespace homestore

@@ -24,9 +24,9 @@
 #include "replication/repl_dev/solo_repl_dev.h"
 
 namespace homestore {
-ReplicationService& repl_service() { return hs()->repl_service(); }
+replication_service& repl_service() { return hs()->repl_service(); }
 
-std::shared_ptr< GenericReplService > GenericReplService::create(cshared< ReplApplication >& repl_app) {
+std::shared_ptr< GenericReplService > GenericReplService::create(cshared< repl_application >& repl_app) {
     auto impl_type = repl_app->get_impl_type();
     if (impl_type == repl_impl_type::solo) {
         return std::make_shared< SoloReplService >(repl_app);
@@ -37,12 +37,12 @@ std::shared_ptr< GenericReplService > GenericReplService::create(cshared< ReplAp
     }
 }
 
-GenericReplService::GenericReplService(cshared< ReplApplication >& repl_app) : m_repl_app{repl_app} {
+GenericReplService::GenericReplService(cshared< repl_application >& repl_app) : m_repl_app{repl_app} {
     m_sb_bufs.reserve(100);
     meta_service().register_handler(
         get_meta_blk_name(),
         [this](meta_blk* mblk, sisl::byte_view buf, size_t) {
-            m_sb_bufs.emplace_back(std::pair(std::move(buf), voidptr_cast(mblk)));
+            m_sb_bufs.emplace_back(std::pair(std::move(buf), mblk));
         },
         nullptr);
 }
@@ -52,20 +52,20 @@ GenericReplService::~GenericReplService() {
     m_rd_map.clear();
 }
 
-ReplResult< shared< ReplDev > > GenericReplService::get_repl_dev(group_id_t group_id) const {
+result< shared< repl_dev > > GenericReplService::get_repl_dev(group_id_t group_id) const {
     std::shared_lock lg(m_rd_map_mtx);
     if (auto it = m_rd_map.find(group_id); it != m_rd_map.end()) { return it->second; }
     return std::unexpected(ReplServiceError::SERVER_NOT_FOUND);
 }
 
-void GenericReplService::iterate_repl_devs(std::function< void(cshared< ReplDev >&) > const& cb) {
+void GenericReplService::iterate_repl_devs(std::function< void(cshared< repl_dev >&) > const& cb) {
     std::shared_lock lg(m_rd_map_mtx);
     for (const auto& [uuid, rd] : m_rd_map) {
         cb(rd);
     }
 }
 
-void GenericReplService::add_repl_dev(group_id_t group_id, shared< ReplDev > rdev) {
+void GenericReplService::add_repl_dev(group_id_t group_id, shared< repl_dev > rdev) {
     std::unique_lock lg(m_rd_map_mtx);
     [[maybe_unused]] auto [it, happened] = m_rd_map.emplace(std::pair{group_id, rdev});
     HS_DBG_ASSERT(happened, "Unable to put the repl_dev in rd map for group_id={}, duplicated add?", group_id);
@@ -79,12 +79,12 @@ hs_stats GenericReplService::get_cap_stats() const {
 }
 
 ///////////////////// SoloReplService specializations and CP Callbacks /////////////////////////////
-SoloReplService::SoloReplService(cshared< ReplApplication >& repl_app) : GenericReplService{repl_app} {}
+SoloReplService::SoloReplService(cshared< repl_application >& repl_app) : GenericReplService{repl_app} {}
 SoloReplService::~SoloReplService() {};
 
 void SoloReplService::start() {
     for (auto const& [buf, mblk] : m_sb_bufs) {
-        load_repl_dev(buf, voidptr_cast(mblk));
+        load_repl_dev(buf, mblk);
     }
     m_sb_bufs.clear();
 
@@ -118,9 +118,9 @@ void SoloReplService::stop() {
     hs()->data_service().stop();
 }
 
-AsyncReplResult< shared< ReplDev > > SoloReplService::create_repl_dev(group_id_t group_id,
+async_result< shared< repl_dev > > SoloReplService::create_repl_dev(group_id_t group_id,
                                                                       std::set< replica_id_t > const& members) {
-    if (is_stopping()) return make_async_error< shared< ReplDev > >(ReplServiceError::STOPPING);
+    if (is_stopping()) return make_async_error< shared< repl_dev > >(ReplServiceError::STOPPING);
     init_req_counter counter(pending_request_num);
 
     superblk< solo_repl_dev_superblk > rd_sb{get_meta_blk_name()};
@@ -138,17 +138,17 @@ AsyncReplResult< shared< ReplDev > > SoloReplService::create_repl_dev(group_id_t
         if (!happened) {
             // We should never reach here, as we have failed to emplace in map, but couldn't find entry
             DEBUG_ASSERT(false, "Unable to put the repl_dev in rd map");
-            return make_async_error< shared< ReplDev > >(ReplServiceError::SERVER_ALREADY_EXISTS);
+            return make_async_error< shared< repl_dev > >(ReplServiceError::SERVER_ALREADY_EXISTS);
         }
     }
 
-    return make_async_success< shared< ReplDev > >(rdev);
+    return make_async_success< shared< repl_dev > >(rdev);
 }
 
-sisl::async::task< ReplServiceError > SoloReplService::remove_repl_dev(group_id_t group_id) {
+async_status SoloReplService::remove_repl_dev(group_id_t group_id) {
     // RD_LOGI("Removing repl dev for group_id={}", boost::uuids::to_string(group_id));
     auto rdev = get_repl_dev(group_id);
-    if (!rdev) co_return rdev.error();
+    if (!rdev) co_return std::unexpected(ReplServiceError::SERVER_NOT_FOUND);
 
     auto rdev_ptr = rdev.value();
 
@@ -171,10 +171,10 @@ sisl::async::task< ReplServiceError > SoloReplService::remove_repl_dev(group_id_
     // 5. now destroy the upper layer's listener instance;
     m_repl_app->destroy_repl_dev_listener(group_id);
 
-    co_return ReplServiceError::OK;
+    co_return ok();
 }
 
-void SoloReplService::load_repl_dev(sisl::byte_view const& buf, void* meta_cookie) {
+void SoloReplService::load_repl_dev(sisl::byte_view const& buf, meta_blk* meta_cookie) {
     superblk< solo_repl_dev_superblk > rd_sb{get_meta_blk_name()};
     rd_sb.load(buf, meta_cookie);
     HS_DBG_ASSERT_EQ(rd_sb->get_magic(), repl_dev_superblk::REPL_DEV_SB_MAGIC, "Invalid rdev metablk, magic mismatch");
@@ -194,31 +194,31 @@ void SoloReplService::load_repl_dev(sisl::byte_view const& buf, void* meta_cooki
     }
 }
 
-AsyncReplResult<> SoloReplService::replace_member(group_id_t group_id, std::string& task_id,
+async_status SoloReplService::replace_member(group_id_t group_id, std::string& task_id,
                                                   const replica_member_info& member_out,
                                                   const replica_member_info& member_in, uint32_t commit_quorum,
                                                   uint64_t trace_id) const {
     return make_async_error<>(ReplServiceError::NOT_IMPLEMENTED);
 }
 
-AsyncReplResult<> SoloReplService::flip_learner_flag(group_id_t group_id, const replica_member_info& member,
+async_status SoloReplService::flip_learner_flag(group_id_t group_id, const replica_member_info& member,
                                                      bool target, uint32_t commit_quorum, bool wait_and_verify,
                                                      uint64_t trace_id) const {
     return make_async_error<>(ReplServiceError::NOT_IMPLEMENTED);
 }
 
-AsyncReplResult<> SoloReplService::remove_member(group_id_t group_id, const replica_id_t& member,
+async_status SoloReplService::remove_member(group_id_t group_id, const replica_id_t& member,
                                                  uint32_t commit_quorum, bool wait_and_verify,
                                                  uint64_t trace_id) const {
     return make_async_error<>(ReplServiceError::NOT_IMPLEMENTED);
 }
 
-AsyncReplResult<> SoloReplService::clean_replace_member_task(group_id_t group_id, const std::string& task_id,
+async_status SoloReplService::clean_replace_member_task(group_id_t group_id, const std::string& task_id,
                                                              uint32_t commit_quorum, uint64_t trace_id) const {
     return make_async_error<>(ReplServiceError::NOT_IMPLEMENTED);
 }
 
-ReplResult< std::vector< replace_member_task > > SoloReplService::list_replace_member_tasks(uint64_t trace_id) const {
+result< std::vector< replace_member_task > > SoloReplService::list_replace_member_tasks(uint64_t trace_id) const {
     return std::unexpected(ReplServiceError::NOT_IMPLEMENTED);
 }
 
@@ -230,7 +230,7 @@ ReplaceMemberStatus SoloReplService::get_replace_member_status(group_id_t group_
     return ReplaceMemberStatus::UNKNOWN;
 }
 
-ReplServiceError SoloReplService::destroy_repl_dev(group_id_t group_id, uint64_t trace_id) {
+status SoloReplService::destroy_repl_dev(group_id_t group_id, uint64_t trace_id) {
     return detail::sync_get(remove_repl_dev(group_id));
 }
 
@@ -241,14 +241,14 @@ std::unique_ptr< CPContext > SoloReplServiceCPHandler::on_switchover_cp(CP* cur_
 }
 
 sisl::async::task< bool > SoloReplServiceCPHandler::cp_flush(CP* cp) {
-    repl_service().iterate_repl_devs([cp](cshared< ReplDev >& repl_dev) {
+    repl_service().iterate_repl_devs([cp](cshared< repl_dev >& repl_dev) {
         if (repl_dev) { dp_cast< SoloReplDev >(repl_dev)->cp_flush(cp); }
     });
     co_return true;
 }
 
 void SoloReplServiceCPHandler::cp_cleanup(CP* cp) {
-    repl_service().iterate_repl_devs([cp](cshared< ReplDev >& repl_dev) {
+    repl_service().iterate_repl_devs([cp](cshared< repl_dev >& repl_dev) {
         if (repl_dev) { dp_cast< SoloReplDev >(repl_dev)->cp_cleanup(cp); }
     });
 }

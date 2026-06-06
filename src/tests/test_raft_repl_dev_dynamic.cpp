@@ -77,7 +77,7 @@ TEST_F(ReplDevDynamicTest, ReplaceMember) {
     // wait for background reaper thread to trigger complete_replace_member
     if (g_helper->replica_num() == member_out) {
         // The out member will have the repl dev destroyed.
-        auto repl_dev = std::dynamic_pointer_cast< RaftReplDev >(db->repl_dev());
+        auto repl_dev = std::dynamic_pointer_cast< RaftReplDev >(db->device());
         while (repl_dev && !repl_dev->is_destroyed()) {
             std::this_thread::sleep_for(std::chrono::seconds(1));
             auto& raft_repl_svc = dynamic_cast< RaftReplService& >(hs()->repl_service());
@@ -144,7 +144,7 @@ TEST_F(ReplDevDynamicTest, ReplaceMember) {
 //     // verify member_in is removed from group.
 //     if (g_helper->replica_num() == member_in) {
 //         // The member_in will have the repl dev destroyed.
-//         auto repl_dev = std::dynamic_pointer_cast< RaftReplDev >(db->repl_dev());
+//         auto repl_dev = std::dynamic_pointer_cast< RaftReplDev >(db->device());
 //         while (repl_dev && !repl_dev->is_destroyed()) {
 //             std::this_thread::sleep_for(std::chrono::seconds(1));
 //             auto& raft_repl_svc = dynamic_cast< RaftReplService& >(hs()->repl_service());
@@ -211,17 +211,17 @@ TEST_F(ReplDevDynamicTest, TwoMemberDown) {
         bool succeeded = false;
         for (int i = 0; i < max_retries; ++i) {
             auto result = detail::sync_get(hs()->repl_service().replace_member(
-                db->repl_dev()->group_id(), task_id, replica_member_info{g_helper->replica_id(member_out), ""},
+                db->device()->group_id(), task_id, replica_member_info{g_helper->replica_id(member_out), ""},
                 replica_member_info{g_helper->replica_id(member_in), ""}, 1));
             if (result.has_value()) {
                 succeeded = true;
                 break;
             }
             ASSERT_EQ(result.error(), ReplServiceError::NOT_LEADER)
-                << "Replace member failed with unexpected error: " << result.error();
+                << "Replace member failed with unexpected error: " << result.error().message();
             // commit_quorum was set to 1 by reset_quorum_size() before the NOT_LEADER check; it is not
             // cleared on the NOT_LEADER path so it should still read 1 here.
-            EXPECT_EQ(db->repl_dev()->get_custom_commit_quorum(), 1u)
+            EXPECT_EQ(db->device()->get_custom_commit_quorum(), 1u)
                 << "commit_quorum should be 1 after NOT_LEADER retry with commit_quorum=1";
             LOGINFO("Replace member returned NOT_LEADER, retry {}/{}", i + 1, max_retries);
             std::this_thread::sleep_for(std::chrono::seconds(2));
@@ -248,7 +248,7 @@ TEST_F(ReplDevDynamicTest, TwoMemberDown) {
             ReplaceMemberStatus::IN_PROGRESS);
         // start_replace_member resets commit_quorum to 0 on success (before returning), so by the time
         // replace_member() returned the custom commit quorum should already be cleared.
-        EXPECT_EQ(db->repl_dev()->get_custom_commit_quorum(), 0u)
+        EXPECT_EQ(db->device()->get_custom_commit_quorum(), 0u)
             << "commit_quorum should be reset to 0 after successful replace_member";
     });
 
@@ -330,7 +330,7 @@ TEST_F(ReplDevDynamicTest, OutMemberDown) {
         LOGINFO("Start replica 2");
         this->start_replica(2);
         // The out member will have the repl dev destroyed.
-        auto repl_dev = std::dynamic_pointer_cast< RaftReplDev >(db->repl_dev());
+        auto repl_dev = std::dynamic_pointer_cast< RaftReplDev >(db->device());
         while (repl_dev && !repl_dev->is_destroyed()) {
             std::this_thread::sleep_for(std::chrono::seconds(1));
             auto& raft_repl_svc = dynamic_cast< RaftReplService& >(hs()->repl_service());
@@ -418,7 +418,7 @@ TEST_F(ReplDevDynamicTest, LeaderReplace) {
     });
     if (g_helper->replica_num() == member_out) {
         // The out member will have the repl dev destroyed.
-        auto repl_dev = std::dynamic_pointer_cast< RaftReplDev >(db->repl_dev());
+        auto repl_dev = std::dynamic_pointer_cast< RaftReplDev >(db->device());
         while (repl_dev && !repl_dev->is_destroyed()) {
             std::this_thread::sleep_for(std::chrono::seconds(1));
             auto& raft_repl_svc = dynamic_cast< RaftReplService& >(hs()->repl_service());
@@ -487,7 +487,7 @@ TEST_F(ReplDevDynamicTest, OneMemberRestart) {
     });
     if (g_helper->replica_num() == member_out) {
         // The out member will have the repl dev destroyed.
-        auto repl_dev = std::dynamic_pointer_cast< RaftReplDev >(db->repl_dev());
+        auto repl_dev = std::dynamic_pointer_cast< RaftReplDev >(db->device());
         while (repl_dev && !repl_dev->is_destroyed()) {
             std::this_thread::sleep_for(std::chrono::seconds(1));
             auto& raft_repl_svc = dynamic_cast< RaftReplService& >(hs()->repl_service());

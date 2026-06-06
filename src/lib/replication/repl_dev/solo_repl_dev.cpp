@@ -42,7 +42,7 @@ SoloReplDev::SoloReplDev(superblk< solo_repl_dev_superblk >&& rd_sb, bool load_e
 }
 
 void SoloReplDev::async_alloc_write(sisl::blob const& header, sisl::blob const& key, sisl::sg_list const& value,
-                                    repl_req_ptr_t rreq, bool part_of_batch, trace_id_t tid) {
+                                    repl_req_ptr_t rreq, io_batch* batch, trace_id_t tid) {
     if (!rreq) { rreq = repl_req_ptr_t(new repl_req_ctx{}); }
 
     incr_pending_request_num();
@@ -92,35 +92,34 @@ void SoloReplDev::write_journal(repl_req_ptr_t rreq) {
             if (cur_lsn < lsn) { m_commit_upto.compare_exchange_strong(cur_lsn, lsn); }
 
             for (const auto& blkid : rreq->local_blkids()) {
-                data_service().commit_blk(blkid);
+                (void)data_service().commit_blk(blkid);
             }
             m_listener->on_commit(rreq->lsn(), rreq->header(), rreq->key(), rreq->local_blkids(), rreq);
             decr_pending_request_num();
         });
 }
 
-std::error_code SoloReplDev::alloc_blks(uint32_t data_size, const blk_alloc_hints& hints,
-                                        std::vector< MultiBlkId >& out_blkids) {
-    if (is_stopping()) { return std::make_error_code(std::errc::operation_canceled); }
+status SoloReplDev::alloc_blks(uint32_t data_size, const blk_alloc_hints& hints,
+                               std::vector< multi_blk_id >& out_blkids) {
+    if (is_stopping()) { return std::unexpected(std::make_error_condition(std::errc::operation_canceled)); }
 
     incr_pending_request_num();
-    std::vector< BlkId > blkids;
-    auto status =
-        data_service().alloc_blks(sisl::round_up(uint32_cast(data_size), data_service().get_blk_size()), hints, blkids);
-    if (status != BlkAllocStatus::SUCCESS) {
-        DEBUG_ASSERT_EQ(status, BlkAllocStatus::SUCCESS, "Unable to allocate blks");
+    auto blk_result =
+        data_service().alloc_blk_list(sisl::round_up(uint32_cast(data_size), data_service().get_blk_size()), hints);
+    if (!blk_result) {
+        DEBUG_ASSERT(false, "Unable to allocate blks");
         decr_pending_request_num();
-        return std::make_error_code(std::errc::no_space_on_device);
+        return std::unexpected(blk_result.error());
     }
-    for (auto& blkid : blkids) {
+    for (auto& blkid : blk_result.value()) {
         out_blkids.emplace_back(blkid);
     }
     decr_pending_request_num();
-    return std::error_code{};
+    return ok();
 }
 
-sisl::async::task< iomgr::io_result > SoloReplDev::async_write(const std::vector< MultiBlkId >& blkids,
-                                                               sisl::sg_list const& value, bool part_of_batch,
+sisl::async::task< iomgr::io_result > SoloReplDev::async_write(const std::vector< multi_blk_id >& blkids,
+                                                               sisl::sg_list const& value, io_batch* batch,
                                                                trace_id_t tid) {
     if (is_stopping()) { co_return std::unexpected(std::make_error_condition(std::errc::operation_canceled)); }
 
@@ -147,7 +146,7 @@ sisl::async::task< iomgr::io_result > SoloReplDev::async_write(const std::vector
             co_return std::unexpected(std::make_error_condition(std::errc::invalid_argument));
         }
         piece_sgs.push_back(sisl::sg_list{sgs_size, iovs});
-        futs.emplace_back(data_service().async_write(piece_sgs.back(), blkid, part_of_batch));
+        futs.emplace_back(data_service().async_write(piece_sgs.back(), blkid, batch));
     }
 
     auto const results = co_await sisl::async::when_all(std::move(futs));
@@ -158,7 +157,7 @@ sisl::async::task< iomgr::io_result > SoloReplDev::async_write(const std::vector
     co_return iomgr::io_result{0};
 }
 
-void SoloReplDev::async_write_journal(const std::vector< MultiBlkId >& blkids, sisl::blob const& header,
+void SoloReplDev::async_write_journal(const std::vector< multi_blk_id >& blkids, sisl::blob const& header,
                                       sisl::blob const& key, uint32_t data_size, repl_req_ptr_t rreq, trace_id_t tid) {
     if (is_stopping()) { return; }
     incr_pending_request_num();
@@ -205,13 +204,13 @@ void SoloReplDev::on_log_found(logstore_seq_num_t lsn, log_buffer buf, void* ctx
     raw_ptr += entry->key_size;
     remain_size -= entry->key_size;
 
-    std::vector< MultiBlkId > blkids;
+    std::vector< multi_blk_id > blkids;
     while (remain_size > 0) {
-        MultiBlkId blkid;
-        sisl::blob value_blob{raw_ptr, sizeof(BlkId)};
+        multi_blk_id blkid;
+        sisl::blob value_blob{raw_ptr, sizeof(blk_id)};
         blkid.deserialize(value_blob, true /* copy */);
-        raw_ptr += sizeof(BlkId);
-        remain_size -= sizeof(BlkId);
+        raw_ptr += sizeof(blk_id);
+        remain_size -= sizeof(blk_id);
         blkids.push_back(blkid);
     }
 
@@ -222,22 +221,22 @@ void SoloReplDev::on_log_found(logstore_seq_num_t lsn, log_buffer buf, void* ctx
     }
 
     for (const auto& blkid : blkids) {
-        data_service().commit_blk(blkid);
+        (void)data_service().commit_blk(blkid);
     }
 
     m_listener->on_commit(lsn, header, key, blkids, nullptr /* context */);
 }
 
-sisl::async::task< iomgr::io_result > SoloReplDev::async_read(MultiBlkId const& bid, sisl::sg_list& sgs, uint32_t size,
-                                                              bool part_of_batch, trace_id_t tid) {
+sisl::async::task< iomgr::io_result > SoloReplDev::async_read(multi_blk_id const& bid, sisl::sg_list& sgs, uint32_t size,
+                                                              io_batch* batch, trace_id_t tid) {
     if (is_stopping()) { co_return std::unexpected(std::make_error_condition(std::errc::operation_canceled)); }
     incr_pending_request_num();
-    auto result = data_service().async_read(bid, sgs, size, part_of_batch);
+    auto result = data_service().async_read(bid, sgs, size, batch);
     decr_pending_request_num();
     co_return co_await std::move(result);
 }
 
-sisl::async::task< iomgr::io_result > SoloReplDev::async_free_blks(int64_t, MultiBlkId const& bid, trace_id_t tid) {
+sisl::async::task< iomgr::io_result > SoloReplDev::async_free_blks(int64_t, multi_blk_id const& bid, trace_id_t tid) {
     if (is_stopping()) { co_return std::unexpected(std::make_error_condition(std::errc::operation_canceled)); }
     incr_pending_request_num();
     auto result = data_service().async_free_blk(bid);

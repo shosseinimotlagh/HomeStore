@@ -78,7 +78,7 @@ static constexpr uint64_t Mi{Ki * Ki};
 static constexpr uint64_t Gi{Ki * Mi};
 
 struct sb_info_t {
-    void* cookie;
+    meta_blk* cookie;
     std::string str;
 };
 
@@ -110,7 +110,7 @@ public:
     Clock::time_point m_start_time;
     std::vector< meta_sub_type > actual_cb_order;
     std::vector< meta_sub_type > actual_on_complete_cb_order;
-    std::vector< void* > cookies;
+    std::vector< meta_blk* > cookies;
     bool enable_dependency_chain{false};
     test_common::HSTestHelper m_helper;
 
@@ -184,7 +184,7 @@ public:
         }
     }
 
-    uint64_t total_size_written(const void* cookie) { return m_mbm->meta_size(cookie); }
+    uint64_t total_size_written(const meta_blk* cookie) { return m_mbm->meta_size(cookie); }
 
     void do_write_to_full() {
         static constexpr uint64_t blkstore_overhead = 256 * 1024ul * 1024ul; // 256MB
@@ -223,12 +223,12 @@ public:
         uint8_t* buf = iomanager.iobuf_alloc(512, sz_to_wrt);
         gen_rand_buf(buf, sz_to_wrt);
 
-        void* cookie{nullptr};
+        meta_blk* cookie{nullptr};
         m_mbm->add_sub_sb(mtype, buf, sz_to_wrt, cookie);
-        HS_DBG_ASSERT_NE(cookie, nullptr);
+        HS_DBG_ASSERT_NE(voidptr_cast(cookie), nullptr);
 
         // LOGINFO("buf written: size: {}, data: {}", sz_to_wrt, (char*)buf);
-        meta_blk* mblk = s_cast< meta_blk* >(cookie);
+        meta_blk* mblk = cookie;
         // verify context_sz
 
         if (mblk->hdr.h.compressed == false) {
@@ -279,7 +279,7 @@ public:
     }
 
     void do_sb_remove() {
-        void* cookie{nullptr};
+        meta_blk* cookie{nullptr};
         size_t sz{0};
         std::map< uint64_t, sb_info_t >::iterator it;
         {
@@ -318,7 +318,7 @@ public:
 
             HS_DBG_ASSERT_EQ(it != m_write_sbs.end(), true);
             str = it->second.str;
-            mblk = s_cast< meta_blk* >(it->second.cookie);
+            mblk = it->second.cookie;
         }
 
         // read output will be sent via callback which also holds mutex;
@@ -339,7 +339,7 @@ public:
         auto overflow = do_overflow();
         if (!aligned_buf_size) { overflow = true; } // for unaligned buf size, let's generate overflow buf size;
         auto sz_to_wrt = (size_to_update ? size_to_update : rand_size(overflow, aligned_buf_size));
-        void* cookie{nullptr};
+        meta_blk* cookie{nullptr};
         bool unaligned_addr{false};
         uint32_t unaligned_shift{0};
         {
@@ -380,13 +380,13 @@ public:
 
         {
             std::unique_lock< std::mutex > lg{m_mtx};
-            const auto bid = s_cast< const meta_blk* >(cookie)->hdr.h.bid.to_integer();
+            const auto bid = cookie->hdr.h.bid.to_integer();
             HS_DBG_ASSERT(m_write_sbs.find(bid) == m_write_sbs.end(), "cookie already in the map.");
             m_write_sbs[bid].cookie = cookie;
             m_write_sbs[bid].str = md5_sum(r_cast< const char* >(buf), sz_to_wrt);
 
             // verify context_sz
-            const meta_blk* mblk = s_cast< const meta_blk* >(cookie);
+            const meta_blk* mblk = cookie;
             if (mblk->hdr.h.compressed == false) {
                 HS_DBG_ASSERT(mblk->hdr.h.context_sz == sz_to_wrt, "context_sz mismatch: {}/{}",
                               uint64_cast(mblk->hdr.h.context_sz), sz_to_wrt);
@@ -715,7 +715,7 @@ public:
     uint64_t m_rm_cnt{0};
     uint64_t m_restart_cnt{0};
     uint64_t m_total_wrt_sz{0};
-    MetaBlkService* m_mbm{nullptr};
+    meta_blk_service* m_mbm{nullptr};
     std::map< uint64_t, sb_info_t > m_write_sbs; // during write, save blkid to buf map;
     std::map< uint64_t, sb_info_t > m_cb_blks;   // during recover, save blkid to buf map;
     std::mutex m_mtx;
@@ -768,7 +768,7 @@ TEST_F(VMetaBlkMgrTest, random_dependency_test) {
 
     // add sub super block out of order
     uint8_t* buf = iomanager.iobuf_alloc(512, 1);
-    void* cookie{nullptr};
+    meta_blk* cookie{nullptr};
     for (int i = 0; i < 10; i++) {
         m_mbm->add_sub_sb("E", buf, 1, cookie);
         cookies.push_back(cookie);

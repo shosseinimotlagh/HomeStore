@@ -19,7 +19,7 @@
 #include "blk_allocator.h"
 #include "common/homestore_assert.hpp"
 #include "common/homestore_config.hpp"
-#include <homestore/blk.h>
+#include <homestore/blk.hpp>
 #include <homestore/checkpoint/cp_mgr.hpp>
 #include <homestore/homestore.hpp>
 #include <homestore/superblk_handler.hpp>
@@ -74,13 +74,13 @@ public:
     AppendBlkAllocator& operator=(AppendBlkAllocator&&) noexcept = delete;
     virtual ~AppendBlkAllocator() = default;
 
-    BlkAllocStatus alloc_contiguous(BlkId& bid) override;
-    BlkAllocStatus alloc(blk_count_t nblks, blk_alloc_hints const& hints, BlkId& out_blkid) override;
-    void free(BlkId const& b) override;
-    BlkAllocStatus reserve_on_disk(BlkId const& in_bid) override;
-    BlkAllocStatus reserve_on_cache(BlkId const& b) override;
+    BlkAllocStatus alloc_contiguous(blk_id& bid) override;
+    BlkAllocStatus alloc(blk_count_t nblks, blk_alloc_hints const& hints, blk_id& out_blkid) override;
+    void free(blk_id const& b) override;
+    BlkAllocStatus reserve_on_disk(blk_id const& in_bid) override;
+    BlkAllocStatus reserve_on_cache(blk_id const& b) override;
 
-    bool is_blk_alloced_on_disk(BlkId const& b, bool use_lock = false) const override;
+    bool is_blk_alloced_on_disk(blk_id const& b, bool use_lock = false) const override;
 
     /**
      * @brief :  the number of available blocks that can be allocated by the AppendBlkAllocator.
@@ -104,7 +104,7 @@ public:
      * @brief : check if the input blk id is allocated or not.
      * @return : true if blkid is allocated, false if not;
      */
-    bool is_blk_alloced(const BlkId& in_bid, bool use_lock = false) const override;
+    bool is_blk_alloced(const blk_id& in_bid, bool use_lock = false) const override;
 
     std::string to_string() const override;
 
@@ -119,7 +119,7 @@ public:
 
 private:
     std::string get_name() const;
-    void on_meta_blk_found(const sisl::byte_view& buf, void* meta_cookie);
+    void on_meta_blk_found(const sisl::byte_view& buf, meta_blk* meta_cookie);
 
 private:
     std::atomic< blk_num_t > m_last_append_offset{0}; // last appended offset in blocks in memory

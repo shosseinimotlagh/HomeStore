@@ -65,8 +65,8 @@ public:
         }
     }
 
-    T* load(const sisl::byte_view& buf, void* meta_blk) {
-        m_meta_blk = voidptr_cast(meta_blk);
+    T* load(const sisl::byte_view& buf, struct meta_blk* mblk) {
+        m_meta_blk = mblk;
         m_raw_buf = meta_service().is_aligned_buf_needed(buf.size()) ? buf.extract(meta_service().align_size())
                                                                      : buf.extract(0);
         m_sb = r_cast< T* >(m_raw_buf->bytes());
@@ -122,10 +122,10 @@ public:
     T& operator*() { return *m_sb; }
 
     std::string name() const { return m_meta_sub_name; }
-    void* meta_blk() const { return m_meta_blk; }
+    struct meta_blk* meta_blk() const { return m_meta_blk; }
 
 private:
-    void* m_meta_blk{nullptr};
+    struct meta_blk* m_meta_blk{nullptr};
     sisl::byte_array m_raw_buf;
     T* m_sb{nullptr};
     std::string m_meta_sub_name;
@@ -133,7 +133,7 @@ private:
 
 class json_superblk {
 private:
-    void* m_meta_blk{nullptr};
+    struct meta_blk* m_meta_blk{nullptr};
     nlohmann::json m_json_sb;
     std::string m_meta_sub_name;
 
@@ -153,8 +153,8 @@ public:
         }
     }
 
-    nlohmann::json& load(const sisl::byte_view& buf, void* meta_blk) {
-        m_meta_blk = voidptr_cast(meta_blk);
+    nlohmann::json& load(const sisl::byte_view& buf, struct meta_blk* mblk) {
+        m_meta_blk = mblk;
         std::string_view const b{c_charptr_cast(buf.bytes()), buf.size()};
 
         try {

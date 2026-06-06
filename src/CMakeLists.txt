@@ -3,7 +3,6 @@ cmake_minimum_required(VERSION 3.13)
 set(CMAKE_THREAD_PREFER_PTHREAD TRUE)
 
 find_package(Threads)
-find_library(LIB_AIO aio QUIET REQUIRED)
 find_package(isa-l QUIET)
 find_package(iomgr QUIET REQUIRED)
 find_package(farmhash QUIET REQUIRED)

@@ -17,7 +17,7 @@
 #include <map>
 #include <vector>
 
-#include <homestore/crc.h>
+#include <homestore/crc.hpp>
 #include <iomgr/iomgr.hpp>
 #include <iomgr/drive.hpp> // iomgr::drive_attributes / drive_type (moved out of iomgr.hpp in v13)
 #include <future>          // std::promise (one-shot ChunkPool halt signal)

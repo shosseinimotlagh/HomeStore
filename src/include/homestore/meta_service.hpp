@@ -39,7 +39,7 @@ struct meta_blk_sb;
 struct meta_blk;
 struct meta_vdev_context;
 struct MetaSubRegInfo;
-struct BlkId;
+struct blk_id;
 class VirtualDev;
 struct vdev_info;
 
@@ -77,7 +77,7 @@ public:
 
 struct meta_vdev_context;
 
-class MetaBlkService {
+class meta_blk_service {
 private:
     static bool s_self_recover;
     std::shared_ptr< VirtualDev > m_sb_vdev; // super block vdev
@@ -86,7 +86,7 @@ private:
     meta_blk_map_t m_meta_blks;              // subsystem type to meta blk map;
     ovf_hdr_map_t m_ovf_blk_hdrs;            // ovf blk map;
     client_info_map_t m_sub_info;            // map of callbacks
-    std::unique_ptr< BlkId > m_last_mblk_id; // last meta blk;
+    std::unique_ptr< blk_id > m_last_mblk_id; // last meta blk;
     meta_blk_sb* m_ssb{nullptr};             // meta super super blk;
     sisl::blob m_compress_info;
     MetablkMetrics m_metrics;
@@ -95,13 +95,13 @@ private:
     subtype_graph_t m_dep_topo_graph;
 
 public:
-    MetaBlkService(const char* name = "MetaBlkStore");
-    MetaBlkService(const MetaBlkService&) = delete;
-    MetaBlkService(MetaBlkService&&) noexcept = delete;
-    MetaBlkService& operator=(const MetaBlkService&) = delete;
-    MetaBlkService& operator=(MetaBlkService&&) noexcept = delete;
+    meta_blk_service(const char* name = "MetaBlkStore");
+    meta_blk_service(const meta_blk_service&) = delete;
+    meta_blk_service(meta_blk_service&&) noexcept = delete;
+    meta_blk_service& operator=(const meta_blk_service&) = delete;
+    meta_blk_service& operator=(meta_blk_service&&) noexcept = delete;
 
-    ~MetaBlkService() = default;
+    ~meta_blk_service() = default;
 
     // Creates the vdev that is needed to initialize the device
     void create_vdev(uint64_t size, HSDevType devType, uint32_t num_chunks);
@@ -142,11 +142,11 @@ public:
      * @param type : subsystem type
      * @param context_data : subsystem sb
      * @param sz : size of context_data
-     * @param cookie : returned handle by meta blk mgr.
+     * @param cookie : returned opaque handle by meta blk mgr.
      *                 Subsystem is supposed to use this cookie to do update and remove of the sb;
      *
      */
-    void add_sub_sb(meta_sub_type type, const uint8_t* context_data, uint64_t sz, void*& cookie);
+    void add_sub_sb(meta_sub_type type, const uint8_t* context_data, uint64_t sz, meta_blk*& cookie);
 
     /**
      * @brief : remove subsystem sb based on cookie
@@ -155,7 +155,7 @@ public:
      *
      * @return : ok on success, not-ok on failure;
      */
-    std::error_condition remove_sub_sb(void* cookie);
+    std::error_condition remove_sub_sb(meta_blk* cookie);
 
     /**
      * @brief : update metablk in-place
@@ -165,7 +165,7 @@ public:
      * @param sz : size of context_data
      * @param cookie : handle to address the unique subsytem sb that is being updated;
      */
-    void update_sub_sb(const uint8_t* context_data, uint64_t sz, void* cookie);
+    void update_sub_sb(const uint8_t* context_data, uint64_t sz, meta_blk* cookie);
 
     // size_t read_sub_sb(const meta_sub_type type, sisl::byte_view& buf);
     void read_sub_sb(meta_sub_type type);
@@ -200,7 +200,7 @@ public:
      *
      * @return : size of space occupied by this meta blk;
      */
-    uint64_t meta_size(const void* cookie) const;
+    uint64_t meta_size(const meta_blk* cookie) const;
 
     uint64_t total_size() const;
     uint64_t used_size() const;
@@ -262,16 +262,16 @@ private:
     void format_ssb();
 
     /**
-     * @brief : Write MetaBlkService's superblock to disk;
+     * @brief : Write meta_blk_service's superblock to disk;
      */
     void write_ssb();
 
     /**
-     * @brief : Allocate meta BlkId
+     * @brief : Allocate meta blk_id
      *
      */
-    void alloc_meta_blk(BlkId& bid);
-    void alloc_meta_blks(uint64_t size, std::vector< BlkId >& bid);
+    void alloc_meta_blk(blk_id& bid);
+    void alloc_meta_blks(uint64_t size, std::vector< blk_id >& bid);
 
     void free_meta_blk(meta_blk* mblk);
 
@@ -283,7 +283,7 @@ private:
      *  4. remove from ovf hdr map;
      * @param obid : the start ovf blk id in the chain;
      */
-    void free_ovf_blk_chain(const BlkId& obid);
+    void free_ovf_blk_chain(const blk_id& obid);
 
     /**
      * @brief : Initialize meta blk
@@ -292,7 +292,7 @@ private:
      *
      * @return
      */
-    meta_blk* init_meta_blk(BlkId& bid, meta_sub_type type, const uint8_t* context_data, size_t sz);
+    meta_blk* init_meta_blk(blk_id& bid, meta_sub_type type, const uint8_t* context_data, size_t sz);
 
     /**
      * @brief
@@ -302,7 +302,7 @@ private:
      * @param sz
      * @param offset
      */
-    void write_meta_blk_ovf(BlkId& bid, const uint8_t* context_data, uint64_t sz, const std::string& type);
+    void write_meta_blk_ovf(blk_id& bid, const uint8_t* context_data, uint64_t sz, const std::string& type);
 
     /**
      * @brief : internal implementation of populating and writing a meta block;
@@ -319,7 +319,7 @@ private:
      * @param bid
      * @param b
      */
-    void read(const BlkId& bid, uint8_t* dest, size_t sz) const;
+    void read(const blk_id& bid, uint8_t* dest, size_t sz) const;
 
     void cache_clear();
 
@@ -347,7 +347,7 @@ private:
      *
      * @param cookie
      */
-    void _cookie_sanity_check(const void* cookie) const;
+    void _cookie_sanity_check(const meta_blk* cookie) const;
 
     /**
      * @brief :  On-disk sanity check by walking through meta blk chain for sanity check;
@@ -360,7 +360,7 @@ private:
 
     bool ssb_sanity_check() const;
 
-    bool scan_and_load_meta_blks(meta_blk_map_t& meta_blks, ovf_hdr_map_t& ovf_blk_hdrs, BlkId* last_mblk_id,
+    bool scan_and_load_meta_blks(meta_blk_map_t& meta_blks, ovf_hdr_map_t& ovf_blk_hdrs, blk_id* last_mblk_id,
                                  client_info_map_t& sub_info);
 
     void recover_meta_block(meta_blk* meta_block);
@@ -371,11 +371,11 @@ public:
 
     nlohmann::json dump_disk_metablks(const std::string& client);
     nlohmann::json populate_json(int log_level, meta_blk_map_t& meta_blks, ovf_hdr_map_t& ovf_blk_hdrs,
-                                 BlkId* last_mblk_id, client_info_map_t& sub_info, bool self_recover,
+                                 blk_id* last_mblk_id, client_info_map_t& sub_info, bool self_recover,
                                  const std::string& client);
     shared< VirtualDev > do_open_vdev(const vdev_info& vinfo);
 };
 
-extern MetaBlkService& meta_service();
+extern meta_blk_service& meta_service();
 
 } // namespace homestore

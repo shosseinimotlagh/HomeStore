@@ -48,7 +48,7 @@ CPManager::CPManager() :
         m_sb{"CPSuperBlock"} {
     meta_service().register_handler(
         "CPSuperBlock",
-        [this](meta_blk* mblk, sisl::byte_view buf, size_t size) { on_meta_blk_found(std::move(buf), (void*)mblk); },
+        [this](meta_blk* mblk, sisl::byte_view buf, size_t size) { on_meta_blk_found(std::move(buf), mblk); },
         nullptr);
 
     resource_mgr().register_dirty_buf_exceed_cb([this]([[maybe_unused]] int64_t dirty_buf_count, bool critical) {
@@ -116,7 +116,7 @@ void CPManager::start_timer() {
     });
 }
 
-void CPManager::on_meta_blk_found(const sisl::byte_view& buf, void* meta_cookie) {
+void CPManager::on_meta_blk_found(const sisl::byte_view& buf, meta_blk* meta_cookie) {
     m_sb.load(buf, meta_cookie);
     create_first_cp();
     HS_REL_ASSERT_EQ(m_sb->magic, cp_sb_magic, "Invalid Checkpoint metablk, magic mismatch");

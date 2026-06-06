@@ -166,7 +166,7 @@ struct BlkAllocatorTest {
         return m_track_slabs ? nblks_to_slab_tbl[n_blks] : 0;
     }
 
-    [[nodiscard]] bool alloced(const BlkId& bid, const bool track_block_group) {
+    [[nodiscard]] bool alloced(const blk_id& bid, const bool track_block_group) {
         uint32_t blk_num = bid.blk_num();
         if (blk_num >= m_total_count) {
             {
@@ -223,7 +223,7 @@ struct BlkAllocatorTest {
         return true;
     }
 
-    [[nodiscard]] BlkId pick_rand_blks_to_free(const blk_count_t pref_nblks, const bool round_nblks,
+    [[nodiscard]] blk_id pick_rand_blks_to_free(const blk_count_t pref_nblks, const bool round_nblks,
                                                const bool track_group_block) {
         return m_track_slabs ? pick_rand_slab_blks_to_free(pref_nblks, track_group_block)
                              : pick_rand_pool_blks_to_free(pref_nblks, round_nblks, track_group_block);
@@ -260,7 +260,7 @@ struct BlkAllocatorTest {
 
     [[nodiscard]] static constexpr blk_count_t single_blk_size() { return 1; }
 
-    [[nodiscard]] BlkId pick_rand_slab_blks_to_free(const blk_count_t pref_nblks, const bool track_block_group) {
+    [[nodiscard]] blk_id pick_rand_slab_blks_to_free(const blk_count_t pref_nblks, const bool track_block_group) {
         const auto start_idx{nblks_to_idx(pref_nblks)};
         auto idx{start_idx};
 
@@ -321,10 +321,10 @@ struct BlkAllocatorTest {
         }
 
         m_alloced_count.fetch_sub(n_blks, std::memory_order_acq_rel);
-        return BlkId{start_blk_num, n_blks, 0};
+        return blk_id{start_blk_num, n_blks, 0};
     }
 
-    [[nodiscard]] BlkId pick_rand_pool_blks_to_free(const blk_count_t pref_nblks, const bool round_nblks,
+    [[nodiscard]] blk_id pick_rand_pool_blks_to_free(const blk_count_t pref_nblks, const bool round_nblks,
                                                     const bool track_block_group) {
         uint32_t start_blk_num{0};
         blk_count_t n_blks{0};
@@ -391,7 +391,7 @@ struct BlkAllocatorTest {
                     start_blk_num, start_blk_num + n_blks - 1, blk_list(0).size(),
                     m_alloced_count.load(std::memory_order_relaxed));
 
-        return BlkId{start_blk_num, n_blks, 0};
+        return blk_id{start_blk_num, n_blks, 0};
     }
 };
 
@@ -410,15 +410,15 @@ struct FixedBlkAllocatorTest : public ::testing::Test, BlkAllocatorTest {
     virtual void SetUp() override {};
     virtual void TearDown() override {};
 
-    bool alloc_blk(BlkAllocStatus exp_status, BlkId& bid, bool track_block_group) {
+    bool alloc_blk(BlkAllocStatus exp_status, blk_id& bid, bool track_block_group) {
         return do_alloc_blk(exp_status, bid, track_block_group, false /* specific_blk */);
     }
 
-    bool reserve_on_cache(BlkAllocStatus exp_status, BlkId& bid, bool track_block_group) {
+    bool reserve_on_cache(BlkAllocStatus exp_status, blk_id& bid, bool track_block_group) {
         return do_alloc_blk(exp_status, bid, track_block_group, true /* specific_blk */);
     }
 
-    bool do_alloc_blk(BlkAllocStatus exp_status, BlkId& bid, bool track_block_group, bool specific_blk = false) {
+    bool do_alloc_blk(BlkAllocStatus exp_status, blk_id& bid, bool track_block_group, bool specific_blk = false) {
         const auto ret = specific_blk ? m_allocator->reserve_on_cache(bid) : m_allocator->alloc_contiguous(bid);
         if (ret != exp_status) {
             {
@@ -434,12 +434,12 @@ struct FixedBlkAllocatorTest : public ::testing::Test, BlkAllocatorTest {
     }
 
     [[nodiscard]] bool free_blk(const uint32_t blk_num) {
-        m_allocator->free(BlkId{blk_num, 1, 0});
+        m_allocator->free(blk_id{blk_num, 1, 0});
         return freed(blk_num);
     }
 
-    [[nodiscard]] BlkId free_random_alloced_blk(const bool track_block_group) {
-        const BlkId bid{pick_rand_blks_to_free(1, false, track_block_group)};
+    [[nodiscard]] blk_id free_random_alloced_blk(const bool track_block_group) {
+        const blk_id bid{pick_rand_blks_to_free(1, false, track_block_group)};
         m_allocator->free(bid);
         return bid;
     }
@@ -474,7 +474,7 @@ struct VarsizeBlkAllocatorTest : public ::testing::Test, BlkAllocatorTest {
         blk_alloc_hints hints;
         hints.is_contiguous = is_contiguous;
 
-        static thread_local std::vector< BlkId > bids;
+        static thread_local std::vector< blk_id > bids;
         bids.clear();
 
         const auto ret = m_allocator->alloc(reqd_size, hints, bids);
@@ -516,9 +516,9 @@ struct VarsizeBlkAllocatorTest : public ::testing::Test, BlkAllocatorTest {
         return true;
     }
 
-    [[nodiscard]] BlkId free_random_alloced_sized_blk(const blk_count_t reqd_size, const bool round_nblks,
+    [[nodiscard]] blk_id free_random_alloced_sized_blk(const blk_count_t reqd_size, const bool round_nblks,
                                                       const bool track_block_group) {
-        const BlkId bid{pick_rand_blks_to_free(reqd_size, round_nblks, track_block_group)};
+        const blk_id bid{pick_rand_blks_to_free(reqd_size, round_nblks, track_block_group)};
         m_allocator->free(bid);
         return bid;
     }
@@ -603,11 +603,11 @@ TEST_F(FixedBlkAllocatorTest, alloc_free_fixed_size) {
     const auto nthreads{
         std::clamp< uint32_t >(std::thread::hardware_concurrency(), 2, SISL_OPTIONS["num_threads"].as< uint32_t >())};
 
-    std::vector< BlkId > reserved_blkids;
+    std::vector< blk_id > reserved_blkids;
 
     LOGINFO("Step 0: Reserve {} blks to be not allocated", nthreads);
     for (blk_num_t i = 0; i < nthreads; ++i) {
-        reserved_blkids.emplace_back(BlkId{i * i, 1, 0});
+        reserved_blkids.emplace_back(blk_id{i * i, 1, 0});
         ASSERT_TRUE(reserve_on_cache(BlkAllocStatus::SUCCESS, reserved_blkids.back(), false /* track_blk_group */));
     }
 
@@ -616,7 +616,7 @@ TEST_F(FixedBlkAllocatorTest, alloc_free_fixed_size) {
     LOGINFO("Step 1: Pre allocate {} objects in {} threads", count / 2, nthreads);
     run_parallel(nthreads, count / 2, [&](const uint64_t count_per_thread, std::atomic< bool >& terminate_flag) {
         for (uint64_t i{0}; (i < count_per_thread) && !terminate_flag; ++i) {
-            BlkId bid;
+            blk_id bid;
             if (!alloc_blk(BlkAllocStatus::SUCCESS, bid, false)) { terminate_flag = true; }
         }
     });
@@ -625,7 +625,7 @@ TEST_F(FixedBlkAllocatorTest, alloc_free_fixed_size) {
     LOGINFO("Step 2: Free {} blks randomly in {} threads ", count / 4, nthreads);
     run_parallel(nthreads, count / 4, [&](const uint64_t count_per_thread, std::atomic< bool >& terminate_flag) {
         for (uint64_t i{0}; (i < count_per_thread) && !terminate_flag; ++i) {
-            [[maybe_unused]] const BlkId blkId{free_random_alloced_blk(false)};
+            [[maybe_unused]] const blk_id blkId{free_random_alloced_blk(false)};
         }
     });
     validate_count();
@@ -633,13 +633,13 @@ TEST_F(FixedBlkAllocatorTest, alloc_free_fixed_size) {
     LOGINFO("Step 3: Fill in the remaining {} blks to empty the device in {} threads", count * 3 / 4, nthreads);
     run_parallel(nthreads, count * 3 / 4, [&](const uint64_t count_per_thread, std::atomic< bool >& terminate_flag) {
         for (uint64_t i{0}; (i < count_per_thread) && !terminate_flag; ++i) {
-            BlkId bid;
+            blk_id bid;
             if (!alloc_blk(BlkAllocStatus::SUCCESS, bid, false)) { terminate_flag = true; }
         }
     });
     validate_count();
 
-    BlkId bid;
+    blk_id bid;
     LOGINFO("Step 4: Validate if further allocation result in space full error");
     ASSERT_TRUE(alloc_blk(BlkAllocStatus::SPACE_FULL, bid, false));
 
@@ -650,20 +650,20 @@ TEST_F(FixedBlkAllocatorTest, alloc_free_fixed_size) {
     for (blk_num_t i = 0; i < nthreads; ++i) {
         ASSERT_TRUE(free_blk(reserved_blkids[i].blk_num()));
     }
-    BlkId const free_bid1 = free_random_alloced_blk(false);
-    BlkId const free_bid2 = free_random_alloced_blk(false);
+    blk_id const free_bid1 = free_random_alloced_blk(false);
+    blk_id const free_bid2 = free_random_alloced_blk(false);
 
     for (blk_num_t i = 0; i < nthreads; ++i) {
-        BlkId bid;
+        blk_id bid;
         ASSERT_TRUE(alloc_blk(BlkAllocStatus::SUCCESS, bid, false));
-        ASSERT_EQ(BlkId::compare(bid, reserved_blkids[i]), 0) << "Order of block allocation not expected";
+        ASSERT_EQ(blk_id::compare(bid, reserved_blkids[i]), 0) << "Order of block allocation not expected";
     }
 
-    BlkId bid1, bid2;
+    blk_id bid1, bid2;
     ASSERT_TRUE(alloc_blk(BlkAllocStatus::SUCCESS, bid1, false));
     ASSERT_TRUE(alloc_blk(BlkAllocStatus::SUCCESS, bid2, false));
-    ASSERT_EQ(BlkId::compare(bid1, free_bid1), 0) << "Order of block allocation not expected";
-    ASSERT_EQ(BlkId::compare(bid2, free_bid2), 0) << "Order of block allocation not expected";
+    ASSERT_EQ(blk_id::compare(bid1, free_bid1), 0) << "Order of block allocation not expected";
+    ASSERT_EQ(blk_id::compare(bid2, free_bid2), 0) << "Order of block allocation not expected";
     validate_count();
 }
 

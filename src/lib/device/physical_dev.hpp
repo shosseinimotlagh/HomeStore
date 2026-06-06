@@ -26,7 +26,7 @@
 
 #include <boost/icl/split_interval_set.hpp>
 #include <nlohmann/json.hpp>
-#include <homestore/crc.h>
+#include <homestore/crc.hpp>
 #include <sisl/metrics/metrics.hpp>
 #include <sisl/logging/logging.h>
 #include <homestore/homestore_decl.hpp>

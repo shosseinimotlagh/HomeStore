@@ -9,7 +9,7 @@
 #include <nuraft_mesg/mesg_state_mgr.hpp>
 #include <sisl/fds/buffer.hpp>
 #include <sisl/fds/utils.hpp>
-#include <homestore/replication/repl_dev.h>
+#include <homestore/replication/repl_dev.hpp>
 #include <homestore/superblk_handler.hpp>
 #include <homestore/logstore/log_store.hpp>
 #include "replication/repl_dev/common.h"
@@ -174,7 +174,7 @@ private:
     nuraft::ptr< nuraft::snapshot > snapshot_;
 };
 
-class RaftReplDev : public ReplDev,
+class RaftReplDev : public repl_dev,
                     public nuraft_mesg::mesg_state_mgr,
                     public std::enable_shared_from_this< RaftReplDev > {
 private:
@@ -188,7 +188,7 @@ private:
     replica_id_t m_my_repl_id;  // This replica's uuid
     int32_t m_raft_server_id;   // Server ID used by raft (unique within raft group)
     shared< ReplLogStore > m_data_journal;
-    shared< HomeLogStore > m_free_blks_journal;
+    shared< home_log_store > m_free_blks_journal;
     sisl::urcu_scoped_ptr< repl_dev_stage_t > m_stage;
 
     std::mutex m_config_mtx;
@@ -236,21 +236,21 @@ public:
 
     bool bind_data_service();
     bool join_group();
-    AsyncReplResult<> start_replace_member(std::string& task_id, const replica_member_info& member_out,
+    async_status start_replace_member(std::string& task_id, const replica_member_info& member_out,
                                            const replica_member_info& member_in, uint32_t commit_quorum = 0,
                                            uint64_t trace_id = 0);
-    AsyncReplResult<> complete_replace_member(std::string& task_id, const replica_member_info& member_out,
+    async_status complete_replace_member(std::string& task_id, const replica_member_info& member_out,
                                               const replica_member_info& member_in, uint32_t commit_quorum = 0,
                                               uint64_t trace_id = 0);
     ReplaceMemberStatus get_replace_member_status(std::string& task_id, const replica_member_info& member_out,
                                                   const replica_member_info& member_in,
                                                   const std::vector< replica_member_info >& others,
                                                   uint64_t trace_id = 0);
-    AsyncReplResult<> flip_learner_flag(const replica_member_info& member, bool target, uint32_t commit_quorum,
+    async_status flip_learner_flag(const replica_member_info& member, bool target, uint32_t commit_quorum,
                                         bool wait_and_verify = true, uint64_t trace_id = 0);
-    AsyncReplResult<> remove_member(const replica_id_t& member, uint32_t commit_quorum, bool wait_and_verify,
+    async_status remove_member(const replica_id_t& member, uint32_t commit_quorum, bool wait_and_verify,
                                     uint64_t trace_id = 0);
-    AsyncReplResult<> clean_replace_member_task(const std::string& task_id, uint32_t commit_quorum,
+    async_status clean_replace_member_task(const std::string& task_id, uint32_t commit_quorum,
                                                 uint64_t trace_id = 0);
     ReplServiceError do_add_member(const replica_member_info& member, uint64_t trace_id = 0);
     ReplServiceError do_remove_member(const replica_id_t& member, bool wait_and_verify = true, uint64_t trace_id = 0);
@@ -261,37 +261,37 @@ public:
                                                        uint64_t trace_id = 0);
     bool wait_and_check(const std::function< bool() >& check_func, uint32_t timeout_ms, uint32_t interval_ms = 100);
 
-    ReplResult< replace_member_task > get_ongoing_replace_member_task(uint64_t trace_id = 0) const;
+    result< replace_member_task > get_ongoing_replace_member_task(uint64_t trace_id = 0) const;
     std::string get_replace_member_task_id() const { return {m_rd_sb->replace_member_task.task_id}; }
 
     sisl::async::task< ReplServiceError > destroy_group();
 
-    //////////////// All ReplDev overrides/implementation ///////////////////////
-    virtual std::error_code alloc_blks(uint32_t size, const blk_alloc_hints& hints,
-                                       std::vector< MultiBlkId >& out_blkids) override {
+    //////////////// All repl_dev overrides/implementation ///////////////////////
+    virtual status alloc_blks(uint32_t size, const blk_alloc_hints& hints,
+                              std::vector< multi_blk_id >& out_blkids) override {
         RD_REL_ASSERT(false, "NOT SUPPORTED");
-        return std::make_error_code(std::errc::operation_not_supported);
+        return std::unexpected(std::make_error_condition(std::errc::operation_not_supported));
     }
-    virtual sisl::async::task< iomgr::io_result > async_write(const std::vector< MultiBlkId >& blkids,
-                                                              sisl::sg_list const& value, bool part_of_batch = false,
+    virtual sisl::async::task< iomgr::io_result > async_write(const std::vector< multi_blk_id >& blkids,
+                                                              sisl::sg_list const& value, io_batch* batch = nullptr,
                                                               trace_id_t tid = 0) override {
         RD_REL_ASSERT(false, "NOT SUPPORTED");
         co_return std::unexpected(std::make_error_condition(std::errc::operation_not_supported));
     }
 
-    virtual void async_write_journal(const std::vector< MultiBlkId >& blkids, sisl::blob const& header,
+    virtual void async_write_journal(const std::vector< multi_blk_id >& blkids, sisl::blob const& header,
                                      sisl::blob const& key, uint32_t data_size, repl_req_ptr_t ctx,
                                      trace_id_t tid = 0) override {
         RD_REL_ASSERT(false, "NOT SUPPORTED");
     }
 
     void async_alloc_write(sisl::blob const& header, sisl::blob const& key, sisl::sg_list const& value,
-                           repl_req_ptr_t ctx, bool part_of_batch = false, trace_id_t tid = 0) override;
-    sisl::async::task< iomgr::io_result > async_read(MultiBlkId const& blkid, sisl::sg_list& sgs, uint32_t size,
-                                                     bool part_of_batch = false, trace_id_t tid = 0) override;
-    sisl::async::task< iomgr::io_result > async_free_blks(int64_t lsn, MultiBlkId const& blkid,
+                           repl_req_ptr_t ctx, io_batch* batch = nullptr, trace_id_t tid = 0) override;
+    sisl::async::task< iomgr::io_result > async_read(multi_blk_id const& blkid, sisl::sg_list& sgs, uint32_t size,
+                                                     io_batch* batch = nullptr, trace_id_t tid = 0) override;
+    sisl::async::task< iomgr::io_result > async_free_blks(int64_t lsn, multi_blk_id const& blkid,
                                                           trace_id_t tid = 0) override;
-    AsyncReplResult<> become_leader() override;
+    async_status become_leader() override;
     bool is_leader() const override;
     replica_id_t get_leader_id() const override;
     std::vector< peer_info > get_replication_status() const override;
@@ -521,7 +521,7 @@ private:
     void report_blk_metrics_if_needed(repl_req_ptr_t rreq);
     ReplServiceError init_req_ctx(repl_req_ptr_t rreq, repl_key rkey, journal_type_t op_code, bool is_proposer,
                                   sisl::blob const& user_header, sisl::blob const& key, uint32_t data_size,
-                                  cshared< ReplDevListener >& listener);
+                                  cshared< repl_dev_listener >& listener);
 
     bool is_in_quience() { return m_in_quience.load(std::memory_order_acquire); }
 

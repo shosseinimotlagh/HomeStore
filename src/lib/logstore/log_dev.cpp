@@ -43,8 +43,8 @@ SISL_LOGGING_DECL(logstore)
 #define THIS_LOGDEV_PERIODIC_LOG(level, msg, ...)                                                                      \
     HS_PERIODIC_DETAILED_LOG(level, logstore, "log_dev", m_logdev_id, , , msg, __VA_ARGS__)
 
-static bool has_data_service() { return HomeStore::instance()->has_data_service(); }
-// static BlkDataService& data_service() { return HomeStore::instance()->data_service(); }
+static bool has_data_service() { return home_store::instance()->has_data_service(); }
+// static blk_data_service& data_service() { return home_store::instance()->data_service(); }
 
 LogDev::LogDev(logdev_id_t id, flush_mode_t flush_mode, uuid_t pid) :
         m_logdev_id{id}, m_flush_mode{flush_mode}, m_parent_id{pid} {
@@ -570,7 +570,7 @@ void LogDev::on_flush_completion(LogGroup* lg) {
             req = s_cast< logstore_req* >(record.context);
             store_id = record.store_id;
         }
-        HomeLogStore* log_store = req->log_store;
+        home_log_store* log_store = req->log_store;
         HS_LOG_ASSERT_EQ(log_store->get_store_id(), store_id,
                          "Expecting store id in log store and flush completion to match");
         HISTOGRAM_OBSERVE(logstore_service().m_metrics, logstore_append_latency, get_elapsed_time_us(req->start_time));
@@ -721,12 +721,12 @@ void LogDev::handle_unopened_log_stores(bool format) {
     }
 }
 
-std::shared_ptr< HomeLogStore > LogDev::create_new_log_store(bool append_mode) {
+std::shared_ptr< home_log_store > LogDev::create_new_log_store(bool append_mode) {
     if (is_stopping()) return nullptr;
     incr_pending_request_num();
     auto const store_id = reserve_store_id();
-    std::shared_ptr< HomeLogStore > lstore;
-    lstore = std::make_shared< HomeLogStore >(shared_from_this(), store_id, append_mode, 0);
+    std::shared_ptr< home_log_store > lstore;
+    lstore = std::make_shared< home_log_store >(shared_from_this(), store_id, append_mode, 0);
 
     {
         std::unique_lock< std::shared_mutex > holder(m_store_map_mtx);
@@ -739,13 +739,13 @@ std::shared_ptr< HomeLogStore > LogDev::create_new_log_store(bool append_mode) {
     return lstore;
 }
 
-sisl::async::task< shared< HomeLogStore > > LogDev::open_log_store(logstore_id_t store_id, bool append_mode,
+sisl::async::task< shared< home_log_store > > LogDev::open_log_store(logstore_id_t store_id, bool append_mode,
                                                                    log_found_cb_t log_found_cb,
                                                                    log_replay_done_cb_t log_replay_done_cb) {
     // The map insert must happen SYNCHRONOUSLY here (so replay's on_logfound finds the entry); only the wait for
     // the store to be opened is awaited. So this is NOT itself a coroutine -- it inserts under the lock, then
     // returns a task awaiting the entry's broadcast completion (copied out before the lock releases).
-    std::shared_ptr< sisl::async::shared_awaitable< std::shared_ptr< HomeLogStore > > > comp;
+    std::shared_ptr< sisl::async::shared_awaitable< std::shared_ptr< home_log_store > > > comp;
     {
         std::unique_lock< std::shared_mutex > holder(m_store_map_mtx);
         auto it = m_id_logstore_map.find(store_id);
@@ -798,7 +798,7 @@ void LogDev::on_log_store_found(logstore_id_t store_id, const logstore_superblk&
              m_logdev_id, store_id, sb.m_first_seq_num);
     logstore_info& info = it->second;
     info.log_store =
-        std::make_shared< HomeLogStore >(shared_from_this(), store_id, info.append_mode, sb.m_first_seq_num);
+        std::make_shared< home_log_store >(shared_from_this(), store_id, info.append_mode, sb.m_first_seq_num);
     info.log_store->register_log_found_cb(info.log_found_cb);
     info.log_store->register_log_replay_done_cb(info.log_replay_done_cb);
     info.promise->complete(info.log_store);
@@ -806,7 +806,7 @@ void LogDev::on_log_store_found(logstore_id_t store_id, const logstore_superblk&
 
 void LogDev::on_logfound(logstore_id_t id, logstore_seq_num_t lsn, logdev_key ld_key, logdev_key flush_ld_key,
                          log_buffer buf, uint32_t nremaining_in_batch) {
-    HomeLogStore* log_store{nullptr};
+    home_log_store* log_store{nullptr};
     {
         std::shared_lock< std::shared_mutex > holder(m_store_map_mtx);
         auto const it = m_id_logstore_map.find(id);
@@ -897,13 +897,13 @@ void LogDevMetadata::reset() {
     m_store_info.clear();
 }
 
-void LogDevMetadata::logdev_super_blk_found(const sisl::byte_view& buf, void* meta_cookie) {
+void LogDevMetadata::logdev_super_blk_found(const sisl::byte_view& buf, meta_blk* meta_cookie) {
     m_sb.load(buf, meta_cookie);
     HS_REL_ASSERT_EQ(m_sb->get_magic(), logdev_superblk::LOGDEV_SB_MAGIC, "Invalid logdev metablk, magic mismatch");
     HS_REL_ASSERT_EQ(m_sb->get_version(), logdev_superblk::LOGDEV_SB_VERSION, "Invalid version of logdev metablk");
 }
 
-void LogDevMetadata::rollback_super_blk_found(const sisl::byte_view& buf, void* meta_cookie) {
+void LogDevMetadata::rollback_super_blk_found(const sisl::byte_view& buf, meta_blk* meta_cookie) {
     m_rollback_sb.load(buf, meta_cookie);
     HS_REL_ASSERT_EQ(m_rollback_sb->get_magic(), rollback_superblk::ROLLBACK_SB_MAGIC, "Rollback sb magic mismatch");
     HS_REL_ASSERT_EQ(m_rollback_sb->get_version(), rollback_superblk::ROLLBACK_SB_VERSION,

@@ -171,7 +171,7 @@ public:
     // area on more expensive fast device.
     static constexpr uint64_t MIN_CHUNK_SIZE_FAST_DEVICE = 32 * 1024 * 1024;
 
-    // Maximum number of chunks across all devices. We need to keep in mind the BlkId restriction (to address the
+    // Maximum number of chunks across all devices. We need to keep in mind the blk_id restriction (to address the
     // chunks)
     static constexpr uint32_t MAX_CHUNKS_IN_SYSTEM = 65536;
 

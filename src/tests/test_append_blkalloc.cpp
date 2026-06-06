@@ -61,7 +61,7 @@ static Param gp;
 
 class AppendBlkAllocatorTest : public testing::Test {
 public:
-    BlkDataService& inst() { return homestore::data_service(); }
+    blk_data_service& inst() { return homestore::data_service(); }
 
     virtual void SetUp() override {
         m_helper.start_homestore(
@@ -149,7 +149,7 @@ private:
     // caller should be responsible to call free(sg) to free the iobuf allocated in iovs,
     // normally it should be freed in after_write_cb;
     //
-    sisl::async::task< shared< MultiBlkId > > write_sgs(uint64_t io_size, cshared< sisl::sg_list >& sg,
+    sisl::async::task< shared< multi_blk_id > > write_sgs(uint64_t io_size, cshared< sisl::sg_list >& sg,
                                                         uint32_t num_iovs) {
         // TODO: What if iov_len is not multiple of 4Ki?
         HS_DBG_ASSERT_EQ(io_size % (4 * Ki * num_iovs), 0, "Expecting iov_len : {} to be multiple of {}.",
@@ -164,9 +164,9 @@ private:
             sg->size += iov_len;
         }
 
-        auto blkid = std::make_shared< MultiBlkId >();
+        auto blkid = std::make_shared< multi_blk_id >();
         RELEASE_ASSERT(
-            bool(co_await inst().async_alloc_write(*(sg.get()), blk_alloc_hints{}, *blkid, false /* part_of_batch */)),
+            bool(co_await inst().async_alloc_write(*(sg.get()), blk_alloc_hints{}, *blkid)),
             "Write failure");
         co_return blkid;
     }

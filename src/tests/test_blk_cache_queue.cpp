@@ -75,18 +75,18 @@ protected:
 
         const auto fill_session{m_fb_cache->create_cache_fill_session(true /* fill_entire_cache */)};
         if (fill_session->any_refill_needed()) {
-            uint32_t blk_id{0};
+            uint32_t blk_num{0};
             for (const auto& slab_cfg : m_cfg.m_per_slab_cfg) {
                 for (blk_num_t i{0}; i < slab_cfg.max_entries; ++i) {
                     blk_cache_fill_req fill_req;
-                    fill_req.start_blk_num = blk_id;
+                    fill_req.start_blk_num = blk_num;
                     fill_req.nblks = slab_cfg.slab_size;
                     fill_req.preferred_level = 1;
                     const auto nblks_added{m_fb_cache->try_fill_cache(fill_req, *fill_session)};
                     ASSERT_EQ(nblks_added, slab_cfg.slab_size)
                         << "Failure in filling cache for i = " << i << " slab=" << slab_cfg.slab_size;
 
-                    blk_id += slab_cfg.slab_size;
+                    blk_num += slab_cfg.slab_size;
                 }
             }
             m_fb_cache->close_cache_fill_session(*fill_session);

@@ -49,7 +49,7 @@ void ResourceMgr::stop() {
 //
 void ResourceMgr::trigger_truncate() {
     if (m_is_stopped_.load()) {
-        // when we are here, it means HomeStore is shutting down and since this API is called in timer thread, the timer
+        // when we are here, it means home_store is shutting down and since this API is called in timer thread, the timer
         // thread might already been triggered while RM is tring to cancel it;
         // and since shutdown and timer thread happen parallel, by the time we are here, shutdown might already cleaned
         // up all replication service instances. and it will throw heap-use-after-free;
@@ -62,7 +62,7 @@ void ResourceMgr::trigger_truncate() {
          * DO NOT NEED : raft will truncate logs.
          * // first make sure all repl dev's underlying raft log store make corresponding reservation during
          * // truncate -- set the safe truncate boundary for each raft log store;
-         * hs()->repl_service().iterate_repl_devs([](cshared< ReplDev >& rd) {
+         * hs()->repl_service().iterate_repl_devs([](cshared< repl_dev >& rd) {
          *     // lock is already taken by repl service layer;
          *     std::dynamic_pointer_cast< RaftReplDev >(rd)->truncate(
          *     HS_DYNAMIC_CONFIG(resource_limits.raft_logstore_reserve_threshold));

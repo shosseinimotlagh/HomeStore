@@ -26,7 +26,7 @@
 #include <iomgr/iomgr.hpp>
 
 #include <homestore/homestore_decl.hpp>
-#include <homestore/blk.h>
+#include <homestore/blk.hpp>
 
 namespace spdlog {
 class logger;
@@ -40,19 +40,19 @@ namespace homestore {
 class DeviceManager;
 class ResourceMgr;
 class HomeStoreStatusMgr;
-class MetaBlkService;
-class LogStoreService;
-class BlkDataService;
+class meta_blk_service;
+class log_store_service;
+class blk_data_service;
 class IndexService;
-class ReplicationService;
+class replication_service;
 class IndexServiceCallbacks;
 struct vdev_info;
-class HomeStore;
+class home_store;
 class CPManager;
 class VirtualDev;
 class ChunkSelector;
-class ReplDevListener;
-class ReplApplication;
+class repl_dev_listener;
+class repl_application;
 class FaultContainmentService;
 class FaultContainmentCallback;
 
@@ -60,7 +60,7 @@ class FaultContainmentCallback;
 class CrashSimulator;
 #endif
 
-using HomeStoreSafePtr = std::shared_ptr< HomeStore >;
+using HomeStoreSafePtr = std::shared_ptr< home_store >;
 
 ENUM(hs_vdev_type_t, uint32_t, DATA_VDEV = 1, INDEX_VDEV = 2, META_VDEV = 3, LOGDEV_VDEV = 4);
 
@@ -113,13 +113,13 @@ struct HS_SERVICE {
  * If HS see write error/read error during recovery then it panic the system.
  */
 
-class HomeStore {
+class home_store {
 private:
-    std::unique_ptr< BlkDataService > m_data_service;
-    std::unique_ptr< MetaBlkService > m_meta_service;
-    std::unique_ptr< LogStoreService > m_log_service;
+    std::unique_ptr< blk_data_service > m_data_service;
+    std::unique_ptr< meta_blk_service > m_meta_service;
+    std::unique_ptr< log_store_service > m_log_service;
     std::unique_ptr< IndexService > m_index_service;
-    std::shared_ptr< ReplicationService > m_repl_service;
+    std::shared_ptr< replication_service > m_repl_service;
     std::unique_ptr< FaultContainmentService > m_fc_service;
 
     std::unique_ptr< DeviceManager > m_dev_mgr;
@@ -134,27 +134,27 @@ private:
     std::atomic< bool > m_init_done{false};
 
 public:
-    HomeStore() = default;
-    virtual ~HomeStore() = default;
+    home_store() = default;
+    virtual ~home_store() = default;
 
-    /////////////////////////////////////////// static HomeStore member functions /////////////////////////////////
+    /////////////////////////////////////////// static home_store member functions /////////////////////////////////
     static HomeStoreSafePtr s_instance;
 
     static void set_instance(const HomeStoreSafePtr& instance) { s_instance = instance; }
     static void reset_instance() { s_instance.reset(); }
-    static HomeStore* instance();
-    static shared< HomeStore > safe_instance() { return s_instance; }
+    static home_store* instance();
+    static shared< home_store > safe_instance() { return s_instance; }
 
     static shared< spdlog::logger >& periodic_logger() { return instance()->m_periodic_logger; }
 
     ///////////////////////////// Member functions /////////////////////////////////////////////
-    HomeStore& with_data_service(cshared< ChunkSelector >& custom_chunk_selector = nullptr);
-    HomeStore& with_log_service();
-    HomeStore& with_index_service(std::unique_ptr< IndexServiceCallbacks > cbs,
+    home_store& with_data_service(cshared< ChunkSelector >& custom_chunk_selector = nullptr);
+    home_store& with_log_service();
+    home_store& with_index_service(std::unique_ptr< IndexServiceCallbacks > cbs,
                                   cshared< ChunkSelector >& custom_chunk_selector = nullptr);
-    HomeStore& with_repl_data_service(cshared< ReplApplication >& repl_app,
+    home_store& with_repl_data_service(cshared< repl_application >& repl_app,
                                       cshared< ChunkSelector >& custom_chunk_selector = nullptr);
-    HomeStore& with_fault_containment(std::unique_ptr< FaultContainmentCallback > cb);
+    home_store& with_fault_containment(std::unique_ptr< FaultContainmentCallback > cb);
 
     bool start(const hs_input_params& input, hs_before_services_starting_cb_t svcs_starting_cb = nullptr);
     void format_and_start(std::map< uint32_t, hs_format_params >&& format_opts);
@@ -172,14 +172,14 @@ public:
     bool has_repl_data_service() const;
     bool has_fc_service() const;
 
-    BlkDataService& data_service() { return *m_data_service; }
-    MetaBlkService& meta_service() { return *m_meta_service; }
-    LogStoreService& logstore_service() { return *m_log_service; }
+    blk_data_service& data_service() { return *m_data_service; }
+    meta_blk_service& meta_service() { return *m_meta_service; }
+    log_store_service& logstore_service() { return *m_log_service; }
     IndexService& index_service() {
         if (!m_index_service) { throw std::runtime_error("index_service is nullptr"); }
         return *m_index_service;
     }
-    ReplicationService& repl_service() { return *m_repl_service; }
+    replication_service& repl_service() { return *m_repl_service; }
     FaultContainmentService& fc_service() {
         if (!m_fc_service) { throw std::runtime_error("fc_service is nullptr"); }
         return *m_fc_service;
@@ -190,7 +190,7 @@ public:
     shared< sisl::Evictor > evictor() { return m_evictor; }
 
 #ifdef _PRERELEASE
-    HomeStore& with_crash_simulator(std::function< void(void) > restart_cb);
+    home_store& with_crash_simulator(std::function< void(void) > restart_cb);
     CrashSimulator& crash_simulator() { return *m_crash_simulator; }
     unique< CrashSimulator > m_crash_simulator;
 #endif
@@ -202,5 +202,5 @@ private:
     void do_start();
 };
 
-static HomeStore* hs() { return HomeStore::instance(); }
+static home_store* hs() { return home_store::instance(); }
 } // namespace homestore

@@ -32,7 +32,7 @@
 #include <sisl/metrics/metrics.hpp>
 #include <sisl/logging/logging.h>
 
-#include <homestore/blk.h>
+#include <homestore/blk.hpp>
 #include "bitmap_blk_allocator.h"
 #include "blk_cache.h"
 #include "common/homestore_assert.hpp"
@@ -210,17 +210,17 @@ public:
 
     void load() override;
 
-    BlkAllocStatus alloc_contiguous(BlkId& bid) override;
-    BlkAllocStatus alloc_contiguous(blk_count_t nblks, blk_alloc_hints const& hints, BlkId& out_blkid);
-    BlkAllocStatus alloc(blk_count_t nblks, blk_alloc_hints const& hints, BlkId& out_blkid) override;
-    BlkAllocStatus alloc(blk_count_t nblks, blk_alloc_hints const& hints, std::vector< BlkId >& out_blkids);
-    BlkAllocStatus reserve_on_cache(BlkId const& b) override;
-    void free(BlkId const& blk_id) override;
+    BlkAllocStatus alloc_contiguous(blk_id& bid) override;
+    BlkAllocStatus alloc_contiguous(blk_count_t nblks, blk_alloc_hints const& hints, blk_id& out_blkid);
+    BlkAllocStatus alloc(blk_count_t nblks, blk_alloc_hints const& hints, blk_id& out_blkid) override;
+    BlkAllocStatus alloc(blk_count_t nblks, blk_alloc_hints const& hints, std::vector< blk_id >& out_blkids);
+    BlkAllocStatus reserve_on_cache(blk_id const& b) override;
+    void free(blk_id const& blk_id) override;
 
     blk_num_t available_blks() const override;
     blk_num_t get_defrag_nblks() const override;
     blk_num_t get_used_blks() const override;
-    bool is_blk_alloced(BlkId const& in_bid, bool use_lock = false) const override;
+    bool is_blk_alloced(blk_id const& in_bid, bool use_lock = false) const override;
     std::string to_string() const override;
     void reset() override;
     nlohmann::json get_metrics_in_json();
@@ -267,13 +267,13 @@ private:
     bool allocator_state_machine();
     void do_start();
 
-    blk_count_t alloc_blks_slab(blk_count_t nblks, blk_alloc_hints const& hints, MultiBlkId& out_blkid);
-    blk_count_t alloc_blks_direct(blk_count_t nblks, blk_alloc_hints const& hints, MultiBlkId& out_blkids);
-    blk_count_t free_blks_slab(MultiBlkId const& b);
-    blk_count_t free_blks_direct(MultiBlkId const& b);
+    blk_count_t alloc_blks_slab(blk_count_t nblks, blk_alloc_hints const& hints, multi_blk_id& out_blkid);
+    blk_count_t alloc_blks_direct(blk_count_t nblks, blk_alloc_hints const& hints, multi_blk_id& out_blkids);
+    blk_count_t free_blks_slab(multi_blk_id const& b);
+    blk_count_t free_blks_direct(multi_blk_id const& b);
 
 #ifdef _PRERELEASE
-    void alloc_sanity_check(blk_count_t nblks, blk_alloc_hints const& hints, MultiBlkId const& out_blkids) const;
+    void alloc_sanity_check(blk_count_t nblks, blk_alloc_hints const& hints, multi_blk_id const& out_blkids) const;
 #endif
 
     // Sweep and cache related functions
@@ -284,7 +284,7 @@ private:
     void fill_cache(BlkAllocSegment* seg, blk_cache_fill_session& fill_session);
     void fill_cache_in_portion(blk_num_t portion_num, blk_cache_fill_session& fill_session);
 
-    void free_on_bitmap(BlkId const& b);
+    void free_on_bitmap(blk_id const& b);
 
     //////////////////////////////////////////// Convenience routines ///////////////////////////////////////////
     ///////////////////// Physical page related routines ////////////////////////
@@ -303,8 +303,8 @@ private:
     }
 
     ///////////////////// Cache Entry related routines ////////////////////////
-    // void blk_cache_entries_to_blkids(const std::vector< blk_cache_entry >& entries, MultiBlkId& out_blkids);
-    BlkId blk_cache_entry_to_blkid(blk_cache_entry const& e);
-    blk_cache_entry blkid_to_blk_cache_entry(BlkId const& bid, blk_temp_t preferred_level = 1);
+    // void blk_cache_entries_to_blkids(const std::vector< blk_cache_entry >& entries, multi_blk_id& out_blkids);
+    blk_id blk_cache_entry_to_blkid(blk_cache_entry const& e);
+    blk_cache_entry blkid_to_blk_cache_entry(blk_id const& bid, blk_temp_t preferred_level = 1);
 };
 } // namespace homestore

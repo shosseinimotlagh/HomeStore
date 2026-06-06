@@ -20,7 +20,7 @@
 #include <sisl/fds/utils.hpp>
 #include <sisl/metrics/metrics.hpp>
 #include <functional>
-#include <homestore/blk.h>
+#include <homestore/blk.hpp>
 
 namespace homestore {
 typedef std::move_only_function< void(void) > after_remove_cb_t;
@@ -84,7 +84,7 @@ typedef std::shared_ptr< blk_track_waiter > blk_track_waiter_ptr;
 //  clang-format on
 //
 struct BlkTrackRecord {
-    BlkId m_key; // aligned key
+    blk_id m_key; // aligned key
     int64_t m_ref_cnt{0};
     boost::container::small_vector< blk_track_waiter_ptr, 8 > m_waiters; // multiple waiters can wait on same record
 };
@@ -114,7 +114,7 @@ class BlkReadTracker {
     static constexpr uint16_t s_entries_per_record = 8; // this number could be candidate to tune perf;
 
 private:
-    sisl::SimpleHashMap< BlkId, BlkTrackRecord > m_pending_reads_map;
+    sisl::SimpleHashMap< blk_id, BlkTrackRecord > m_pending_reads_map;
     BlkReadTrackerMetrics m_metrics;
     uint32_t m_entries_per_record{s_entries_per_record};
 
@@ -139,17 +139,17 @@ public:
      *
      * @param blkid : the blkid that is being added for reference;
      */
-    void insert(const BlkId& blkid);
+    void insert(const blk_id& blkid);
 
     /**
-     * @brief : decrease the reference count of the BlkId by 1 in this read tracker.
+     * @brief : decrease the reference count of the blk_id by 1 in this read tracker.
      * If the ref count drops to zero, it means no read is pending on this blkid and if there is a waiter on this blkid,
      * callback should be triggered and all entries associated with this blkid (there could be more than one
      * sub_ranges) should be removed.
      *
      * @param blkid : blkid that is being dereferneced;
      */
-    void remove(const BlkId& blkid);
+    void remove(const blk_id& blkid);
 
     /**
      * @brief : Check if the reference count of the blkid is 0 or entry itself doesn't exists.
@@ -158,7 +158,7 @@ public:
      * @param blkid : blkid that caller wants to wait on for pending read;
      * @param after_remove_cb : the callback to be sent after read on this blkid are all completed;
      */
-    void wait_on(MultiBlkId const& blkids, after_remove_cb_t&& after_remove_cb);
+    void wait_on(multi_blk_id const& blkids, after_remove_cb_t&& after_remove_cb);
 
     /**
      * @brief : get size of the pending map;
@@ -175,6 +175,6 @@ private:
      * @param new_ref_count
      * @param waiters
      */
-    void merge(const BlkId& blkid, int64_t new_ref_count, const std::shared_ptr< blk_track_waiter >& waiters);
+    void merge(const blk_id& blkid, int64_t new_ref_count, const std::shared_ptr< blk_track_waiter >& waiters);
 };
 } // namespace homestore

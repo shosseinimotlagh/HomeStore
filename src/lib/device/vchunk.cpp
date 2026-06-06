@@ -12,7 +12,7 @@
  * specific language governing permissions and limitations under the License.
  *
  *********************************************************************************/
-#include <homestore/vchunk.h>
+#include <homestore/vchunk.hpp>
 #include "blkalloc/blk_allocator.h"
 #include "device/chunk.h"
 

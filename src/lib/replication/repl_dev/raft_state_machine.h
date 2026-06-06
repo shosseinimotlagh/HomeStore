@@ -6,7 +6,7 @@
 #include <boost/unordered/concurrent_flat_map.hpp>
 #include <sisl/utility/enum.hpp>
 #include <nuraft_mesg/mesg_state_mgr.hpp>
-#include <homestore/replication/repl_decls.h>
+#include <homestore/replication/repl_decls.hpp>
 
 #include "replication/repl_dev/common.h"
 

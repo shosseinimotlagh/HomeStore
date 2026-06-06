@@ -15,7 +15,7 @@
 #pragma once
 
 #include <sisl/fds/buffer.hpp>
-#include <homestore/blk.h>
+#include <homestore/blk.hpp>
 #include <homestore/homestore_decl.hpp>
 
 namespace homestore {

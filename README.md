@@ -4,34 +4,30 @@
 [![CodeCov](https://codecov.io/gh/eBay/homestore/branch/master/graph/badge.svg)](https://codecov.io/gh/eBay/homestore)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
-> A modern storage engine for Linux — crash-consistent storage services over a C++23 coroutine, run-to-completion I/O stack.
+> A modern storage engine for Linux - crash-consistent storage services over a C++23 coroutine, run-to-completion I/O stack.
 
-HomeStore is a generic **storage engine** on which different storage solutions — Block, K/V, Object, or
-Database — are built. It hands an application a small set of composable, crash-resilient **services**
+HomeStore is a generic **storage engine** on which different storage solutions - Block, K/V, Object, or
+Database - are built. It hands an application a small set of composable, crash-resilient **services**
 (metadata, index, data, log, replication) and runs them with **run-to-completion** async I/O on
 [IOManager](https://github.com/eBay/IOManager) reactors, so a storage solution never hands work off to a
 separate thread pool. A reference Object solution is [HomeObject](https://github.com/eBay/HomeObject).
 
-As of **v8** the entire engine sits on the C++23 coroutine stack — **IOManager v13** (`io_uring`),
-**sisl v14**, and **nuraft_mesg v5** — and **Folly has been removed**: the data and replication paths are
-stackless coroutines that `co_await` an [`iomgr::io_result`](https://github.com/eBay/IOManager), composed
-on the sisl `async` substrate over [NVIDIA stdexec](https://github.com/NVIDIA/stdexec).
+The data and replication paths are stackless coroutines that `co_await` an [`iomgr::io_result`](https://github.com/eBay/IOManager),
+composed on the sisl `async` substrate over [NVIDIA stdexec](https://github.com/NVIDIA/stdexec).
 
 ## 🚀 Features
 
-- **Composable services** — bring up only what a solution needs: `with_index_service`,
+- **Composable services** - bring up only what a solution needs: `with_index_service`,
   `with_log_service`, `with_data_service`, `with_repl_data_service`, `with_fault_containment`.
-- **Run-to-completion I/O** — the device layer drives `io_uring` through IOManager reactors; devices on
+- **Run-to-completion I/O** - the device layer drives `io_uring` through IOManager reactors; devices on
   the same reactor interact without locks, with no executor queue or thread hop.
-- **Coroutine data path** — `BlkDataService` / `ReplDev` reads and writes are awaitables; `co_await`
+- **Coroutine data path** - `BlkDataService` / `ReplDev` reads and writes are awaitables; `co_await`
   yields an `iomgr::io_result` (`std::expected<size_t, std::error_condition>`).
-- **Replication** — replicated devices over Raft via [nuraft_mesg](https://github.com/eBay/nuraft_mesg),
+- **Replication** - replicated devices over Raft via [nuraft_mesg](https://github.com/eBay/nuraft_mesg),
   plus a single-node *solo* repl dev that shares the same journaled write path.
-- **Crash consistency** — a checkpoint manager flushes consistent points across services; superblocks
+- **Crash consistency** - a checkpoint manager flushes consistent points across services; superblocks
   avoid torn pages, log streams replay on recovery, and replication is journaled.
 - **Fast-read B+Tree index**, append-only truncatable **log streams**, and a torn-page-safe **meta** K/V.
-- **Folly-free** — the whole stack is C++23 stdexec coroutines; one error type (`iomgr::io_result`)
-  spans the async surface. ISA-L CRC/erasure acceleration on x86.
 
 ## 📋 Table of Contents
 
@@ -53,7 +49,7 @@ on the sisl `async` substrate over [NVIDIA stdexec](https://github.com/NVIDIA/st
 - Conan 1.x (`pipx install 'conan~=1'`; recipe requires `>=1.60`)
 - CMake 3.13+
 - C++23 compiler (GCC 13+, Clang 17+)
-- `libaio-dev`, `uuid-dev` (Ubuntu)
+- `uuid-dev` (Ubuntu)
 - The `sisl`, `iomgr`, and `nuraft_mesg` recipes available in your Conan cache or a configured remote
 
 ### Build & Test
@@ -94,13 +90,13 @@ HomeStore/
 ├── src/
 │   ├── include/homestore/        # Public headers (installed)
 │   │   ├── homestore.hpp           # HomeStore singleton + service builder (with_*_service), start/format
-│   │   ├── meta_service.hpp        # MetaSvc — torn-page-safe superblock K/V
-│   │   ├── index_service.hpp       # IndexSvc — crash-consistent B+Tree (btree/, index/)
-│   │   ├── blkdata_service.hpp     # DataSvc — block allocation + co_await-able data I/O
-│   │   ├── logstore_service.hpp    # LogSvc — append-only, truncatable log streams (logstore/)
-│   │   ├── replication_service.hpp # ReplicationSvc — raft / solo replicated devices (replication/)
+│   │   ├── meta_service.hpp        # MetaSvc - torn-page-safe superblock K/V
+│   │   ├── index_service.hpp       # IndexSvc - crash-consistent B+Tree (btree/, index/)
+│   │   ├── blkdata_service.hpp     # DataSvc - block allocation + co_await-able data I/O
+│   │   ├── logstore_service.hpp    # LogSvc - append-only, truncatable log streams (logstore/)
+│   │   ├── replication_service.hpp # ReplicationSvc - raft / solo replicated devices (replication/)
 │   │   ├── fault_cmt_service.hpp   # Fault-containment service
-│   │   └── checkpoint/             # CP manager — consistent cross-service flush points
+│   │   └── checkpoint/             # CP manager - consistent cross-service flush points
 │   └── lib/                      # Implementation (NOT installed)
 │       ├── device/                 # vdev + physical device layer (io_uring via IOManager)
 │       ├── blkalloc/               # block allocators (append / variable-size bitmap)
@@ -134,32 +130,32 @@ HomeStore/
 | `IndexService` / `Btree` | Crash-consistent B+Tree tuned for fast reads |
 | `BlkDataService` | Block allocation plus `co_await`-able async data read / write |
 | `LogStoreService` / `LogStore` | Append-only, truncatable log streams (crash-recovery building block) |
-| `ReplicationService` / `ReplDev` | Replicated devices — Raft (`RaftReplDev`) or single-node (`SoloReplDev`) |
+| `ReplicationService` / `ReplDev` | Replicated devices - Raft (`RaftReplDev`) or single-node (`SoloReplDev`) |
 | `CPManager` | Checkpoint manager; flushes a consistent point across every service |
-| `iomgr::io_result` | `std::expected<size_t, std::error_condition>` — the one async error type |
+| `iomgr::io_result` | `std::expected<size_t, std::error_condition>` - the one async error type |
 
 ## 🧱 Services
 
 Each service is a crash-resilient, persistent form of a familiar data structure. Compose only the ones a
 solution needs.
 
-- **MetaSvc** (`std::map`) — a K/V store that avoids *torn pages*, used for superblocks and other state
+- **MetaSvc** (`std::map`) - a K/V store that avoids *torn pages*, used for superblocks and other state
   that must re-initialize application structures after reboot.
-- **IndexSvc** (`std::unordered_map`) — a B+Tree optimized for *fast* reads; values are typically
+- **IndexSvc** (`std::unordered_map`) - a B+Tree optimized for *fast* reads; values are typically
   allocations handed out by the DataSvc.
-- **DataSvc** (`new`/`delete`) — flat block-allocation space with `co_await`-able read/write; allocation
+- **DataSvc** (`new`/`delete`) - flat block-allocation space with `co_await`-able read/write; allocation
   hooks let a solution impose a particular pattern (e.g. heap).
-- **LogSvc** (`std::list`) — a random-access circular buffer; rarely used directly, but leveraged by other
+- **LogSvc** (`std::list`) - a random-access circular buffer; rarely used directly, but leveraged by other
   services (and replication) to provide crash recovery.
-- **ReplicationSvc** — replicates a DataSvc across application instances. `RaftReplDev` uses Raft
+- **ReplicationSvc** - replicates a DataSvc across application instances. `RaftReplDev` uses Raft
   consensus (nuraft_mesg) for multi-replica groups; `SoloReplDev` is the single-node variant on the same
   journaled write path.
-- **FaultContainmentSvc** — isolates faults at the ReplDev / LogStore / LogDev layers.
+- **FaultContainmentSvc** - isolates faults at the ReplDev / LogStore / LogDev layers.
 
 ## 🧬 Asynchronous Model
 
 The data and replication paths are stackless coroutines. Read/write calls return an awaitable that yields
-an `iomgr::io_result` — bytes transferred on success, a `std::error_condition` on failure — so control
+an `iomgr::io_result` - bytes transferred on success, a `std::error_condition` on failure - so control
 flow stays linear and there are no callback chains:
 
 ```cpp
@@ -173,7 +169,7 @@ if (!r) {
 ```
 
 Bridges into non-coroutine code (`detail::detach_then`, `sync_get`, …) live in homestore's coroutine
-helpers; the underlying stdexec sender/receiver machinery is hidden — consumers never depend on stdexec
+helpers; the underlying stdexec sender/receiver machinery is hidden - consumers never depend on stdexec
 directly. Errors propagate as `std::error_condition`; exceptions are reserved for precondition bugs.
 
 ## 🖥️ Usage
@@ -219,7 +215,7 @@ A reference end-to-end consumer is [HomeObject](https://github.com/eBay/HomeObje
 
 ### Error Handling
 
-The async surface uses one error type — bytes transferred on success, a `std::error_condition` on
+The async surface uses one error type - bytes transferred on success, a `std::error_condition` on
 failure. Reserve exceptions for precondition bugs; check and propagate `r.error()` for I/O failures.
 
 ## 🧪 Testing
@@ -244,33 +240,30 @@ conan build -s:h build_type=Debug --build missing .
 
 ### Core
 
-- **[IOManager](https://github.com/eBay/IOManager)** (v13+) — run-to-completion reactors and the
+- **[IOManager](https://github.com/eBay/IOManager)** (v13+) - run-to-completion reactors and the
   `io_uring` coroutine drive path (`iomgr::io_result`).
-- **[sisl](https://github.com/eBay/sisl)** (v14+) — logging, options, metrics, the `async` coroutine
+- **[sisl](https://github.com/eBay/sisl)** (v14+) - logging, options, metrics, the `async` coroutine
   substrate, and FDS containers.
-- **[nuraft_mesg](https://github.com/eBay/nuraft_mesg)** (v5+) — Raft consensus + gRPC data service for
+- **[nuraft_mesg](https://github.com/eBay/nuraft_mesg)** (v5+) - Raft consensus + gRPC data service for
   the replication layer.
-- **isa-l** (x86) — CRC / erasure-coding acceleration · **farmhash** — hashing.
+- **isa-l** (x86) - CRC / erasure-coding acceleration · **farmhash** - hashing.
 
 ### Test / Tooling
 
-- **gtest**, **benchmark** — test dependencies.
+- **gtest**, **benchmark** - test dependencies.
 - **Conan** 1.x (`>=1.60`), **CMake** 3.13+, **GCC 13+ / Clang 17+**, **clang-format**.
 
 ## 🤝 Contributing
 
-We welcome contributions — bug reports, edge cases, improvements, and feature ideas. Please open an issue
-or pull request. Contact: [Harihara Kadayam](mailto:harihara.kadayam@gmail.com).
+We welcome contributions - bug reports, edge cases, improvements, and feature ideas. Please open an issue
+or pull request. Contact: [Brian Szmyd](mailto:bszmyd@ebay.com).
 
 ## 📄 License
 
-Copyright 2021 eBay Inc. Primary Author: [Harihara Kadayam](https://github.com/hkadayam)
+Copyright 2021 eBay Inc. Original Author: [Harihara Kadayam](https://github.com/hkadayam)
 
 Primary Developers:
-[Harihara Kadayam](https://github.com/hkadayam),
-[Yaming Kuang](https://github.com/yamingk),
-[Brian Szmyd](https://github.com/szmyd),
-[Rishabh Mittal](https://github.com/mittalrishabh).
+[Brian Szmyd](https://github.com/szmyd)
 
 Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in
 compliance with the License. You may obtain a copy of the License at

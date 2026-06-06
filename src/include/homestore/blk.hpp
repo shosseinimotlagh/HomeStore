@@ -42,7 +42,7 @@ static constexpr size_t max_blks_per_chunk() { return 1UL << (8 * sizeof(blk_num
 static constexpr size_t max_blks_per_blkid() { return (1UL << (8 * sizeof(blk_count_t))) - 1; }
 
 #pragma pack(1)
-struct BlkId {
+struct blk_id {
 protected:
     struct serialized {
         blk_num_t m_is_multi : 1; // Is it a part of multi blkid or not
@@ -59,17 +59,17 @@ protected:
     serialized s;
 
 public:
-    BlkId() = default;
-    explicit BlkId(uint64_t id_int);
-    BlkId(blk_num_t blk_num, blk_count_t nblks, chunk_num_t chunk_num);
-    BlkId(BlkId const&) = default;
-    BlkId& operator=(BlkId const&) = default;
-    BlkId(BlkId&&) noexcept = default;
-    BlkId& operator=(BlkId&&) noexcept = default;
+    blk_id() = default;
+    explicit blk_id(uint64_t id_int);
+    blk_id(blk_num_t blk_num, blk_count_t nblks, chunk_num_t chunk_num);
+    blk_id(blk_id const&) = default;
+    blk_id& operator=(blk_id const&) = default;
+    blk_id(blk_id&&) noexcept = default;
+    blk_id& operator=(blk_id&&) noexcept = default;
 
-    bool operator==(BlkId const& other) const { return (compare(*this, other) == 0); }
-    bool operator>(BlkId const& other) const { return (compare(*this, other) > 0); }
-    bool operator<(BlkId const& other) const { return (compare(*this, other) < 0); }
+    bool operator==(blk_id const& other) const { return (compare(*this, other) == 0); }
+    bool operator>(blk_id const& other) const { return (compare(*this, other) > 0); }
+    bool operator<(blk_id const& other) const { return (compare(*this, other) < 0); }
 
     blk_num_t blk_num() const { return s.m_blk_num; }
     blk_count_t blk_count() const { return s.m_nblks; }
@@ -85,12 +85,12 @@ public:
     bool is_valid() const;
     static uint32_t expected_serialized_size();
 
-    static int compare(BlkId const& one, BlkId const& two);
+    static int compare(blk_id const& one, blk_id const& two);
 };
 #pragma pack()
 
 #pragma pack(1)
-struct MultiBlkId : public BlkId {
+struct multi_blk_id : public blk_id {
     static constexpr uint32_t max_addln_pieces{5};
     static constexpr uint32_t max_pieces{max_addln_pieces + 1};
 
@@ -106,51 +106,51 @@ private:
     std::array< chain_blkid, max_addln_pieces > addln_pieces;
 
 public:
-    MultiBlkId();
-    MultiBlkId(BlkId const& b);
-    MultiBlkId(blk_num_t blk_num, blk_count_t nblks, chunk_num_t chunk_num);
-    MultiBlkId(MultiBlkId const&) = default;
-    MultiBlkId& operator=(MultiBlkId const&) = default;
-    MultiBlkId(MultiBlkId&&) noexcept = default;
-    MultiBlkId& operator=(MultiBlkId&&) noexcept = default;
+    multi_blk_id();
+    multi_blk_id(blk_id const& b);
+    multi_blk_id(blk_num_t blk_num, blk_count_t nblks, chunk_num_t chunk_num);
+    multi_blk_id(multi_blk_id const&) = default;
+    multi_blk_id& operator=(multi_blk_id const&) = default;
+    multi_blk_id(multi_blk_id&&) noexcept = default;
+    multi_blk_id& operator=(multi_blk_id&&) noexcept = default;
 
     void add(blk_num_t blk_num, blk_count_t nblks, chunk_num_t chunk_num);
-    void add(BlkId const&);
+    void add(blk_id const&);
 
     uint16_t num_pieces() const;
     blk_count_t blk_count() const;
     std::string to_string() const;
 
-    bool operator==(MultiBlkId const& other) const { return (compare(*this, other) == 0); }
-    bool operator>(MultiBlkId const& other) const { return (compare(*this, other) > 0); }
-    bool operator<(MultiBlkId const& other) const { return (compare(*this, other) < 0); }
+    bool operator==(multi_blk_id const& other) const { return (compare(*this, other) == 0); }
+    bool operator>(multi_blk_id const& other) const { return (compare(*this, other) > 0); }
+    bool operator<(multi_blk_id const& other) const { return (compare(*this, other) < 0); }
 
     sisl::blob serialize() const;
     uint32_t serialized_size() const;
     void deserialize(sisl::blob const& b, bool copy);
 
     bool has_room() const;
-    BlkId to_single_blkid() const;
+    blk_id to_single_blkid() const;
 
     static uint32_t expected_serialized_size(uint16_t num_pieces);
     static uint32_t max_serialized_size();
-    static int compare(MultiBlkId const& one, MultiBlkId const& two);
+    static int compare(multi_blk_id const& one, multi_blk_id const& two);
 
     struct iterator {
-        MultiBlkId const& mbid_;
+        multi_blk_id const& mbid_;
         uint16_t next_blk_{0};
 
-        iterator(MultiBlkId const& mb) : mbid_{mb} {}
-        std::optional< BlkId > next() {
+        iterator(multi_blk_id const& mb) : mbid_{mb} {}
+        std::optional< blk_id > next() {
             if (next_blk_ == 0) {
-                auto bid = r_cast< BlkId const& >(mbid_);
+                auto bid = r_cast< blk_id const& >(mbid_);
                 ++next_blk_;
-                return (bid.is_valid()) ? std::make_optional(BlkId{bid.blk_num(), bid.blk_count(), bid.chunk_num()})
+                return (bid.is_valid()) ? std::make_optional(blk_id{bid.blk_num(), bid.blk_count(), bid.chunk_num()})
                                         : std::nullopt;
             } else if (next_blk_ < mbid_.num_pieces()) {
                 auto cbid = mbid_.addln_pieces[next_blk_ - 1];
                 ++next_blk_;
-                return std::make_optional(BlkId{cbid.m_blk_num, cbid.m_nblks, mbid_.chunk_num()});
+                return std::make_optional(blk_id{cbid.m_blk_num, cbid.m_nblks, mbid_.chunk_num()});
             } else {
                 return std::nullopt;
             }
@@ -166,13 +166,13 @@ public:
 ///////////////////// hash function definitions /////////////////////
 namespace std {
 template <>
-struct hash< homestore::BlkId > {
-    size_t operator()(const homestore::BlkId& bid) const noexcept { return std::hash< uint64_t >()(bid.to_integer()); }
+struct hash< homestore::blk_id > {
+    size_t operator()(const homestore::blk_id& bid) const noexcept { return std::hash< uint64_t >()(bid.to_integer()); }
 };
 
 template <>
-struct hash< homestore::MultiBlkId > {
-    size_t operator()(const homestore::MultiBlkId& mbid) const noexcept {
+struct hash< homestore::multi_blk_id > {
+    size_t operator()(const homestore::multi_blk_id& mbid) const noexcept {
         static constexpr size_t s_start_seed = 0xB504F333;
         size_t seed = s_start_seed;
         auto it = mbid.iterate();
@@ -186,25 +186,25 @@ struct hash< homestore::MultiBlkId > {
 
 ///////////////////// formatting definitions /////////////////////
 template < typename T >
-struct fmt::formatter< T, std::enable_if_t< std::is_base_of< homestore::BlkId, T >::value, char > >
+struct fmt::formatter< T, std::enable_if_t< std::is_base_of< homestore::blk_id, T >::value, char > >
         : fmt::formatter< std::string > {
-    auto format(const homestore::BlkId& a, format_context& ctx) const {
+    auto format(const homestore::blk_id& a, format_context& ctx) const {
         return fmt::formatter< std::string >::format(a.to_string(), ctx);
     }
 };
 
 template < typename T >
-struct fmt::formatter< T, std::enable_if_t< std::is_base_of< homestore::MultiBlkId, T >::value, char > >
+struct fmt::formatter< T, std::enable_if_t< std::is_base_of< homestore::multi_blk_id, T >::value, char > >
         : fmt::formatter< std::string > {
-    auto format(const homestore::MultiBlkId& a, format_context& ctx) const {
+    auto format(const homestore::multi_blk_id& a, format_context& ctx) const {
         return fmt::formatter< std::string >::format(a.to_string(), ctx);
     }
 };
 
 namespace boost {
 template <>
-struct hash< homestore::BlkId > {
-    size_t operator()(const homestore::BlkId& bid) const noexcept { return std::hash< homestore::BlkId >()(bid); }
+struct hash< homestore::blk_id > {
+    size_t operator()(const homestore::blk_id& bid) const noexcept { return std::hash< homestore::blk_id >()(bid); }
 };
 } // namespace boost
 
@@ -224,13 +224,13 @@ std::basic_ostream< charT, traits >& stream_op(std::basic_ostream< charT, traits
 }
 
 template < typename charT, typename traits >
-std::basic_ostream< charT, traits >& operator<<(std::basic_ostream< charT, traits >& outStream, BlkId const& blk) {
-    return stream_op< charT, traits, BlkId >(outStream, blk);
+std::basic_ostream< charT, traits >& operator<<(std::basic_ostream< charT, traits >& outStream, blk_id const& blk) {
+    return stream_op< charT, traits, blk_id >(outStream, blk);
 }
 
 template < typename charT, typename traits >
-std::basic_ostream< charT, traits >& operator<<(std::basic_ostream< charT, traits >& outStream, MultiBlkId const& blk) {
-    return stream_op< charT, traits, MultiBlkId >(outStream, blk);
+std::basic_ostream< charT, traits >& operator<<(std::basic_ostream< charT, traits >& outStream, multi_blk_id const& blk) {
+    return stream_op< charT, traits, multi_blk_id >(outStream, blk);
 }
 
 ///////////////////// Other common Blkd definitions /////////////////////
@@ -252,7 +252,7 @@ struct blk_alloc_hints {
     std::optional< uint32_t > reserved_blks;      // Reserved blks in a chunk
     std::optional< uint32_t > pdev_id_hint;       // which physical device to pick (hint if any) -1 for don't care
     std::optional< chunk_num_t > chunk_id_hint;   // any specific chunk id to pick for this allocation
-    std::optional< MultiBlkId > committed_blk_id; //  blk id indicates the blk was already allocated and committed,
+    std::optional< multi_blk_id > committed_blk_id; //  blk id indicates the blk was already allocated and committed,
                                                   //  don't allocate and commit again
     std::optional< stream_id_t > stream_id_hint;  // any specific stream to pick
     std::optional< uint64_t > application_hint;   // hints in uint64 what will be passed opaque to select_chunk

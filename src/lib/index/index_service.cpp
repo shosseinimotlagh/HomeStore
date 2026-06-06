@@ -243,10 +243,10 @@ uint64_t IndexService::used_size() const {
 }
 
 /////////////////////// IndexBuffer methods //////////////////////////
-IndexBuffer::IndexBuffer(BlkId blkid, uint32_t buf_size, uint32_t align_size) :
+IndexBuffer::IndexBuffer(blk_id blkid, uint32_t buf_size, uint32_t align_size) :
         m_blkid{blkid}, m_bytes{hs_utils::iobuf_alloc(buf_size, sisl::buftag::btree_node, align_size)} {}
 
-IndexBuffer::IndexBuffer(uint8_t* raw_bytes, BlkId blkid) : m_blkid(blkid), m_bytes{raw_bytes} {}
+IndexBuffer::IndexBuffer(uint8_t* raw_bytes, blk_id blkid) : m_blkid(blkid), m_bytes{raw_bytes} {}
 
 IndexBuffer::~IndexBuffer() {
     if (m_bytes) {
@@ -343,12 +343,12 @@ bool IndexBuffer::is_in_down_buffers(const IndexBufferPtr& buf) {
 }
 #endif
 
-MetaIndexBuffer::MetaIndexBuffer(superblk< index_table_sb >& sb) : IndexBuffer{nullptr, BlkId{}}, m_sb{sb} {
+MetaIndexBuffer::MetaIndexBuffer(superblk< index_table_sb >& sb) : IndexBuffer{nullptr, blk_id{}}, m_sb{sb} {
     m_is_meta_buf = true;
 }
 
 MetaIndexBuffer::MetaIndexBuffer(shared< MetaIndexBuffer > const& other) :
-        IndexBuffer{nullptr, BlkId{}}, m_sb{other->m_sb} {
+        IndexBuffer{nullptr, blk_id{}}, m_sb{other->m_sb} {
     m_is_meta_buf = true;
     m_bytes = hs_utils::iobuf_alloc(m_sb.size(), sisl::buftag::metablk, meta_service().align_size());
     copy_sb_to_buf();

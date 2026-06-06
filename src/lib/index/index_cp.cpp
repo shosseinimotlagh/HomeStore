@@ -91,7 +91,7 @@ std::string IndexCPContext::to_string_free_list() {
         fmt::format("IndexCPContext cpid={} free_blkid_list_size={}\n[", m_cp->id(), m_free_blkid_list.size())};
     if (m_free_blkid_list.size() == 0) { return str + "empty]"; }
     m_free_blkid_list.foreach_entry(
-        [&str](BlkId bid) { fmt::format_to(std::back_inserter(str), "{}:{}, ", bid.to_integer(), bid.to_string()); });
+        [&str](blk_id bid) { fmt::format_to(std::back_inserter(str), "{}:{}, ", bid.to_integer(), bid.to_string()); });
     return str + "]";
 }
 
@@ -229,7 +229,7 @@ void IndexCPContext::log_dags() {
     sisl::logging::GetLogger()->flush();
 }
 
-std::map< BlkId, IndexBufferPtr > IndexCPContext::recover(sisl::byte_view sb) {
+std::map< blk_id, IndexBufferPtr > IndexCPContext::recover(sisl::byte_view sb) {
     txn_journal const* tj = r_cast< txn_journal const* >(sb.bytes());
     if (tj->cp_id != id()) {
         // On clean shutdown, cp_id would be lesser than the current cp_id, in that case ignore this sb
@@ -239,7 +239,7 @@ std::map< BlkId, IndexBufferPtr > IndexCPContext::recover(sisl::byte_view sb) {
     HS_DBG_ASSERT_GT(tj->num_txns, 0, "Invalid txn_journal, num_txns is zero");
     HS_DBG_ASSERT_GT(tj->size, 0, "Invalid txn_journal, size of records is zero");
 
-    std::map< BlkId, IndexBufferPtr > buf_map;
+    std::map< blk_id, IndexBufferPtr > buf_map;
     uint8_t const* cur_ptr = r_cast< uint8_t const* >(tj) + sizeof(txn_journal);
 
     for (uint32_t t{0}; t < tj->num_txns; ++t) {
@@ -265,7 +265,7 @@ std::map< BlkId, IndexBufferPtr > IndexCPContext::recover(sisl::byte_view sb) {
         }
     };
 #if 0
-        auto dag_print = [](const std::map< BlkId, IndexBufferPtr >& dags, std::string delimiter) {
+        auto dag_print = [](const std::map< blk_id, IndexBufferPtr >& dags, std::string delimiter) {
             int index = 1;
             for (const auto& [blkid, bufferPtr] : dags) {
                 LOGTRACEMOD(wbcache, "{}{} - blkid {} buffer {} ", delimiter, index++, blkid.to_integer(),
@@ -281,7 +281,7 @@ std::map< BlkId, IndexBufferPtr > IndexCPContext::recover(sisl::byte_view sb) {
     //    LOGTRACEMOD(wbcache,"\n\n\nAFTER modify : \n ");
     //    dag_print(buf_map, "After: ");
 
-    auto sanityCheck = [](const std::map< BlkId, IndexBufferPtr >& dags) {
+    auto sanityCheck = [](const std::map< blk_id, IndexBufferPtr >& dags) {
         for (const auto& [blkid, bufferPtr] : dags) {
             auto up_buffer = bufferPtr->m_up_buffer;
             if (up_buffer) {
@@ -327,17 +327,17 @@ std::map< BlkId, IndexBufferPtr > IndexCPContext::recover(sisl::byte_view sb) {
     return buf_map;
 }
 
-void IndexCPContext::process_txn_record(txn_record const* rec, std::map< BlkId, IndexBufferPtr >& buf_map) {
+void IndexCPContext::process_txn_record(txn_record const* rec, std::map< blk_id, IndexBufferPtr >& buf_map) {
     auto cpg = cp_mgr().cp_guard();
 
-    auto const rec_to_buf = [&buf_map, &cpg](txn_record const* rec, bool is_meta, BlkId const& bid,
+    auto const rec_to_buf = [&buf_map, &cpg](txn_record const* rec, bool is_meta, blk_id const& bid,
                                              IndexBufferPtr const& up_buf) -> IndexBufferPtr {
         IndexBufferPtr buf;
         // MetaIndexBuffer always has blkid={0,0,0,0} regardless of which BTree table it belongs to.
         // When multiple tables have a root split in the same CP, all their MetaBufs share the same blkid
-        // and would collide in buf_map.  Use a synthetic key BlkId{ordinal, 0, 0} (nblks=0 is never
+        // and would collide in buf_map.  Use a synthetic key blk_id{ordinal, 0, 0} (nblks=0 is never
         // valid for a real block) so each table's MetaBuf gets a unique, collision-free slot.
-        BlkId const effective_bid = is_meta ? BlkId{rec->index_ordinal, 0, 0} : bid;
+        blk_id const effective_bid = is_meta ? blk_id{rec->index_ordinal, 0, 0} : bid;
         auto it = buf_map.find(effective_bid);
         if (it == buf_map.end()) {
             if (is_meta) {
@@ -383,21 +383,21 @@ void IndexCPContext::process_txn_record(txn_record const* rec, std::map< BlkId, 
 
     uint32_t cur_idx = 0;
     IndexBufferPtr parent_buf{nullptr};
-    if (rec->has_inplace_parent) { parent_buf = rec_to_buf(rec, rec->is_parent_meta, rec->blk_id(cur_idx++), nullptr); }
+    if (rec->has_inplace_parent) { parent_buf = rec_to_buf(rec, rec->is_parent_meta, rec->get_blk_id(cur_idx++), nullptr); }
 
     IndexBufferPtr inplace_child_buf{nullptr};
     if (rec->has_inplace_child) {
-        inplace_child_buf = rec_to_buf(rec, false /* is_meta */, rec->blk_id(cur_idx++), parent_buf);
+        inplace_child_buf = rec_to_buf(rec, false /* is_meta */, rec->get_blk_id(cur_idx++), parent_buf);
     }
 
     for (uint8_t idx{0}; idx < rec->num_new_ids; ++idx) {
-        auto new_buf = rec_to_buf(rec, false /* is_meta */, rec->blk_id(cur_idx++),
+        auto new_buf = rec_to_buf(rec, false /* is_meta */, rec->get_blk_id(cur_idx++),
                                   inplace_child_buf ? inplace_child_buf : parent_buf);
         new_buf->m_created_cp_id = cpg->id();
     }
 
     for (uint8_t idx{0}; idx < rec->num_freed_ids; ++idx) {
-        auto freed_buf = rec_to_buf(rec, false /* is_meta */, rec->blk_id(cur_idx++),
+        auto freed_buf = rec_to_buf(rec, false /* is_meta */, rec->get_blk_id(cur_idx++),
                                     inplace_child_buf ? inplace_child_buf : parent_buf);
         freed_buf->m_node_level = rec->free_node_level;
         freed_buf->m_node_freed = true;
@@ -423,7 +423,7 @@ std::string IndexCPContext::txn_record::to_string() const {
             fmt::format_to(std::back_inserter(str), "empty]");
         } else {
             for (uint8_t i{0}; i < id_count; ++i) {
-                fmt::format_to(std::back_inserter(str), "[{}],", blk_id(idx++).to_integer());
+                fmt::format_to(std::back_inserter(str), "[{}],", get_blk_id(idx++).to_integer());
             }
             fmt::format_to(std::back_inserter(str), "]");
         }

@@ -41,14 +41,14 @@ class LogStoreServiceMetrics;
 static constexpr logstore_seq_num_t invalid_lsn() { return std::numeric_limits< logstore_seq_num_t >::min(); }
 typedef std::function< void(logstore_seq_num_t) > on_rollback_cb_t;
 
-class HomeLogStore : public std::enable_shared_from_this< HomeLogStore > {
+class home_log_store : public std::enable_shared_from_this< home_log_store > {
 public:
-    HomeLogStore(std::shared_ptr< LogDev > logdev, logstore_id_t id, bool append_mode, logstore_seq_num_t start_lsn);
-    HomeLogStore(const HomeLogStore&) = delete;
-    HomeLogStore(HomeLogStore&&) noexcept = delete;
-    HomeLogStore& operator=(const HomeLogStore&) = delete;
-    HomeLogStore& operator=(HomeLogStore&&) noexcept = delete;
-    ~HomeLogStore() = default;
+    home_log_store(std::shared_ptr< LogDev > logdev, logstore_id_t id, bool append_mode, logstore_seq_num_t start_lsn);
+    home_log_store(const home_log_store&) = delete;
+    home_log_store(home_log_store&&) noexcept = delete;
+    home_log_store& operator=(const home_log_store&) = delete;
+    home_log_store& operator=(home_log_store&&) noexcept = delete;
+    ~home_log_store() = default;
 
     /**
      * @brief Register default request completion callback. In case every write does not carry a callback, this
@@ -200,7 +200,7 @@ public:
     bool foreach (int64_t start_idx, const std::function< bool(logstore_seq_num_t, log_buffer) >& cb);
 
     /**
-     * @brief Get the store id of this HomeLogStore
+     * @brief Get the store id of this home_log_store
      *
      * @return logstore_id_t
      */

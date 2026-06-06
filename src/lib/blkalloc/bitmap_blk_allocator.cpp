@@ -26,7 +26,7 @@ BitmapBlkAllocator::BitmapBlkAllocator(BlkAllocConfig const& cfg, bool is_fresh,
         meta_service().register_handler(
             get_name(),
             [this](meta_blk* mblk, sisl::byte_view buf, size_t size) {
-                on_meta_blk_found(voidptr_cast(mblk), std::move(buf), size);
+                on_meta_blk_found(mblk, std::move(buf), size);
             },
             nullptr);
     }
@@ -44,7 +44,7 @@ BitmapBlkAllocator::BitmapBlkAllocator(BlkAllocConfig const& cfg, bool is_fresh,
     }
 }
 
-void BitmapBlkAllocator::on_meta_blk_found(void* mblk_cookie, sisl::byte_view const& buf, size_t size) {
+void BitmapBlkAllocator::on_meta_blk_found(meta_blk* mblk_cookie, sisl::byte_view const& buf, size_t size) {
     m_meta_blk_cookie = mblk_cookie;
 
     m_disk_bm = std::unique_ptr< sisl::Bitset >{new sisl::Bitset{
@@ -69,7 +69,7 @@ void BitmapBlkAllocator::cp_flush(CP*) {
     }
 }
 
-bool BitmapBlkAllocator::is_blk_alloced_on_disk(const BlkId& b, bool use_lock) const {
+bool BitmapBlkAllocator::is_blk_alloced_on_disk(const blk_id& b, bool use_lock) const {
     // for non-persistent bitmap nothing to compare. So always return true
     if (!is_persistent()) { return true; }
 
@@ -82,7 +82,7 @@ bool BitmapBlkAllocator::is_blk_alloced_on_disk(const BlkId& b, bool use_lock) c
     }
 }
 
-BlkAllocStatus BitmapBlkAllocator::reserve_on_disk(BlkId const& bid) {
+BlkAllocStatus BitmapBlkAllocator::reserve_on_disk(blk_id const& bid) {
     if (!is_persistent()) {
         // for non-persistent bitmap nothing is needed to do. So always return success
         return BlkAllocStatus::SUCCESS;
@@ -111,7 +111,7 @@ BlkAllocStatus BitmapBlkAllocator::reserve_on_disk(BlkId const& bid) {
 
         // cp is not started or already done, allocate on disk bm directly;
         if (bid.is_multi()) {
-            MultiBlkId const& mbid = r_cast< MultiBlkId const& >(bid);
+            multi_blk_id const& mbid = r_cast< multi_blk_id const& >(bid);
             auto it = mbid.iterate();
             while (auto b = it.next()) {
                 set_on_disk_bm(*b);
@@ -126,7 +126,7 @@ BlkAllocStatus BitmapBlkAllocator::reserve_on_disk(BlkId const& bid) {
     return BlkAllocStatus::SUCCESS;
 }
 
-void BitmapBlkAllocator::free_on_disk(BlkId const& bid) {
+void BitmapBlkAllocator::free_on_disk(blk_id const& bid) {
     // this api should be called only on persistent blk allocator
     DEBUG_ASSERT_EQ(is_persistent(), true, "free_on_disk called for non-persistent blk allocator");
 
@@ -139,7 +139,7 @@ void BitmapBlkAllocator::free_on_disk(BlkId const& bid) {
     };
 
     if (bid.is_multi()) {
-        MultiBlkId const& mbid = r_cast< MultiBlkId const& >(bid);
+        multi_blk_id const& mbid = r_cast< multi_blk_id const& >(bid);
         auto it = mbid.iterate();
         while (auto const b = it.next()) {
             unset_on_disk_bm(*b);
@@ -152,7 +152,7 @@ void BitmapBlkAllocator::free_on_disk(BlkId const& bid) {
 sisl::byte_array BitmapBlkAllocator::acquire_underlying_buffer() {
     // prepare and temporary alloc list, where blkalloc is accumulated till underlying buffer is released.
     // RCU will wait for all I/Os that are still in critical section (allocating on disk bm) to complete and exit;
-    auto alloc_list_ptr = new sisl::ThreadVector< MultiBlkId >();
+    auto alloc_list_ptr = new sisl::ThreadVector< multi_blk_id >();
     auto old_alloc_list_ptr = rcu_xchg_pointer(&m_alloc_blkid_list, alloc_list_ptr);
     synchronize_rcu();
 
@@ -170,7 +170,7 @@ void BitmapBlkAllocator::release_underlying_buffer() {
 
     // at this point, no I/O will be pushing back to the list (old_alloc_list_ptr);
     auto it = old_alloc_list_ptr->begin(true /* latest */);
-    const BlkId* bid{nullptr};
+    const blk_id* bid{nullptr};
     while ((bid = old_alloc_list_ptr->next(it)) != nullptr) {
         reserve_on_disk(*bid);
     }
@@ -181,7 +181,7 @@ void BitmapBlkAllocator::release_underlying_buffer() {
 /* Get status */
 nlohmann::json BitmapBlkAllocator::get_status(int) const { return nlohmann::json{}; }
 
-sisl::ThreadVector< MultiBlkId >* BitmapBlkAllocator::get_alloc_blk_list() {
+sisl::ThreadVector< multi_blk_id >* BitmapBlkAllocator::get_alloc_blk_list() {
     auto p = rcu_dereference(m_alloc_blkid_list);
     return p;
 }

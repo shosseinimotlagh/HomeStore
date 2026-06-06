@@ -27,12 +27,12 @@
 #include <sisl/fds/buffer.hpp>
 #include <gtest/gtest.h>
 
-#include <homestore/blk.h>
+#include <homestore/blk.hpp>
 #include <homestore/homestore.hpp>
 #include "common/coro_helpers.hpp" // detail::sync_get
 #include <homestore/homestore_decl.hpp>
 #include <homestore/replication_service.hpp>
-#include <homestore/replication/repl_dev.h>
+#include <homestore/replication/repl_dev.hpp>
 #include "common/homestore_config.hpp"
 #include "common/homestore_assert.hpp"
 #include "common/homestore_utils.hpp"
@@ -66,7 +66,7 @@ struct test_repl_req : public repl_req_ctx {
     sisl::byte_array header;
     sisl::byte_array key;
     sisl::sg_list write_sgs;
-    std::vector< MultiBlkId > written_blkids;
+    std::vector< multi_blk_id > written_blkids;
 
     test_repl_req() { write_sgs.size = 0; }
     ~test_repl_req() {
@@ -85,7 +85,7 @@ struct test_repl_req : public repl_req_ctx {
 
 class SoloReplDevTest : public testing::Test {
 public:
-    class Listener : public ReplDevListener {
+    class Listener : public repl_dev_listener {
     private:
         SoloReplDevTest& m_test;
 
@@ -94,18 +94,18 @@ public:
         virtual ~Listener() = default;
 
         void on_commit(int64_t lsn, sisl::blob const& header, sisl::blob const& key,
-                       std::vector< MultiBlkId > const& blkids, cintrusive< repl_req_ctx >& ctx) override {
+                       std::vector< multi_blk_id > const& blkids, cintrusive< repl_req_ctx >& ctx) override {
             LOGINFO("Received on_commit lsn={}", lsn);
             if (ctx == nullptr) {
-                m_test.validate_replay(*repl_dev(), lsn, header, key, blkids);
+                m_test.validate_replay(*device(), lsn, header, key, blkids);
             } else {
                 auto req = boost::static_pointer_cast< test_repl_req >(ctx);
                 req->written_blkids = std::move(blkids);
-                m_test.on_write_complete(*repl_dev(), req);
+                m_test.on_write_complete(*device(), req);
             }
         }
 
-        AsyncReplResult<> create_snapshot(shared< snapshot_context > context) override {
+        async_status create_snapshot(shared< snapshot_context > context) override {
             return make_async_success<>();
         }
         int read_snapshot_obj(shared< snapshot_context > context, shared< snapshot_obj > snp_data) override {
@@ -123,12 +123,12 @@ public:
         void on_rollback(int64_t lsn, const sisl::blob& header, const sisl::blob& key,
                          cintrusive< repl_req_ctx >& ctx) override {}
 
-        ReplResult< blk_alloc_hints > get_blk_alloc_hints(sisl::blob const& header, uint32_t data_size,
+        result< blk_alloc_hints > get_blk_alloc_hints(sisl::blob const& header, uint32_t data_size,
                                                           cintrusive< homestore::repl_req_ctx >& hs_ctx) override {
             return blk_alloc_hints{};
         }
 
-        void on_restart() override { LOGINFO("ReplDev restarted"); }
+        void on_restart() override { LOGINFO("repl_dev restarted"); }
 
         void on_error(ReplServiceError error, const sisl::blob& header, const sisl::blob& key,
                       cintrusive< repl_req_ctx >& ctx) override {
@@ -147,7 +147,7 @@ public:
         void on_no_space_left(repl_lsn_t lsn, sisl::blob const& header) override {}
     };
 
-    class Application : public ReplApplication {
+    class Application : public repl_application {
     private:
         SoloReplDevTest& m_test;
 
@@ -157,7 +157,7 @@ public:
 
         repl_impl_type get_impl_type() const override { return repl_impl_type::solo; }
         bool need_timeline_consistency() const { return true; }
-        shared< ReplDevListener > create_repl_dev_listener(uuid_t) override {
+        shared< repl_dev_listener > create_repl_dev_listener(uuid_t) override {
             return std::make_shared< Listener >(m_test);
         }
         void destroy_repl_dev_listener(uuid_t) override {}
@@ -170,8 +170,8 @@ public:
 protected:
     test_common::Runner m_io_runner;
     test_common::Waiter m_task_waiter;
-    shared< ReplDev > m_repl_dev1;
-    shared< ReplDev > m_repl_dev2;
+    shared< repl_dev > m_repl_dev1;
+    shared< repl_dev > m_repl_dev2;
     uuid_t m_uuid1;
     uuid_t m_uuid2;
     test_common::HSTestHelper m_helper;
@@ -192,8 +192,8 @@ public:
         m_repl_dev2 = detail::sync_get(hs()->repl_service().create_repl_dev(m_uuid2, {})).value();
     }
 
-    shared< ReplDev > repl_dev1() { return m_repl_dev1; }
-    shared< ReplDev > repl_dev2() { return m_repl_dev2; }
+    shared< repl_dev > repl_dev1() { return m_repl_dev1; }
+    shared< repl_dev > repl_dev2() { return m_repl_dev2; }
 
     virtual void TearDown() override {
         m_repl_dev1.reset();
@@ -260,10 +260,10 @@ public:
         auto const cap = hs()->repl_service().get_cap_stats();
         LOGDEBUG("Before write, cap stats: used={} total={}", cap.used_capacity, cap.total_capacity);
 
-        std::vector< MultiBlkId > blkids;
+        std::vector< multi_blk_id > blkids;
         blk_alloc_hints hints;
         auto err = rdev->alloc_blks(data_size, hints, blkids);
-        RELEASE_ASSERT(!err, "Error during alloc_blks");
+        RELEASE_ASSERT(err.has_value(), "Error during alloc_blks");
         RELEASE_ASSERT(!blkids.empty(), "Empty blkids");
 
         detail::detach_then(
@@ -274,8 +274,8 @@ public:
         return req;
     }
 
-    void validate_replay(ReplDev& rdev, int64_t lsn, sisl::blob const& header, sisl::blob const& key,
-                         std::vector< MultiBlkId > const& blkids) {
+    void validate_replay(repl_dev& rdev, int64_t lsn, sisl::blob const& header, sisl::blob const& key,
+                         std::vector< multi_blk_id > const& blkids) {
         if (blkids.empty()) {
             m_task_waiter.one_complete();
             return;
@@ -314,7 +314,7 @@ public:
         }
     }
 
-    void validate_sync(shared< ReplDev > rdev, intrusive< test_repl_req > req) {
+    void validate_sync(shared< repl_dev > rdev, intrusive< test_repl_req > req) {
         auto const hdr = r_cast< test_repl_req::journal_header const* >(req->header->cbytes());
         for (const auto& blkid : req->written_blkids) {
             uint32_t size = blkid.blk_count() * g_block_size;
@@ -330,7 +330,7 @@ public:
         }
     }
 
-    void on_write_complete(ReplDev& rdev, intrusive< test_repl_req > req) {
+    void on_write_complete(repl_dev& rdev, intrusive< test_repl_req > req) {
         if (req->written_blkids.empty()) {
             m_io_runner.next_task();
             return;
@@ -374,7 +374,7 @@ public:
     void trigger_cp_flush() {
         homestore::detail::sync_get(homestore::hs()->cp_mgr().trigger_cp_flush(true /* force */));
     }
-    void truncate_and_verify(shared< ReplDev > repl_dev) {
+    void truncate_and_verify(shared< repl_dev > repl_dev) {
         auto solo_dev = std::dynamic_pointer_cast< SoloReplDev >(repl_dev);
         // Truncate and verify the CP LSN's
         solo_dev->truncate();

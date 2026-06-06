@@ -97,7 +97,7 @@ class SampleLogStoreClient {
 public:
     friend class SampleDB;
 
-    SampleLogStoreClient(std::shared_ptr< HomeLogStore > store, const logdev_id_t logdev_id,
+    SampleLogStoreClient(std::shared_ptr< home_log_store > store, const logdev_id_t logdev_id,
                          const test_log_store_comp_cb_t& cb) :
             m_store_id{store->get_store_id()}, m_comp_cb{cb}, m_logdev_id{logdev_id} {
         set_log_store(store);
@@ -113,7 +113,7 @@ public:
     SampleLogStoreClient& operator=(SampleLogStoreClient&&) noexcept = delete;
     ~SampleLogStoreClient() = default;
 
-    void set_log_store(std::shared_ptr< HomeLogStore > store) {
+    void set_log_store(std::shared_ptr< home_log_store > store) {
         m_log_store = store;
         m_log_store->register_log_found_cb(bind_this(SampleLogStoreClient::on_log_found, 3));
     }
@@ -406,7 +406,7 @@ private:
     test_log_store_comp_cb_t m_comp_cb;
     std::atomic< logstore_seq_num_t > m_truncated_upto_lsn = -1;
     std::atomic< logstore_seq_num_t > m_cur_lsn = 0;
-    std::shared_ptr< HomeLogStore > m_log_store;
+    std::shared_ptr< home_log_store > m_log_store;
     std::map< logstore_seq_num_t, bool > m_hole_lsns;
     mutable std::shared_mutex m_hole_lsns_mtx;
     // Locked lookup: nullopt if `lsn` is not a hole, else the hole's filled-flag.

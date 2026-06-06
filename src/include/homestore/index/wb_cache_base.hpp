@@ -19,7 +19,7 @@
 #include <memory>
 #include <boost/intrusive_ptr.hpp>
 #include <sisl/utility/atomic_counter.hpp>
-#include <homestore/blk.h>
+#include <homestore/blk.hpp>
 #include <homestore/index/index_internal.hpp>
 
 namespace homestore {

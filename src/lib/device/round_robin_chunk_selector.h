@@ -14,13 +14,13 @@
  *********************************************************************************/
 #pragma once
 
-#include <homestore/chunk_selector.h>
+#include <homestore/chunk_selector.hpp>
 
 #include <vector>
 #include <sisl/utility/thread_buffer.hpp>
 #include <sisl/logging/logging.h>
 
-#include <homestore/vchunk.h>
+#include <homestore/vchunk.hpp>
 #include "device/chunk.h"
 
 namespace homestore {

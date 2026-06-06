@@ -29,13 +29,15 @@
 #include <sisl/fds/thread_vector.hpp>
 
 #include <homestore/homestore_decl.hpp>
-#include <homestore/blk.h>
+#include <homestore/blk.hpp>
 #include "common/homestore_config.hpp"
 #include "common/homestore_assert.hpp"
 
 #include "blk_allocator.h"
 
 namespace homestore {
+
+struct meta_blk; // opaque meta-service cookie handle; see meta_service.hpp
 
 class BlkAllocPortion {
 private:
@@ -71,8 +73,8 @@ public:
     virtual ~BitmapBlkAllocator() = default;
 
     virtual void load() = 0;
-    BlkAllocStatus reserve_on_disk(BlkId const& in_bid) override;
-    bool is_blk_alloced_on_disk(BlkId const& b, bool use_lock = false) const override;
+    BlkAllocStatus reserve_on_disk(blk_id const& in_bid) override;
+    bool is_blk_alloced_on_disk(blk_id const& b, bool use_lock = false) const override;
     void cp_flush(CP* cp) override;
 
     void recovery_completed() override {}
@@ -101,12 +103,12 @@ public:
     int64_t get_alloced_blk_count() const { return m_alloced_blk_count.load(std::memory_order_acquire); }
 
 protected:
-    void free_on_disk(BlkId const& b);
+    void free_on_disk(blk_id const& b);
 
 private:
     void do_init();
-    sisl::ThreadVector< MultiBlkId >* get_alloc_blk_list();
-    void on_meta_blk_found(void* mblk_cookie, sisl::byte_view const& buf, size_t size);
+    sisl::ThreadVector< multi_blk_id >* get_alloc_blk_list();
+    void on_meta_blk_found(meta_blk* mblk_cookie, sisl::byte_view const& buf, size_t size);
 
     // Acquire the underlying bitmap buffer and while the caller has acquired, all the new allocations
     // will be captured in a separate list and then pushes into buffer once released.
@@ -119,11 +121,11 @@ protected:
     blk_num_t m_blks_per_portion;
 
 private:
-    sisl::ThreadVector< MultiBlkId >* m_alloc_blkid_list{nullptr};
+    sisl::ThreadVector< multi_blk_id >* m_alloc_blkid_list{nullptr};
     std::unique_ptr< BlkAllocPortion[] > m_blk_portions;
     std::unique_ptr< sisl::Bitset > m_disk_bm{nullptr};
     std::atomic< bool > m_is_disk_bm_dirty{true}; // initially disk_bm treated as dirty
-    void* m_meta_blk_cookie{nullptr};
+    meta_blk* m_meta_blk_cookie{nullptr};
     std::atomic< int64_t > m_alloced_blk_count{0};
 };
 } // namespace homestore

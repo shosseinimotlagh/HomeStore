@@ -15,7 +15,7 @@
 #pragma once
 
 #include <sisl/async/value_awaitable.hpp>
-#include <homestore/replication/repl_decls.h>
+#include <homestore/replication/repl_decls.hpp>
 #include <homestore/logstore_service.hpp>
 
 #if defined __clang__ or defined __GNUC__
@@ -228,7 +228,7 @@ public:
 private:
     logstore_id_t m_logstore_id;
     logdev_id_t m_logdev_id;
-    shared< HomeLogStore > m_log_store;
+    shared< home_log_store > m_log_store;
     nuraft::ptr< nuraft::log_entry > m_dummy_log_entry;
     store_lsn_t m_last_durable_lsn{-1};
     sisl::async::value_awaitable< std::monostate > m_log_store_ready;

@@ -33,7 +33,7 @@
 #include <spdlog/fmt/fmt.h>
 
 // clang-format off
-/***** HomeStore Logging Macro facility: Goal is to provide consistent logging capability
+/***** home_store Logging Macro facility: Goal is to provide consistent logging capability
  * 
  * HS_LOG: Use this log macro to simply log the message for a given logmod (without any request or other details)
  * Parameters are
@@ -99,7 +99,7 @@
                 fmt::vformat_to(fmt::appender{buf}, fmt::string_view{msgcb}, fmt::make_format_args(args...));          \
                 return true;                                                                                           \
             }),                                                                                                        \
-            homestore::HomeStore::periodic_logger(), msg, ##__VA_ARGS__);                                              \
+            homestore::home_store::periodic_logger(), msg, ##__VA_ARGS__);                                              \
     }
 #define HS_PERIODIC_LOG(level, mod, msg, ...) HS_PERIODIC_DETAILED_LOG(level, mod, , , , , msg, ##__VA_ARGS__)
 
@@ -207,7 +207,7 @@
 #define HS_LOG(level, mod, msg, ...) HS_REQ_LOG(level, mod, , msg, ##__VA_ARGS__)
 
 // clang-format off
-/***** HomeStore Assert Macro facility: Goal is to provide consistent assert and gather crucial information
+/***** home_store Assert Macro facility: Goal is to provide consistent assert and gather crucial information
  *
  * HS_DETAILED_ASSERT: Use this macro to assert and also print the request_id, submodule name/value and any additional
  * info.

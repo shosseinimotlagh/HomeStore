@@ -1274,8 +1274,8 @@ TYPED_TEST(IndexCrashTest, MetricsTest) {
 //   MetaIndexBuffer blkid ({0,0,0,0}) collision in buf_map during recovery
 //   when two BTree tables both have a root split in the same CP.
 //
-// Root cause: all MetaIndexBuffer objects use BlkId{} (zero) as their blkid.
-// buf_map is keyed by BlkId, so the MetaBuf for ordinal=1 hits the already-
+// Root cause: all MetaIndexBuffer objects use blk_id{} (zero) as their blkid.
+// buf_map is keyed by blk_id, so the MetaBuf for ordinal=1 hits the already-
 // inserted MetaBuf for ordinal=0.  The child node for ordinal=1 gets linked to
 // the wrong MetaBuf (ordinal=0), and the sanity check in
 // IndexCPContext::recover() fires: up_buffer->m_index_ordinal(0) !=

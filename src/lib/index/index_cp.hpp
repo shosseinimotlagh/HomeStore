@@ -16,7 +16,7 @@
 #pragma once
 #include <atomic>
 #include <sisl/fds/concurrent_insert_vector.hpp>
-#include <homestore/blk.h>
+#include <homestore/blk.hpp>
 #include <homestore/index/index_internal.hpp>
 #include <homestore/index_service.hpp>
 #include <homestore/checkpoint/cp_mgr.hpp>
@@ -67,7 +67,7 @@ public:
                 num_freed_ids;
         }
 
-        void append(op_t op, BlkId const& blk) {
+        void append(op_t op, blk_id const& blk) {
             auto const compact_blk = std::make_pair(blk.blk_num(), blk.chunk_num());
             auto const slot = next_slot();
             if (op == op_t::parent_inplace) {
@@ -90,18 +90,18 @@ public:
             ids[slot] = compact_blk;
         }
 
-        BlkId blk_id(uint8_t idx) const {
+        blk_id get_blk_id(uint8_t idx) const {
             DEBUG_ASSERT_LT(idx, total_ids(), "Index out of bounds");
-            return BlkId{ids[idx].first, (blk_count_t)1u, ids[idx].second};
+            return blk_id{ids[idx].first, (blk_count_t)1u, ids[idx].second};
         }
 
         std::string parent_id_string() const {
-            return (has_inplace_parent == 0x1) ? fmt::format("{}", blk_id(0).to_integer()) : "empty";
+            return (has_inplace_parent == 0x1) ? fmt::format("{}", get_blk_id(0).to_integer()) : "empty";
         }
 
         std::string child_id_string() const {
             auto const idx = (has_inplace_parent == 0x1) ? 1 : 0;
-            return (has_inplace_child == 0x1) ? fmt::format("{}", blk_id(idx).to_integer()) : "empty";
+            return (has_inplace_child == 0x1) ? fmt::format("{}", get_blk_id(idx).to_integer()) : "empty";
         }
 
         std::string to_string() const;
@@ -149,11 +149,11 @@ public:
     IndexCPContext(CP* cp);
     virtual ~IndexCPContext() = default;
 
-    // void track_new_blk(BlkId const& inplace_blkid, BlkId const& new_blkid);
+    // void track_new_blk(blk_id const& inplace_blkid, blk_id const& new_blkid);
     void add_to_txn_journal(uint32_t index_ordinal, const IndexBufferPtr& parent_buf,
                             const IndexBufferPtr& left_child_buf, const IndexBufferPtrList& created_bufs,
                             const IndexBufferPtrList& freed_buf);
-    std::map< BlkId, IndexBufferPtr > recover(sisl::byte_view sb);
+    std::map< blk_id, IndexBufferPtr > recover(sisl::byte_view sb);
 
     sisl::io_blob_safe const& journal_buf() const { return m_txn_journal_buf; }
 
@@ -174,7 +174,7 @@ private:
     void check_wait_for_leaders();
     void log_dags();
 
-    void process_txn_record(txn_record const* rec, std::map< BlkId, IndexBufferPtr >& buf_map);
+    void process_txn_record(txn_record const* rec, std::map< blk_id, IndexBufferPtr >& buf_map);
 };
 
 class IndexWBCache;

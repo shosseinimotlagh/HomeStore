@@ -20,7 +20,7 @@
 
 #include <iomgr/iomgr.hpp>
 #include <homestore/replication_service.hpp>
-#include <homestore/replication/repl_dev.h>
+#include <homestore/replication/repl_dev.hpp>
 #include <homestore/logstore/log_store.hpp>
 #include <homestore/superblk_handler.hpp>
 
@@ -40,10 +40,10 @@ struct solo_repl_dev_superblk : public repl_dev_superblk {
 
 #pragma pack()
 
-class SoloReplDev : public ReplDev {
+class SoloReplDev : public repl_dev {
 private:
     logdev_id_t m_logdev_id;
-    std::shared_ptr< HomeLogStore > m_data_journal{nullptr};
+    std::shared_ptr< home_log_store > m_data_journal{nullptr};
     superblk< solo_repl_dev_superblk > m_rd_sb;
     uuid_t m_group_id;
     std::atomic< logstore_seq_num_t > m_commit_upto{-1};
@@ -54,25 +54,25 @@ public:
     SoloReplDev(superblk< solo_repl_dev_superblk >&& rd_sb, bool load_existing);
     virtual ~SoloReplDev() = default;
 
-    virtual std::error_code alloc_blks(uint32_t data_size, const blk_alloc_hints& hints,
-                                       std::vector< MultiBlkId >& out_blkids) override;
-    virtual sisl::async::task< iomgr::io_result > async_write(const std::vector< MultiBlkId >& blkids,
-                                                              sisl::sg_list const& value, bool part_of_batch = false,
+    virtual status alloc_blks(uint32_t data_size, const blk_alloc_hints& hints,
+                              std::vector< multi_blk_id >& out_blkids) override;
+    virtual sisl::async::task< iomgr::io_result > async_write(const std::vector< multi_blk_id >& blkids,
+                                                              sisl::sg_list const& value, io_batch* batch = nullptr,
                                                               trace_id_t tid = 0) override;
-    virtual void async_write_journal(const std::vector< MultiBlkId >& blkids, sisl::blob const& header,
+    virtual void async_write_journal(const std::vector< multi_blk_id >& blkids, sisl::blob const& header,
                                      sisl::blob const& key, uint32_t data_size, repl_req_ptr_t ctx,
                                      trace_id_t tid = 0) override;
 
     void async_alloc_write(sisl::blob const& header, sisl::blob const& key, sisl::sg_list const& value,
-                           repl_req_ptr_t ctx, bool part_of_batch = false, trace_id_t tid = 0) override;
+                           repl_req_ptr_t ctx, io_batch* batch = nullptr, trace_id_t tid = 0) override;
 
-    sisl::async::task< iomgr::io_result > async_read(MultiBlkId const& bid, sisl::sg_list& sgs, uint32_t size,
-                                                     bool part_of_batch = false, trace_id_t tid = 0) override;
+    sisl::async::task< iomgr::io_result > async_read(multi_blk_id const& bid, sisl::sg_list& sgs, uint32_t size,
+                                                     io_batch* batch = nullptr, trace_id_t tid = 0) override;
 
-    sisl::async::task< iomgr::io_result > async_free_blks(int64_t lsn, MultiBlkId const& blkid,
+    sisl::async::task< iomgr::io_result > async_free_blks(int64_t lsn, multi_blk_id const& blkid,
                                                           trace_id_t tid = 0) override;
 
-    AsyncReplResult<> become_leader() override { return make_async_error(ReplServiceError::OK); }
+    async_status become_leader() override { return make_async_error(ReplServiceError::OK); }
     bool is_leader() const override { return true; }
     replica_id_t get_leader_id() const override { return m_group_id; }
     std::vector< peer_info > get_replication_status() const override {

@@ -142,7 +142,7 @@ private:
 
 private:
     logdev_id_t m_logdev_id;
-    std::shared_ptr< HomeLogStore > m_log_store;
+    std::shared_ptr< home_log_store > m_log_store;
     std::atomic< int32_t > m_outstanding{0};
     std::atomic< int64_t > m_nth_entry{0};
 

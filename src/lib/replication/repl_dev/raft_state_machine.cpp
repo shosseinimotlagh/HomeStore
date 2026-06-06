@@ -86,8 +86,8 @@ repl_req_ptr_t RaftStateMachine::localize_journal_entry_prepare(nuraft::log_entr
     // blkid with this new one
     repl_req_ptr_t rreq;
     if ((jentry->code == journal_type_t::HS_DATA_LINKED) && (jentry->value_size > 0)) {
-        MultiBlkId entry_blkid;
-        // FIXME:: here we assume that there is only one MultiBlkId in the log. We need to handle multiple MultiBlkId
+        multi_blk_id entry_blkid;
+        // FIXME:: here we assume that there is only one multi_blk_id in the log. We need to handle multiple multi_blk_id
         // case.!!!
         entry_blkid.deserialize(entry_to_val(jentry), true /* copy */);
 
@@ -96,7 +96,7 @@ repl_req_ptr_t RaftStateMachine::localize_journal_entry_prepare(nuraft::log_entr
                                     (entry_blkid.blk_count() * m_rd.get_blk_size()), false /* is_data_channel */, lsn);
         if (rreq == nullptr) { goto out; }
 
-        rreq->set_remote_blkid(RemoteBlkId{jentry->server_id, entry_blkid});
+        rreq->set_remote_blkid(remote_blk_id{jentry->server_id, entry_blkid});
 
         auto const local_size = rreq->local_blkid().serialized_size();
         auto const remote_size = entry_blkid.serialized_size();
@@ -321,7 +321,7 @@ void RaftStateMachine::unlink_lsn_to_req(int64_t lsn, repl_req_ptr_t rreq) {
 void RaftStateMachine::link_lsn_to_req(repl_req_ptr_t rreq, int64_t lsn) {
     rreq->set_lsn(lsn);
     rreq->add_state(repl_req_state_t::LOG_RECEIVED);
-    // reset the rreq created_at time to now https://github.com/eBay/HomeStore/issues/506
+    // reset the rreq created_at time to now https://github.com/eBay/home_store/issues/506
     rreq->set_created_time();
     if (!m_lsn_req_map.try_emplace(lsn, rreq)) {
         m_lsn_req_map.cvisit(lsn, [&](auto const& entry) {
@@ -363,7 +363,7 @@ int RaftStateMachine::read_logical_snp_obj(nuraft::snapshot& s, void*& user_ctx,
         return -1;
     }
 
-    // For Nuraft baseline resync, we separate the process into two layers: HomeStore layer and Application layer.
+    // For Nuraft baseline resync, we separate the process into two layers: home_store layer and Application layer.
     // We use the highest bit of the obj_id to indicate the message type: 0 is for HS, 1 is for Application.
     if (is_hs_snp_obj(obj_id)) {
         // This is the preserved msg for homestore to resync data

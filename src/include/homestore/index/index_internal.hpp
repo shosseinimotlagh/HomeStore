@@ -19,7 +19,7 @@
 #include <memory>
 #include <boost/intrusive_ptr.hpp>
 #include <sisl/utility/atomic_counter.hpp>
-#include <homestore/blk.h>
+#include <homestore/blk.hpp>
 #include <homestore/homestore_decl.hpp>
 #include <homestore/btree/detail/btree_internal.hpp>
 #include <homestore/btree/detail/btree_node.hpp>
@@ -115,7 +115,7 @@ enum class index_buf_state_t : uint8_t {
 // m_up_buffer and each buffer is flushed only its wait_for_leaders reaches 0
 // which means all its dependent buffers are flushed.
 struct IndexBuffer : public sisl::ObjLifeCounter< IndexBuffer > {
-    BlkId m_blkid;                                                      // BlkId where this needs to be persisted
+    blk_id m_blkid;                                                      // blk_id where this needs to be persisted
     cp_id_t m_dirtied_cp_id{-1};                                        // Last CP that dirtied this index buffer
     cp_id_t m_created_cp_id{-1};                                        // CP id when this buffer is created.
     std::atomic< index_buf_state_t > m_state{index_buf_state_t::CLEAN}; // Is buffer yet to persist?
@@ -140,11 +140,11 @@ struct IndexBuffer : public sisl::ObjLifeCounter< IndexBuffer > {
     uint8_t m_is_meta_buf{false}; // Is the index buffer writing to metablk?
     bool m_node_freed{false};
 
-    IndexBuffer(BlkId blkid, uint32_t buf_size, uint32_t align_size);
-    IndexBuffer(uint8_t* raw_bytes, BlkId blkid);
+    IndexBuffer(blk_id blkid, uint32_t buf_size, uint32_t align_size);
+    IndexBuffer(uint8_t* raw_bytes, blk_id blkid);
     virtual ~IndexBuffer();
 
-    BlkId blkid() const { return m_blkid; }
+    blk_id blkid() const { return m_blkid; }
     uint8_t* raw_buffer() { return m_bytes; }
     bool is_clean() const { return (m_state.load() == index_buf_state_t::CLEAN); }
     index_buf_state_t state() const { return m_state.load(); }

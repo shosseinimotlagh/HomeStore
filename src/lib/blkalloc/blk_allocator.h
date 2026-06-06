@@ -29,7 +29,7 @@
 #include <sisl/fds/thread_vector.hpp>
 
 #include <homestore/homestore_decl.hpp>
-#include <homestore/blk.h>
+#include <homestore/blk.hpp>
 #include "common/homestore_config.hpp"
 #include "common/homestore_assert.hpp"
 
@@ -148,18 +148,18 @@ public:
     BlkAllocator& operator=(BlkAllocator&&) noexcept = delete;
     virtual ~BlkAllocator() = default;
 
-    virtual BlkAllocStatus alloc_contiguous(BlkId& bid) = 0;
-    virtual BlkAllocStatus alloc(blk_count_t nblks, blk_alloc_hints const& hints, BlkId& out_blkid) = 0;
-    virtual BlkAllocStatus reserve_on_disk(BlkId const& bid) = 0;
-    virtual BlkAllocStatus reserve_on_cache(BlkId const& bid) = 0;
+    virtual BlkAllocStatus alloc_contiguous(blk_id& bid) = 0;
+    virtual BlkAllocStatus alloc(blk_count_t nblks, blk_alloc_hints const& hints, blk_id& out_blkid) = 0;
+    virtual BlkAllocStatus reserve_on_disk(blk_id const& bid) = 0;
+    virtual BlkAllocStatus reserve_on_cache(blk_id const& bid) = 0;
 
-    virtual void free(BlkId const& id) = 0;
+    virtual void free(blk_id const& id) = 0;
 
     virtual blk_num_t available_blks() const = 0;
     virtual blk_num_t get_defrag_nblks() const = 0;
     virtual blk_num_t get_used_blks() const = 0;
-    virtual bool is_blk_alloced(BlkId const& b, bool use_lock = false) const = 0;
-    virtual bool is_blk_alloced_on_disk(BlkId const& b, bool use_lock = false) const = 0;
+    virtual bool is_blk_alloced(blk_id const& b, bool use_lock = false) const = 0;
+    virtual bool is_blk_alloced_on_disk(blk_id const& b, bool use_lock = false) const = 0;
     virtual void recovery_completed() = 0;
     virtual void reset() = 0;
 

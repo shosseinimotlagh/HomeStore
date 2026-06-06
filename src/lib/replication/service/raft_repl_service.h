@@ -45,7 +45,7 @@ class RaftReplService : public GenericReplService,
 private:
     shared< nuraft_mesg::manager > m_msg_mgr;
     json_superblk m_config_sb;
-    std::vector< std::pair< sisl::byte_view, void* > > m_config_sb_bufs;
+    std::vector< std::pair< sisl::byte_view, meta_blk* > > m_config_sb_bufs;
     std::mutex m_pending_fetch_mtx;
     std::queue< std::pair< shared< RaftReplDev >, std::vector< repl_req_ptr_t > > > m_pending_fetch_batches;
     iomgr::timer_handle_t m_rdev_fetch_timer_hdl;
@@ -57,7 +57,7 @@ private:
     std::mutex raft_restart_mutex;
 
 public:
-    RaftReplService(cshared< ReplApplication >& repl_app);
+    RaftReplService(cshared< repl_application >& repl_app);
     ~RaftReplService() override;
 
     static ReplServiceError to_repl_error(nuraft::cmd_result_code code);
@@ -76,36 +76,36 @@ protected:
     void start() override;
     void stop() override;
 
-    AsyncReplResult< shared< ReplDev > > create_repl_dev(group_id_t group_id,
+    async_result< shared< repl_dev > > create_repl_dev(group_id_t group_id,
                                                          std::set< replica_id_t > const& members) override;
-    sisl::async::task< ReplServiceError > remove_repl_dev(group_id_t group_id) override;
-    void load_repl_dev(sisl::byte_view const& buf, void* meta_cookie) override;
-    AsyncReplResult<> replace_member(group_id_t group_id, std::string& task_id, const replica_member_info& member_out,
+    async_status remove_repl_dev(group_id_t group_id) override;
+    void load_repl_dev(sisl::byte_view const& buf, meta_blk* meta_cookie) override;
+    async_status replace_member(group_id_t group_id, std::string& task_id, const replica_member_info& member_out,
                                      const replica_member_info& member_in, uint32_t commit_quorum = 0,
                                      uint64_t trace_id = 0) const override;
 
-    AsyncReplResult<> flip_learner_flag(group_id_t group_id, const replica_member_info& member, bool target,
+    async_status flip_learner_flag(group_id_t group_id, const replica_member_info& member, bool target,
                                         uint32_t commit_quorum, bool wait_and_verify = true,
                                         uint64_t trace_id = 0) const override;
-    AsyncReplResult<> remove_member(group_id_t group_id, const replica_id_t& member, uint32_t commit_quorum,
+    async_status remove_member(group_id_t group_id, const replica_id_t& member, uint32_t commit_quorum,
                                     bool wait_and_verify = true, uint64_t trace_id = 0) const override;
 
-    AsyncReplResult<> clean_replace_member_task(group_id_t group_id, const std::string& task_id, uint32_t commit_quorum,
+    async_status clean_replace_member_task(group_id_t group_id, const std::string& task_id, uint32_t commit_quorum,
                                                 uint64_t trace_id = 0) const override;
 
-    ReplResult< std::vector< replace_member_task > > list_replace_member_tasks(uint64_t trace_id = 0) const override;
+    result< std::vector< replace_member_task > > list_replace_member_tasks(uint64_t trace_id = 0) const override;
 
     ReplaceMemberStatus get_replace_member_status(group_id_t group_id, std::string& task_id,
                                                   const replica_member_info& member_out,
                                                   const replica_member_info& member_in,
                                                   const std::vector< replica_member_info >& others,
                                                   uint64_t trace_id = 0) const override;
-    ReplServiceError destroy_repl_dev(group_id_t group_id, uint64_t trace_id = 0) override;
+    status destroy_repl_dev(group_id_t group_id, uint64_t trace_id = 0) override;
 
     void trigger_snapshot_creation(group_id_t group_id, repl_lsn_t compact_lsn, bool wait_for_commit) override;
 
 private:
-    RaftReplDev* raft_group_config_found(sisl::byte_view const& buf, void* meta_cookie);
+    RaftReplDev* raft_group_config_found(sisl::byte_view const& buf, meta_blk* meta_cookie);
     void start_repl_service_timers();
     void stop_repl_service_timers();
     void fetch_pending_data();
@@ -127,13 +127,13 @@ struct ReplDevCPContext;
 
 class ReplSvcCPContext : public CPContext {
     std::shared_mutex m_cp_map_mtx;
-    std::map< ReplDev*, cshared< ReplDevCPContext > > m_cp_ctx_map;
+    std::map< repl_dev*, cshared< ReplDevCPContext > > m_cp_ctx_map;
 
 public:
     ReplSvcCPContext(CP* cp) : CPContext(cp) {};
     virtual ~ReplSvcCPContext() = default;
-    int add_repl_dev_ctx(ReplDev* dev, cshared< ReplDevCPContext > dev_ctx);
-    cshared< ReplDevCPContext > get_repl_dev_ctx(ReplDev* dev);
+    int add_repl_dev_ctx(repl_dev* dev, cshared< ReplDevCPContext > dev_ctx);
+    cshared< ReplDevCPContext > get_repl_dev_ctx(repl_dev* dev);
 };
 
 class RaftReplServiceCPHandler : public CPCallbacks {

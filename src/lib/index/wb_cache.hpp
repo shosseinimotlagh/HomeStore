@@ -35,11 +35,11 @@ class VirtualDev;
 class IndexWBCache : public IndexWBCacheBase {
 private:
     std::shared_ptr< VirtualDev > m_vdev;
-    sisl::SimpleCache< BlkId, BtreeNodePtr > m_cache;
+    sisl::SimpleCache< blk_id, BtreeNodePtr > m_cache;
     uint32_t m_node_size;
     std::vector< iomgr::IOReactor* > m_cp_flush_reactors;
     std::mutex m_flush_mtx;
-    void* m_meta_blk;
+    meta_blk* m_meta_blk;
     bool m_in_recovery{false};
     std::unordered_set< uint32_t > m_updated_ordinals;
 
@@ -87,7 +87,7 @@ private:
     void recover_buf(IndexBufferPtr const& buf);
     void parent_recover(IndexBufferPtr const& buf);
     std::string to_string_dag_bufs(DagMap& dags, cp_id_t cp_id = 0);
-    DagMap generate_dag_buffers(std::map< BlkId, IndexBufferPtr >& bufmap);
+    DagMap generate_dag_buffers(std::map< blk_id, IndexBufferPtr >& bufmap);
     bool was_node_committed(IndexBufferPtr const& buf);
     void load_buf(IndexBufferPtr const& buf);
     void update_up_buffer_counters(IndexBufferPtr const& buf);

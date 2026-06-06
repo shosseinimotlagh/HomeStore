@@ -234,7 +234,7 @@ private:
     sisl::async::task< void > cp_start_flush(CP* cp);
     void on_cp_flush_done(CP* cp);
     void cleanup_cp(CP* cp);
-    void on_meta_blk_found(const sisl::byte_view& buf, void* meta_cookie);
+    void on_meta_blk_found(const sisl::byte_view& buf, meta_blk* meta_cookie);
     void start_cp_thread();
     sisl::async::task< bool > do_trigger_cp_flush(bool force, bool flush_on_shutdown);
     uint64_t cp_timer_us();

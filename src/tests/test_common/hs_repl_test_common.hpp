@@ -105,7 +105,7 @@ protected:
     };
 
 public:
-    class TestReplApplication : public ReplApplication {
+    class TestReplApplication : public repl_application {
     private:
         HSReplTestHelper& helper_;
 
@@ -116,7 +116,7 @@ public:
         homestore::repl_impl_type get_impl_type() const override { return homestore::repl_impl_type::server_side; }
         bool need_timeline_consistency() const { return false; }
 
-        std::shared_ptr< homestore::ReplDevListener >
+        std::shared_ptr< homestore::repl_dev_listener >
         create_repl_dev_listener(homestore::group_id_t group_id) override {
             return helper_.get_listener(group_id);
         }
@@ -227,7 +227,7 @@ public:
                // for now , we only support append blk allocator for replication service
                // TODO: let raft_repl_dev supports other blk allocator type after we support deserializing multiple
                // multiblkid from log entry, see
-               // https://github.com/eBay/HomeStore/pull/756/files#diff-c9fac27171101b8113ad29c31e1f4f34bcd0eba5c284a3709e6369da935e1827R89
+               // https://github.com/eBay/home_store/pull/756/files#diff-c9fac27171101b8113ad29c31e1f4f34bcd0eba5c284a3709e6369da935e1827R89
                .blkalloc_type = blk_allocator_type_t::append,
                .repl_app = std::make_unique< TestReplApplication >(*this)}},
              {HS_SERVICE::LOG, {.size_pct = 20.0}}},
@@ -288,7 +288,7 @@ public:
 
     Runner& runner() { return io_runner_; }
 
-    void register_listener(std::shared_ptr< ReplDevListener > listener) {
+    void register_listener(std::shared_ptr< repl_dev_listener > listener) {
         if (replica_num_ != 0) { pending_listeners_.emplace_back(std::move(listener)); }
 
         ipc_data_->sync_for_member_start();
@@ -310,7 +310,7 @@ public:
             auto v = homestore::detail::sync_get(hs()->repl_service().create_repl_dev(repl_group_id, members));
             ASSERT_EQ(v.has_value(), true)
                 << "Error in creating repl dev for group_id=" << boost::uuids::to_string(repl_group_id).c_str()
-                << ", err=" << v.error();
+                << ", err=" << v.error().message();
             auto& raftService = dynamic_cast< RaftReplService& >(hs()->repl_service());
             auto follower_priority = raftService.compute_raft_follower_priority();
             auto repl_dev = v.value();
@@ -327,7 +327,7 @@ public:
         }
     }
 
-    std::shared_ptr< ReplDevListener > get_listener(homestore::group_id_t group_id) {
+    std::shared_ptr< repl_dev_listener > get_listener(homestore::group_id_t group_id) {
         std::unique_lock lg(groups_mtx_);
 
         auto it = repl_groups_.find(group_id);
@@ -350,7 +350,7 @@ public:
         }
     }
 
-    void add_listener(std::shared_ptr< ReplDevListener > listener) {
+    void add_listener(std::shared_ptr< repl_dev_listener > listener) {
         std::unique_lock lg(groups_mtx_);
         pending_listeners_.emplace_back(listener);
     }
@@ -402,8 +402,8 @@ private:
 
     std::mutex groups_mtx_;
     std::condition_variable group_created_cv_;
-    std::map< homestore::group_id_t, std::shared_ptr< homestore::ReplDevListener > > repl_groups_;
-    std::vector< std::shared_ptr< homestore::ReplDevListener > > pending_listeners_; // pending to join raft group
+    std::map< homestore::group_id_t, std::shared_ptr< homestore::repl_dev_listener > > repl_groups_;
+    std::vector< std::shared_ptr< homestore::repl_dev_listener > > pending_listeners_; // pending to join raft group
     std::map< homestore::replica_id_t, uint32_t > members_;
     std::set< uint32_t > up_members_;
     homestore::replica_id_t my_replica_id_;

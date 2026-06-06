@@ -32,7 +32,7 @@
 namespace homestore {
 ///////////////////// All typedefs ///////////////////////////////
 class logstore_req;
-class HomeLogStore;
+class home_log_store;
 struct logdev_key;
 
 typedef int64_t logid_t;
@@ -45,8 +45,8 @@ typedef uint32_t logdev_id_t;
 typedef std::function< void(logstore_req*, logdev_key) > log_req_comp_cb_t;
 typedef std::function< void(logstore_seq_num_t, sisl::io_blob&, logdev_key, void*) > log_write_comp_cb_t;
 typedef std::function< void(logstore_seq_num_t, log_buffer, void*) > log_found_cb_t;
-typedef std::function< void(std::shared_ptr< HomeLogStore >) > log_store_opened_cb_t;
-typedef std::function< void(std::shared_ptr< HomeLogStore >, logstore_seq_num_t) > log_replay_done_cb_t;
+typedef std::function< void(std::shared_ptr< home_log_store >) > log_store_opened_cb_t;
+typedef std::function< void(std::shared_ptr< home_log_store >, logstore_seq_num_t) > log_replay_done_cb_t;
 
 typedef int64_t logid_t;
 
@@ -97,14 +97,14 @@ struct logdev_key {
 
 enum log_dump_verbosity : uint8_t { CONTENT, HEADER };
 
-class HomeLogStore;
+class home_log_store;
 struct log_dump_req {
     log_dump_req(log_dump_verbosity level = log_dump_verbosity::HEADER,
-                 std::shared_ptr< HomeLogStore > logstore = nullptr, logstore_seq_num_t s_seq = 0,
+                 std::shared_ptr< home_log_store > logstore = nullptr, logstore_seq_num_t s_seq = 0,
                  logstore_seq_num_t e_seq = std::numeric_limits< int64_t >::max()) :
             verbosity_level{level}, log_store{logstore}, start_seq_num{s_seq}, end_seq_num{e_seq} {}
     log_dump_verbosity verbosity_level;        // How much information we need of log file (entire content or header)
-    std::shared_ptr< HomeLogStore > log_store; // if null all log stores are dumped
+    std::shared_ptr< home_log_store > log_store; // if null all log stores are dumped
     logstore_seq_num_t start_seq_num;          // empty_key if from start of log file
     logstore_seq_num_t end_seq_num;            // empty_key if till last log entry
 };
@@ -118,14 +118,14 @@ struct logstore_record {
     logstore_record(const logdev_key& key, const logdev_key& trunc_key) : m_dev_key{key}, m_trunc_key{trunc_key} {}
 };
 
-class HomeLogStore;
+class home_log_store;
 struct logstore_req {
-    HomeLogStore* log_store; // Backpointer to the log store. We are not storing shared_ptr as user should not destroy
+    home_log_store* log_store; // Backpointer to the log store. We are not storing shared_ptr as user should not destroy
                              // it until all ios are not completed.
     logstore_seq_num_t seq_num; // Log store specific seq_num (which could be monotonically increaseing with logstore)
     sisl::io_blob data;         // Data blob containing data
     void* cookie;               // User generated cookie (considered as opaque)
-    bool is_internal_req;       // If the req is created internally by HomeLogStore itself
+    bool is_internal_req;       // If the req is created internally by home_log_store itself
     log_req_comp_cb_t cb;       // Callback upon completion of write (overridden than default)
     Clock::time_point start_time;
     bool flush_wait{false}; // Wait for the flush to happen
@@ -141,7 +141,7 @@ struct logstore_req {
         // TODO: Implement this method
         return 0;
     }
-    static logstore_req* make(HomeLogStore* store, logstore_seq_num_t seq_num, const sisl::io_blob& data) {
+    static logstore_req* make(home_log_store* store, logstore_seq_num_t seq_num, const sisl::io_blob& data) {
         logstore_req* req = new logstore_req();
         req->log_store = store;
         req->seq_num = seq_num;

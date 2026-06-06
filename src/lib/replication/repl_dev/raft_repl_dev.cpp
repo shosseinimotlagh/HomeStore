@@ -44,7 +44,7 @@ RaftReplDev::RaftReplDev(RaftReplService& svc, superblk< raft_repl_dev_superblk 
         m_data_journal = std::make_shared< ReplLogStore >(
             *this, *m_state_machine, m_rd_sb->logdev_id, m_rd_sb->logstore_id,
             [this](logstore_seq_num_t lsn, log_buffer buf, void* key) { on_log_found(lsn, buf, key); },
-            [this](std::shared_ptr< HomeLogStore > hs, logstore_seq_num_t lsn) {
+            [this](std::shared_ptr< home_log_store > hs, logstore_seq_num_t lsn) {
                 m_log_store_replay_done = true;
                 set_log_store_last_durable_lsn(hs->tail_lsn());
             });
@@ -188,7 +188,7 @@ RaftReplDev::data_request_bidirectional(repl_dest_t const& dest, std::string con
 }
 
 // All the steps in the implementation should be idempotent and retryable.
-AsyncReplResult<> RaftReplDev::start_replace_member(std::string& task_id, const replica_member_info& member_out,
+async_status RaftReplDev::start_replace_member(std::string& task_id, const replica_member_info& member_out,
                                                     const replica_member_info& member_in, uint32_t commit_quorum,
                                                     uint64_t trace_id) {
     if (is_stopping()) {
@@ -358,7 +358,7 @@ AsyncReplResult<> RaftReplDev::start_replace_member(std::string& task_id, const 
     return make_async_success<>();
 }
 
-AsyncReplResult<> RaftReplDev::complete_replace_member(std::string& task_id, const replica_member_info& member_out,
+async_status RaftReplDev::complete_replace_member(std::string& task_id, const replica_member_info& member_out,
                                                        const replica_member_info& member_in, uint32_t commit_quorum,
                                                        uint64_t trace_id) {
     if (is_stopping()) {
@@ -532,7 +532,7 @@ ReplServiceError RaftReplDev::do_add_member(const replica_member_info& member, u
     return ReplServiceError::OK;
 }
 
-AsyncReplResult<> RaftReplDev::remove_member(const replica_id_t& member, uint32_t commit_quorum, bool wait_and_verify,
+async_status RaftReplDev::remove_member(const replica_id_t& member, uint32_t commit_quorum, bool wait_and_verify,
                                              uint64_t trace_id) {
     RD_LOGI(trace_id, "Remove member, member={}", boost::uuids::to_string(member));
     if (is_stopping()) {
@@ -624,7 +624,7 @@ ReplServiceError RaftReplDev::do_remove_member(const replica_id_t& member, bool 
     return ReplServiceError::OK;
 }
 
-AsyncReplResult<> RaftReplDev::flip_learner_flag(const replica_member_info& member, bool target, uint32_t commit_quorum,
+async_status RaftReplDev::flip_learner_flag(const replica_member_info& member, bool target, uint32_t commit_quorum,
                                                  bool wait_and_verify, uint64_t trace_id) {
     RD_LOGI(trace_id, "Flip learner flag to {}, member={}", target, boost::uuids::to_string(member.id));
     if (is_stopping()) {
@@ -695,7 +695,7 @@ ReplServiceError RaftReplDev::do_flip_learner(const replica_member_info& member,
     return ReplServiceError::OK;
 }
 
-AsyncReplResult<> RaftReplDev::clean_replace_member_task(const std::string& task_id, uint32_t commit_quorum,
+async_status RaftReplDev::clean_replace_member_task(const std::string& task_id, uint32_t commit_quorum,
                                                          uint64_t trace_id) {
     RD_LOGI(trace_id, "Clean replace member task, task={}, commit_quorum={}", task_id, commit_quorum);
     if (is_stopping()) {
@@ -744,7 +744,7 @@ AsyncReplResult<> RaftReplDev::clean_replace_member_task(const std::string& task
     return make_async_success<>();
 }
 
-ReplResult< replace_member_task > RaftReplDev::get_ongoing_replace_member_task(uint64_t trace_id) const {
+result< replace_member_task > RaftReplDev::get_ongoing_replace_member_task(uint64_t trace_id) const {
     if (m_rd_sb->replace_member_task.replica_in == boost::uuids::nil_uuid() ||
         m_rd_sb->replace_member_task.replica_out == boost::uuids::nil_uuid()) {
         return std::unexpected(ReplServiceError::RESULT_NOT_EXIST_YET);
@@ -965,7 +965,7 @@ void RaftReplDev::propose_truncate_boundary() {
 
 // we do not have shutdown for async_alloc_write according to the two points above.
 void RaftReplDev::async_alloc_write(sisl::blob const& header, sisl::blob const& key, sisl::sg_list const& data,
-                                    repl_req_ptr_t rreq, bool part_of_batch, trace_id_t tid) {
+                                    repl_req_ptr_t rreq, io_batch* batch, trace_id_t tid) {
     if (!rreq) { rreq = repl_req_ptr_t(new repl_req_ctx{}); }
 
     {
@@ -1543,7 +1543,7 @@ void RaftReplDev::on_fetch_data_received(intrusive< sisl::GenericRpcData >& rpc_
     // So those args must outlive the deferral -- persist them in reserved (no realloc) vectors and pass stable
     // .back() references; the vectors are then moved into the completion continuation so they live across when_all.
     std::vector< sisl::sg_list > sgs_vec;
-    std::vector< MultiBlkId > blkids_vec;
+    std::vector< multi_blk_id > blkids_vec;
     std::vector< sisl::blob > headers_vec;
     std::vector< sisl::async::task< iomgr::io_result > > futs;
     auto const n_entries = fetch_req->request()->entries()->size();
@@ -1556,7 +1556,7 @@ void RaftReplDev::on_fetch_data_received(intrusive< sisl::GenericRpcData >& rpc_
         auto const& lsn = req->lsn();
         auto const& originator = req->blkid_originator();
         auto const& remote_blkid = req->remote_blkid();
-        MultiBlkId local_blkid;
+        multi_blk_id local_blkid;
         local_blkid.deserialize(sisl::blob{remote_blkid->Data(), remote_blkid->size()}, true /* copy */);
         // prepare the sgs data buffer to read into;
         auto const total_size = local_blkid.blk_count() * get_blk_size();
@@ -1702,7 +1702,7 @@ void RaftReplDev::handle_fetch_data_response(sisl::GenericClientResponse respons
 
 void RaftReplDev::commit_blk(repl_req_ptr_t rreq) {
     if (rreq->local_blkid().is_valid()) {
-        if (data_service().commit_blk(rreq->local_blkid()) != BlkAllocStatus::SUCCESS) {
+        if (!data_service().commit_blk(rreq->local_blkid())) {
             if (hs()->device_mgr()->is_boot_in_degraded_mode() && m_log_store_replay_done)
                 return;
             else
@@ -1993,8 +1993,8 @@ repl_req_ptr_t RaftReplDev::repl_key_to_req(repl_key const& rkey) const {
 
 // async_read and async_free_blks graceful shutdown will be handled by data_service.
 
-sisl::async::task< iomgr::io_result > RaftReplDev::async_read(MultiBlkId const& bid, sisl::sg_list& sgs, uint32_t size,
-                                                              bool part_of_batch, trace_id_t tid) {
+sisl::async::task< iomgr::io_result > RaftReplDev::async_read(multi_blk_id const& bid, sisl::sg_list& sgs, uint32_t size,
+                                                              io_batch* batch, trace_id_t tid) {
     if (is_stopping()) {
         LOGINFO("repl dev is being shutdown!");
         co_return std::unexpected(std::make_error_condition(std::errc::operation_canceled));
@@ -2003,10 +2003,10 @@ sisl::async::task< iomgr::io_result > RaftReplDev::async_read(MultiBlkId const& 
         LOGINFO("repl dev is not active!");
         co_return std::unexpected(std::make_error_condition(std::errc::operation_canceled));
     }
-    co_return co_await data_service().async_read(bid, sgs, size, part_of_batch);
+    co_return co_await data_service().async_read(bid, sgs, size, batch);
 }
 
-sisl::async::task< iomgr::io_result > RaftReplDev::async_free_blks(int64_t, MultiBlkId const& bid, trace_id_t tid) {
+sisl::async::task< iomgr::io_result > RaftReplDev::async_free_blks(int64_t, multi_blk_id const& bid, trace_id_t tid) {
     // TODO: For timeline consistency required, we should retain the blkid that is changed and write that to another
     // journal.
     if (is_stopping()) {
@@ -2020,7 +2020,7 @@ sisl::async::task< iomgr::io_result > RaftReplDev::async_free_blks(int64_t, Mult
     co_return co_await data_service().async_free_blk(bid);
 }
 
-AsyncReplResult<> RaftReplDev::become_leader() {
+async_status RaftReplDev::become_leader() {
     if (is_stopping()) {
         LOGINFO("repl dev is being shutdown!");
         return make_async_error<>(ReplServiceError::STOPPING);
@@ -2028,7 +2028,7 @@ AsyncReplResult<> RaftReplDev::become_leader() {
     init_req_counter counter(pending_request_num);
     reset_latch_lsn();
 
-    // become_leader is control-plane; block for its result and wrap into the AsyncReplResult task this method
+    // become_leader is control-plane; block for its result and wrap into the async_result task this method
     // returns. counter lives on this frame until sync_get returns, the same span the old continuation kept alive.
     auto e = detail::sync_get(m_msg_mgr.become_leader(m_group_id));
     if (!e) {
@@ -2793,7 +2793,7 @@ void RaftReplDev::on_log_found(logstore_seq_num_t lsn, log_buffer buf, void* ctx
     // If the data is linked and value_size is non-zero, it means blks have been allocated for data.
     // Since the log is flushed after data is written, the data has already been received.
     if ((jentry->code == journal_type_t::HS_DATA_LINKED) && (jentry->value_size > 0)) {
-        MultiBlkId entry_blkid;
+        multi_blk_id entry_blkid;
         entry_blkid.deserialize(entry_to_val(jentry), true /* copy */);
         data_size = entry_blkid.blk_count() * get_blk_size();
         rreq->set_local_blkids({entry_blkid});
@@ -2951,7 +2951,7 @@ void RaftReplDev::clear_chunk_req(chunk_num_t chunk_id) {
             if (chunk_id == blkid.chunk_num()) {
                 // only clean the rreqs which has allocated blks on the emergent chunk. blkid/key are passed by value
                 // into the coroutine frame so they outlive this loop iteration.
-                futs.emplace_back([](RaftReplDev* self, MultiBlkId blkid,
+                futs.emplace_back([](RaftReplDev* self, multi_blk_id blkid,
                                      repl_key key) -> sisl::async::task< iomgr::io_result > {
                     auto r = co_await data_service().async_free_blk(blkid);
                     HS_LOG_ASSERT(bool(r), "freeing blkid={} upon error failed, potential to cause blk leak",
@@ -2976,7 +2976,7 @@ void RaftReplDev::clear_chunk_req(chunk_num_t chunk_id) {
 
 ReplServiceError RaftReplDev::init_req_ctx(repl_req_ptr_t rreq, repl_key rkey, journal_type_t op_code, bool is_proposer,
                                            sisl::blob const& user_header, sisl::blob const& key, uint32_t data_size,
-                                           cshared< ReplDevListener >& listener) {
+                                           cshared< repl_dev_listener >& listener) {
     if (!rreq) {
         RD_LOGD(rkey.traceID, "got nullptr for initing req, rkey=[{}]", rkey.to_string());
         return ReplServiceError::CANCELLED;
