@@ -122,16 +122,18 @@ public:
     virtual ~BtreeNode() = default;
 
     // Identify if a node is a leaf node or not, from raw buffer, by just reading persistent_hdr_t
-    static bool identify_leaf_node(uint8_t* buf) { return (r_cast< persistent_hdr_t* >(buf))->leaf; }
-    static std::string to_string_buf(uint8_t* buf) { return (r_cast< persistent_hdr_t* >(buf))->to_compact_string(); }
+    static bool identify_leaf_node(uint8_t* buf) { return (reinterpret_cast< persistent_hdr_t* >(buf))->leaf; }
+    static std::string to_string_buf(uint8_t* buf) {
+        return (reinterpret_cast< persistent_hdr_t* >(buf))->to_compact_string();
+    }
     static BtreeLinkInfo::bnode_link_info identify_edge_info(uint8_t* buf) {
-        return (r_cast< persistent_hdr_t* >(buf))->edge_info;
+        return (reinterpret_cast< persistent_hdr_t* >(buf))->edge_info;
     }
 
     static bool is_valid_node(sisl::blob const& buf) {
-        auto phdr = r_cast< persistent_hdr_t const* >(buf.cbytes());
+        auto phdr = reinterpret_cast< persistent_hdr_t const* >(buf.cbytes());
         if ((phdr->magic != BTREE_NODE_MAGIC) || (phdr->version != BTREE_NODE_VERSION)) { return false; }
-        if ((uint32_cast(phdr->node_size) + 1) != buf.size()) { return false; }
+        if ((static_cast< uint32_t >(phdr->node_size) + 1) != buf.size()) { return false; }
         if (phdr->node_id == empty_bnodeid) { return false; }
 
         auto const exp_checksum = crc16_t10dif(bt_init_crc_16, (buf.cbytes() + sizeof(persistent_hdr_t)),
@@ -142,12 +144,12 @@ public:
     }
 
     static void revert_node_delete(uint8_t* buf) {
-        auto phdr = r_cast< persistent_hdr_t* >(buf);
+        auto phdr = reinterpret_cast< persistent_hdr_t* >(buf);
         phdr->node_deleted = 0x0;
     }
 
     static int64_t get_modified_cp_id(uint8_t* buf) {
-        auto phdr = r_cast< persistent_hdr_t const* >(buf);
+        auto phdr = reinterpret_cast< persistent_hdr_t const* >(buf);
         return phdr->modified_cp_id;
     }
 
@@ -323,7 +325,7 @@ public:
 
     virtual void set_edge_value(const BtreeValue& v) {
         auto const b = v.serialize();
-        auto const l = r_cast< BtreeLinkInfo::bnode_link_info const* >(b.cbytes());
+        auto const l = reinterpret_cast< BtreeLinkInfo::bnode_link_info const* >(b.cbytes());
         DEBUG_ASSERT_EQ(b.size(), sizeof(BtreeLinkInfo::bnode_link_info));
         set_edge_info(*l);
     }
@@ -460,7 +462,7 @@ protected:
         if ((end - start) <= 1) { return std::make_pair(found, end_of_search_index); }
         while ((end - start) > 1) {
             mid = start + (end - start) / 2;
-            DEBUG_ASSERT(mid >= 0 && mid < int_cast(total_entries()), "Invalid mid={}", mid);
+            DEBUG_ASSERT(mid >= 0 && mid < static_cast< int >(total_entries()), "Invalid mid={}", mid);
             int x = compare_nth_key(key, mid);
             if (x == 0) {
                 found = true;
@@ -484,9 +486,9 @@ public:
     // This method is called when the physical buffer is updated.
     // Derived classes can override this method to perform additional actions.
     virtual void on_update_phys_buf() = 0;
-    persistent_hdr_t* get_persistent_header() { return r_cast< persistent_hdr_t* >(m_phys_node_buf); }
+    persistent_hdr_t* get_persistent_header() { return reinterpret_cast< persistent_hdr_t* >(m_phys_node_buf); }
     const persistent_hdr_t* get_persistent_header_const() const {
-        return r_cast< const persistent_hdr_t* >(m_phys_node_buf);
+        return reinterpret_cast< const persistent_hdr_t* >(m_phys_node_buf);
     }
     uint8_t* node_data_area() { return (m_phys_node_buf + sizeof(persistent_hdr_t)); }
     const uint8_t* node_data_area_const() const { return (m_phys_node_buf + sizeof(persistent_hdr_t)); }
@@ -512,7 +514,7 @@ public:
 
     bool is_leaf() const { return get_persistent_header_const()->leaf; }
     btree_node_type get_node_type() const {
-        return s_cast< btree_node_type >(get_persistent_header_const()->node_type);
+        return static_cast< btree_node_type >(get_persistent_header_const()->node_type);
     }
 
     void set_total_entries(uint32_t n) { get_persistent_header()->nentries = n; }
@@ -523,10 +525,10 @@ public:
     void sub_entries(uint32_t subn) { get_persistent_header()->nentries -= subn; }
 
     void set_leaf(bool leaf) { get_persistent_header()->leaf = leaf; }
-    void set_node_type(btree_node_type t) { get_persistent_header()->node_type = uint32_cast(t); }
-    void set_node_size(uint32_t size) { get_persistent_header()->node_size = s_cast< uint16_t >(size - 1); }
+    void set_node_type(btree_node_type t) { get_persistent_header()->node_type = static_cast< uint32_t >(t); }
+    void set_node_size(uint32_t size) { get_persistent_header()->node_size = static_cast< uint16_t >(size - 1); }
     uint64_t node_gen() const { return get_persistent_header_const()->node_gen; }
-    uint32_t node_size() const { return s_cast< uint32_t >(get_persistent_header_const()->node_size) + 1; }
+    uint32_t node_size() const { return static_cast< uint32_t >(get_persistent_header_const()->node_size) + 1; }
     uint32_t node_data_size() const { return node_size() - sizeof(persistent_hdr_t); }
 
     void inc_gen() { get_persistent_header()->node_gen++; }
@@ -577,7 +579,7 @@ public:
 
 struct btree_locked_node_info {
     BtreeNode* node;
-    Clock::time_point start_time;
+    sisl::Clock::time_point start_time;
     const char* fname;
     int line;
 

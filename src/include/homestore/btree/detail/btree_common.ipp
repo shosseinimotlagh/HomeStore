@@ -96,23 +96,25 @@ btree_status_t Btree< K, V >::do_destroy(uint64_t& n_freed_nodes, void* context)
 }
 
 template < typename K, typename V >
-std::pair<uint64_t,uint64_t> Btree< K, V >::compute_node_count()  {
+std::pair< uint64_t, uint64_t > Btree< K, V >::compute_node_count() {
     uint64_t leaf_cnt = 0;
     uint64_t interior_cnt = 0;
     m_btree_lock.lock_shared();
     get_child_node_count(m_root_node_info.bnode_id(), interior_cnt, leaf_cnt);
     m_total_leaf_nodes = leaf_cnt;
-    m_total_interior_nodes= interior_cnt;
+    m_total_interior_nodes = interior_cnt;
     m_btree_lock.unlock_shared();
     return {interior_cnt, leaf_cnt};
 }
 
 template < typename K, typename V >
-uint16_t Btree< K, V >::compute_btree_depth()  {
+uint16_t Btree< K, V >::compute_btree_depth() {
     m_btree_lock.lock_shared();
     BtreeNodePtr root;
     locktype_t acq_lock = locktype_t::READ;
-    if (read_and_lock_node(m_root_node_info.bnode_id(), root, acq_lock, acq_lock, nullptr) != btree_status_t::success){ return -1; }
+    if (read_and_lock_node(m_root_node_info.bnode_id(), root, acq_lock, acq_lock, nullptr) != btree_status_t::success) {
+        return -1;
+    }
     m_btree_depth = root->level();
     unlock_node(root, acq_lock);
     m_btree_lock.unlock_shared();
@@ -124,16 +126,16 @@ void Btree< K, V >::get_child_node_count(bnodeid_t bnodeid, uint64_t& interior_c
     BtreeNodePtr node;
     locktype_t acq_lock = locktype_t::READ;
 
-    if (read_and_lock_node(bnodeid, node, acq_lock, acq_lock, nullptr) != btree_status_t::success) { return ; }
-    if(node->is_leaf()) {
+    if (read_and_lock_node(bnodeid, node, acq_lock, acq_lock, nullptr) != btree_status_t::success) { return; }
+    if (node->is_leaf()) {
         ++leaf_cnt;
     } else {
         ++interior_cnt;
     }
     if (!node->is_leaf()) {
-        if(node->level()==1){
-                leaf_cnt += node->total_entries() + (node->has_valid_edge()?1:0);
-        }else{
+        if (node->level() == 1) {
+            leaf_cnt += node->total_entries() + (node->has_valid_edge() ? 1 : 0);
+        } else {
             uint32_t i = 0;
             while (i < node->total_entries()) {
                 BtreeLinkInfo p;
@@ -141,11 +143,11 @@ void Btree< K, V >::get_child_node_count(bnodeid_t bnodeid, uint64_t& interior_c
                 get_child_node_count(p.bnode_id(), interior_cnt, leaf_cnt);
                 ++i;
             }
-            if (node->has_valid_edge()) {get_child_node_count(node->edge_id(), interior_cnt, leaf_cnt); }
+            if (node->has_valid_edge()) { get_child_node_count(node->edge_id(), interior_cnt, leaf_cnt); }
         }
     }
     unlock_node(node, acq_lock);
-    return ;
+    return;
 }
 
 template < typename K, typename V >
@@ -248,8 +250,8 @@ uint64_t Btree< K, V >::count_keys(bnodeid_t bnodeid) const {
     return result;
 }
 
-template <typename K, typename V>
-void Btree<K, V>::validate_node_child_relation(BtreeNodePtr node, BtreeNodePtr& last_child_node) const {
+template < typename K, typename V >
+void Btree< K, V >::validate_node_child_relation(BtreeNodePtr node, BtreeNodePtr& last_child_node) const {
     if (node->is_leaf()) { return; }
     uint32_t nentries = node->has_valid_edge() ? node->total_entries() + 1 : node->total_entries();
     BtreeNodePtr previous_child = nullptr;
@@ -257,74 +259,90 @@ void Btree<K, V>::validate_node_child_relation(BtreeNodePtr node, BtreeNodePtr& 
         BtreeLinkInfo child_info;
         node->get_nth_value(ind, &child_info, false /* copy */);
         if (child_info.bnode_id() == empty_bnodeid) {
-            throw std::runtime_error(fmt::format("{}-th child of node [{}] info has empty bnode_id", ind, node->to_string()));
+            throw std::runtime_error(
+                fmt::format("{}-th child of node [{}] info has empty bnode_id", ind, node->to_string()));
         }
         BtreeNodePtr child_node;
         if (auto ret = read_node_impl(child_info.bnode_id(), child_node); ret != btree_status_t::success) {
-            throw std::runtime_error(fmt::format("Failed to read child node [{}] of node [{}]", child_info.bnode_id(), node->to_string()));
+            throw std::runtime_error(
+                fmt::format("Failed to read child node [{}] of node [{}]", child_info.bnode_id(), node->to_string()));
         }
         if (ind == nentries - 1) { last_child_node = child_node; }
         if (child_node->is_node_deleted()) {
-            throw std::runtime_error(fmt::format("Child node [{}] is deleted for parent [{}]", child_node->to_string(), node->to_string()));
+            throw std::runtime_error(
+                fmt::format("Child node [{}] is deleted for parent [{}]", child_node->to_string(), node->to_string()));
         }
         if (child_node->level() != node->level() - 1) {
-            throw std::runtime_error(fmt::format("Child node level mismatch node [{}] child level: {}, expected: {}",child_node->to_string(), child_node->level(), node->level() - 1));
+            throw std::runtime_error(fmt::format("Child node level mismatch node [{}] child level: {}, expected: {}",
+                                                 child_node->to_string(), child_node->level(), node->level() - 1));
         }
 
         K child_first_key = child_node->get_first_key< K >();
         K child_last_key = child_node->get_last_key< K >();
         K parent_nth_key;
 
-         if(child_node->total_entries() >0) {
-              if(ind< node->total_entries()){
-                 parent_nth_key= node->get_nth_key<K>(ind, false /* copy */);
-                if(child_first_key.compare(parent_nth_key) > 0) {
-                    throw std::runtime_error(fmt::format("{}-th Child node [{}] first key is less than its corresponding parent node [{}] key",ind,child_node->to_string(),node->to_string()));
-                    }
-                if(child_last_key.compare(parent_nth_key) > 0) {
-                    throw std::runtime_error(fmt::format("{}-th Child node [{}] last key is greater than its corresponding parent node [{}] key",ind, child_node->to_string(), node->to_string()));
-                    }
-               }
+        if (child_node->total_entries() > 0) {
+            if (ind < node->total_entries()) {
+                parent_nth_key = node->get_nth_key< K >(ind, false /* copy */);
+                if (child_first_key.compare(parent_nth_key) > 0) {
+                    throw std::runtime_error(fmt::format(
+                        "{}-th Child node [{}] first key is less than its corresponding parent node [{}] key", ind,
+                        child_node->to_string(), node->to_string()));
+                }
+                if (child_last_key.compare(parent_nth_key) > 0) {
+                    throw std::runtime_error(fmt::format(
+                        "{}-th Child node [{}] last key is greater than its corresponding parent node [{}] key", ind,
+                        child_node->to_string(), node->to_string()));
+                }
+            }
 
         } else if (!child_node->is_leaf() && !child_node->has_valid_edge()) {
             throw std::runtime_error(fmt::format("Interior Child node [{}] cannot be empty", child_node->to_string()));
         }
 
-        if(ind > 0){
-            if (previous_child->next_bnode()!= child_node->node_id())     {
-                throw std::runtime_error(fmt::format("Broken child linkage: {}-th Child node [{}] node id is not equal to previous child node [{}] next node",ind, child_node->to_string(), child_node->node_id(), previous_child->to_string()));
+        if (ind > 0) {
+            if (previous_child->next_bnode() != child_node->node_id()) {
+                throw std::runtime_error(fmt::format("Broken child linkage: {}-th Child node [{}] node id is not equal "
+                                                     "to previous child node [{}] next node",
+                                                     ind, child_node->to_string(), child_node->node_id(),
+                                                     previous_child->to_string()));
             }
-            K last_parent_key = node->get_nth_key< K >(ind-1, false /* copy */);
+            K last_parent_key = node->get_nth_key< K >(ind - 1, false /* copy */);
             K previous_child_last_key = previous_child->get_last_key< K >();
-            if(child_node->total_entries()){
-                 if (previous_child->total_entries() && child_first_key.compare(previous_child_last_key) <= 0) {
-                    throw std::runtime_error(fmt::format("Child node [{}] first key is not greater than previous child node [{}] last key",child_node->to_string(), previous_child->to_string()));
+            if (child_node->total_entries()) {
+                if (previous_child->total_entries() && child_first_key.compare(previous_child_last_key) <= 0) {
+                    throw std::runtime_error(
+                        fmt::format("Child node [{}] first key is not greater than previous child node [{}] last key",
+                                    child_node->to_string(), previous_child->to_string()));
                 }
-                if(child_first_key.compare(last_parent_key) <= 0) {
-                    throw std::runtime_error(fmt::format("Child node [{}] first key is not greater than previous key ({}-th) parent node [{}] key ",child_node->to_string(),ind-1, node->to_string()));
+                if (child_first_key.compare(last_parent_key) <= 0) {
+                    throw std::runtime_error(fmt::format(
+                        "Child node [{}] first key is not greater than previous key ({}-th) parent node [{}] key ",
+                        child_node->to_string(), ind - 1, node->to_string()));
                 }
             }
         }
 
         previous_child = child_node;
     }
-	if(node->has_valid_edge() && last_child_node->is_leaf() && last_child_node->next_bnode()!=empty_bnodeid) {
-		// If the last child node is a leaf and has a next_bnode, it cannot be a valid edge.
-		throw std::runtime_error(fmt::format("Last child node [{}] of node [{}] is the last child but has next_bnode",
-                                 last_child_node->to_string(), node->to_string()));
-	}
-	if(node->has_valid_edge() && !last_child_node->is_leaf() && !last_child_node->has_valid_edge()) {
- 		throw std::runtime_error(fmt::format("Last child node [{}] of edge node [{}] is not edge",
-                                 last_child_node->to_string(), node->to_string()));
-	}
-	if(!node->has_valid_edge() && last_child_node->is_leaf() && last_child_node->next_bnode()==empty_bnodeid){
-		throw std::runtime_error(fmt::format("node [{}] is not edge but last child node [{}] is leaf and has no next_bnode",
-                                 node->to_string(),last_child_node->to_string()));
-	}
-	if(!node->has_valid_edge() && !last_child_node->is_leaf() && last_child_node->has_valid_edge()){
-		throw std::runtime_error(fmt::format("node [{}] is not edge but last child node [{}] has valid edge",
-                                 node->to_string(), last_child_node->to_string()));
-	}
+    if (node->has_valid_edge() && last_child_node->is_leaf() && last_child_node->next_bnode() != empty_bnodeid) {
+        // If the last child node is a leaf and has a next_bnode, it cannot be a valid edge.
+        throw std::runtime_error(fmt::format("Last child node [{}] of node [{}] is the last child but has next_bnode",
+                                             last_child_node->to_string(), node->to_string()));
+    }
+    if (node->has_valid_edge() && !last_child_node->is_leaf() && !last_child_node->has_valid_edge()) {
+        throw std::runtime_error(fmt::format("Last child node [{}] of edge node [{}] is not edge",
+                                             last_child_node->to_string(), node->to_string()));
+    }
+    if (!node->has_valid_edge() && last_child_node->is_leaf() && last_child_node->next_bnode() == empty_bnodeid) {
+        throw std::runtime_error(
+            fmt::format("node [{}] is not edge but last child node [{}] is leaf and has no next_bnode",
+                        node->to_string(), last_child_node->to_string()));
+    }
+    if (!node->has_valid_edge() && !last_child_node->is_leaf() && last_child_node->has_valid_edge()) {
+        throw std::runtime_error(fmt::format("node [{}] is not edge but last child node [{}] has valid edge",
+                                             node->to_string(), last_child_node->to_string()));
+    }
 }
 
 template < typename K, typename V >
@@ -332,26 +350,34 @@ void Btree< K, V >::validate_next_node_relation(BtreeNodePtr node, BtreeNodePtr 
                                                 BtreeNodePtr last_child_node) const {
     K last_key = node->get_last_key< K >();
 
-    if (neighbor_node->total_entries() == 0 && !neighbor_node->has_valid_edge() && last_child_node &&last_child_node->next_bnode() != empty_bnodeid) {
-        throw std::runtime_error(fmt::format("neighbor [{}] has no entries nor valid edge but the last child, [{}] of the parent [{}] has next node id {}",neighbor_node->to_string(),  last_child_node->to_string(), node->to_string(), last_child_node->next_bnode()));
+    if (neighbor_node->total_entries() == 0 && !neighbor_node->has_valid_edge() && last_child_node &&
+        last_child_node->next_bnode() != empty_bnodeid) {
+        throw std::runtime_error(fmt::format("neighbor [{}] has no entries nor valid edge but the last child, [{}] of "
+                                             "the parent [{}] has next node id {}",
+                                             neighbor_node->to_string(), last_child_node->to_string(),
+                                             node->to_string(), last_child_node->next_bnode()));
     }
-    if ((neighbor_node->total_entries() != 0 || neighbor_node->has_valid_edge()) && last_child_node &&last_child_node->next_bnode() == empty_bnodeid) {
-          throw std::runtime_error(fmt::format("neighbor [{}] has entries or valid edge but the last child, [{}] of the parent [{}] has no next node id",neighbor_node->to_string(),  last_child_node->to_string(), node->to_string()));
+    if ((neighbor_node->total_entries() != 0 || neighbor_node->has_valid_edge()) && last_child_node &&
+        last_child_node->next_bnode() == empty_bnodeid) {
+        throw std::runtime_error(fmt::format(
+            "neighbor [{}] has entries or valid edge but the last child, [{}] of the parent [{}] has no next node id",
+            neighbor_node->to_string(), last_child_node->to_string(), node->to_string()));
     }
 
     if (neighbor_node->is_node_deleted()) {
-        throw std::runtime_error(fmt::format("Neighbor node [{}] is deleted " , neighbor_node->to_string()));
+        throw std::runtime_error(fmt::format("Neighbor node [{}] is deleted ", neighbor_node->to_string()));
     }
     if (neighbor_node->level() != node->level()) {
         throw std::runtime_error(fmt::format("Neighbor node [{}] level {} mismatch vs node [{}] level {}",
-                                 neighbor_node->to_string(), neighbor_node->level(), node->to_string(),
-                                 node->level()));
+                                             neighbor_node->to_string(), neighbor_node->level(), node->to_string(),
+                                             node->level()));
     }
     K neighbor_first_key = neighbor_node->get_first_key< K >();
     auto neighbor_entities = neighbor_node->total_entries();
     if (neighbor_entities && neighbor_first_key.compare(last_key) < 0) {
-        throw std::runtime_error(fmt::format("Neighbor's first key {} is not greater than node's last key {} (node=[{}], neighbor=[{}])",
-                                             neighbor_first_key.to_string(), last_key.to_string(), node->to_string(), neighbor_node->to_string()));
+        throw std::runtime_error(fmt::format(
+            "Neighbor's first key {} is not greater than node's last key {} (node=[{}], neighbor=[{}])",
+            neighbor_first_key.to_string(), last_key.to_string(), node->to_string(), neighbor_node->to_string()));
     }
     if (!node->is_leaf()) {
         if (!neighbor_node->has_valid_edge() && !neighbor_entities) {
@@ -360,14 +386,15 @@ void Btree< K, V >::validate_next_node_relation(BtreeNodePtr node, BtreeNodePtr 
         BtreeLinkInfo first_neighbor_info;
         neighbor_node->get_nth_value(0, &first_neighbor_info, false /* copy */);
         if (last_child_node->next_bnode() != first_neighbor_info.bnode_id()) {
-            throw std::runtime_error(fmt::format("Last child node's next_bnode (child=[{}]) does not match neighbor's first bnode_id (neighbor=[{}])", last_child_node->to_string(), neighbor_node->to_string()));
-
+            throw std::runtime_error(fmt::format(
+                "Last child node's next_bnode (child=[{}]) does not match neighbor's first bnode_id (neighbor=[{}])",
+                last_child_node->to_string(), neighbor_node->to_string()));
         }
     }
 }
 
-template <typename K, typename V>
-void Btree<K, V>::validate_node(const bnodeid_t& bnodeid) const {
+template < typename K, typename V >
+void Btree< K, V >::validate_node(const bnodeid_t& bnodeid) const {
     BtreeNodePtr node;
     if (auto ret = read_node_impl(bnodeid, node); ret != btree_status_t::success) {
         throw std::runtime_error(fmt::format("node read failed for bnodeid: {} reason: {}", bnodeid, ret));
@@ -376,33 +403,37 @@ void Btree<K, V>::validate_node(const bnodeid_t& bnodeid) const {
             if (node->is_node_deleted()) { return; }
             auto nentities = node->total_entries();
             if (!node->is_leaf() && !nentities && !node->has_valid_edge()) {
-				throw std::runtime_error(fmt::format("Node [{}] has no entries and no valid edge", node->to_string()));
-			}
+                throw std::runtime_error(fmt::format("Node [{}] has no entries and no valid edge", node->to_string()));
+            }
             if (node->is_leaf() && node->has_valid_edge()) {
-				 throw std::runtime_error(fmt::format("node [{}] is leaf but has valid edge", node->to_string()));
-			}
-            if(!node->validate_key_order<K>()){
-				throw std::runtime_error(fmt::format("unsorted node's entries [{}]", node->to_string()));
-			}
+                throw std::runtime_error(fmt::format("node [{}] is leaf but has valid edge", node->to_string()));
+            }
+            if (!node->validate_key_order< K >()) {
+                throw std::runtime_error(fmt::format("unsorted node's entries [{}]", node->to_string()));
+            }
 
             BtreeNodePtr last_child_node;
             validate_node_child_relation(node, last_child_node);
 
             auto neighbor_id = node->next_bnode();
             if (neighbor_id != empty_bnodeid && node->has_valid_edge()) {
-				throw std::runtime_error(fmt::format("node [{}] has valid edge but next_bnode is not empty", node->to_string()));
-			}
+                throw std::runtime_error(
+                    fmt::format("node [{}] has valid edge but next_bnode is not empty", node->to_string()));
+            }
             if (!node->is_leaf() && neighbor_id == empty_bnodeid && !node->has_valid_edge()) {
-				throw std::runtime_error(fmt::format("node [{}] is interior but has no valid edge and next_bnode is empty", node->to_string()));
-			 }
+                throw std::runtime_error(fmt::format(
+                    "node [{}] is interior but has no valid edge and next_bnode is empty", node->to_string()));
+            }
             if (bnodeid == neighbor_id) {
-			      throw std::runtime_error(fmt::format("node [{}] has next_bnode same as itself", node->to_string()));
-			}
+                throw std::runtime_error(fmt::format("node [{}] has next_bnode same as itself", node->to_string()));
+            }
 
             if (neighbor_id != empty_bnodeid) {
                 BtreeNodePtr neighbor_node;
                 if (auto ret = read_node_impl(neighbor_id, neighbor_node); ret != btree_status_t::success) {
-					throw std::runtime_error(fmt::format("reading neighbor node of [{}] failed for bnodeid: {} reason : {}", node->to_string(), neighbor_id, ret));
+                    throw std::runtime_error(
+                        fmt::format("reading neighbor node of [{}] failed for bnodeid: {} reason : {}",
+                                    node->to_string(), neighbor_id, ret));
                 }
                 validate_next_node_relation(node, neighbor_node, last_child_node);
             }
@@ -412,7 +443,6 @@ void Btree<K, V>::validate_node(const bnodeid_t& bnodeid) const {
         }
     }
 }
-
 
 template < typename K, typename V >
 void Btree< K, V >::sanity_sub_tree(bnodeid_t bnodeid) const {
@@ -471,16 +501,20 @@ void Btree< K, V >::validate_sanity_child(const BtreeNodePtr& parent_node, uint3
     }
     for (uint32_t i = 0; i < child_node->total_entries(); ++i) {
         K cur_child_key = child_node->get_nth_key< K >(i, false);
-        if(ind < parent_node->total_entries()){
-            BT_REL_ASSERT_LE(cur_child_key.compare(parent_key), 0, " child {} {}-th key is greater than its parent's {} {}-th key", child_node->to_string(), i , parent_node->to_string(), ind);
-            if(ind>0) {
-                if(cur_child_key.compare(previous_parent_key) <= 0){
-                    // there can be a transient case where a key appears in two children. When the replay is done, it should be fixed
-                    // Consider the example Parent P, children C1, C2, C3, C4. A key is deleted resulting in a merge and C3 deleted, and the same key is inserted in the current cp
-                    // Our case is that P is dirtied, C3 deleted, C4 updated and flushed. During recover, we will keep C3 and P remains the same.
-                    // Since C4 is flushed, the key that was removd and inserted will showup in C3 and C4.
-                    // After the replay post recovery, C3 should be gone and the tree is valid again.
-                    BT_LOG(DEBUG, "child {} {}-th key is less than or equal to its parent's {} {}-th key", child_node->to_string(), i, parent_node->to_string(), ind - 1);
+        if (ind < parent_node->total_entries()) {
+            BT_REL_ASSERT_LE(cur_child_key.compare(parent_key), 0,
+                             " child {} {}-th key is greater than its parent's {} {}-th key", child_node->to_string(),
+                             i, parent_node->to_string(), ind);
+            if (ind > 0) {
+                if (cur_child_key.compare(previous_parent_key) <= 0) {
+                    // there can be a transient case where a key appears in two children. When the replay is done, it
+                    // should be fixed Consider the example Parent P, children C1, C2, C3, C4. A key is deleted
+                    // resulting in a merge and C3 deleted, and the same key is inserted in the current cp Our case is
+                    // that P is dirtied, C3 deleted, C4 updated and flushed. During recover, we will keep C3 and P
+                    // remains the same. Since C4 is flushed, the key that was removd and inserted will showup in C3 and
+                    // C4. After the replay post recovery, C3 should be gone and the tree is valid again.
+                    BT_LOG(DEBUG, "child {} {}-th key is less than or equal to its parent's {} {}-th key",
+                           child_node->to_string(), i, parent_node->to_string(), ind - 1);
                 }
             }
 

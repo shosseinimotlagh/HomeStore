@@ -22,7 +22,7 @@ while getopts "v" opt; do
     esac
 done
 
-find ./src -iname '*.h' -o -iname '*.cpp' -o -iname '*.hpp' -o -iname '*.cc' | xargs clang-format -style=file -i -fallback-style=none
+find ./src -iname '*.h' -o -iname '*.cpp' -o -iname '*.hpp' -o -iname '*.cc' -o -iname '*.ipp' | xargs clang-format -style=file -i -fallback-style=none
 
 if [ $VALIDATE ]; then
     EXIT_CODE=0

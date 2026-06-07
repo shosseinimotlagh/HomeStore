@@ -456,7 +456,7 @@ public:
         const auto kb = key.serialize();
         assert(ind < this->total_entries());
         assert(kb.size() == get_nth_key_size(ind));
-        memcpy(uintptr_cast(get_nth_obj(ind)), kb.cbytes(), kb.size());
+        memcpy(reinterpret_cast< uint8_t* >(get_nth_obj(ind)), kb.cbytes(), kb.size());
     }
 
     bool has_room_for_put(btree_put_type put_type, uint32_t key_size, uint32_t value_size) const override {
@@ -535,7 +535,7 @@ protected:
         }
 
         // Create a room for a new record
-        uint8_t* rec_ptr = uintptr_cast(get_nth_record_mutable(ind));
+        uint8_t* rec_ptr = reinterpret_cast< uint8_t* >(get_nth_record_mutable(ind));
         memmove((void*)(rec_ptr + this->get_record_size()), rec_ptr,
                 (this->total_entries() - ind) * this->get_record_size());
 
@@ -660,10 +660,12 @@ protected:
     const uint8_t* offset_to_ptr(uint16_t offset) const { return this->node_data_area_const() + offset; }
 
     ///////////// Other Private Methods //////////////////
-    inline var_node_header* get_var_node_header() { return r_cast< var_node_header* >(this->node_data_area()); }
+    inline var_node_header* get_var_node_header() {
+        return reinterpret_cast< var_node_header* >(this->node_data_area());
+    }
 
     inline const var_node_header* get_var_node_header_const() const {
-        return r_cast< const var_node_header* >(this->node_data_area_const());
+        return reinterpret_cast< const var_node_header* >(this->node_data_area_const());
     }
 
     uint16_t get_arena_free_space() const {
@@ -682,13 +684,13 @@ public:
     virtual ~VarKeySizeNode() = default;
 
     uint32_t get_nth_key_size(uint32_t ind) const override {
-        return r_cast< const var_key_record* >(this->get_nth_record(ind))->m_key_len;
+        return reinterpret_cast< const var_key_record* >(this->get_nth_record(ind))->m_key_len;
     }
     uint32_t get_nth_value_size(uint32_t ind) const override { return dummy_value< V >.serialized_size(); }
     uint32_t get_record_size() const override { return sizeof(var_key_record); }
 
     void set_nth_key_len(uint8_t* rec_ptr, uint32_t key_len) override {
-        r_cast< var_key_record* >(rec_ptr)->m_key_len = key_len;
+        reinterpret_cast< var_key_record* >(rec_ptr)->m_key_len = key_len;
     }
     void set_nth_value_len(uint8_t* rec_ptr, uint32_t value_len) override {
         assert(value_len == dummy_value< V >.serialized_size());
@@ -715,7 +717,7 @@ public:
 
     uint32_t get_nth_key_size(uint32_t ind) const override { return dummy_key< K >.serialized_size(); }
     uint32_t get_nth_value_size(uint32_t ind) const override {
-        return r_cast< const var_value_record* >(this->get_nth_record(ind))->m_value_len;
+        return reinterpret_cast< const var_value_record* >(this->get_nth_record(ind))->m_value_len;
     }
     uint32_t get_record_size() const override { return sizeof(var_value_record); }
 
@@ -723,7 +725,7 @@ public:
         assert(key_len == dummy_key< K >.serialized_size());
     }
     void set_nth_value_len(uint8_t* rec_ptr, uint32_t value_len) override {
-        r_cast< var_value_record* >(rec_ptr)->m_value_len = value_len;
+        reinterpret_cast< var_value_record* >(rec_ptr)->m_value_len = value_len;
     }
 
 private:
@@ -746,18 +748,18 @@ public:
     virtual ~VarObjSizeNode() = default;
 
     uint32_t get_nth_key_size(uint32_t ind) const override {
-        return r_cast< const var_obj_record* >(this->get_nth_record(ind))->m_key_len;
+        return reinterpret_cast< const var_obj_record* >(this->get_nth_record(ind))->m_key_len;
     }
     uint32_t get_nth_value_size(uint32_t ind) const override {
-        return r_cast< const var_obj_record* >(this->get_nth_record(ind))->m_value_len;
+        return reinterpret_cast< const var_obj_record* >(this->get_nth_record(ind))->m_value_len;
     }
     uint32_t get_record_size() const override { return sizeof(var_obj_record); }
 
     void set_nth_key_len(uint8_t* rec_ptr, uint32_t key_len) override {
-        r_cast< var_obj_record* >(rec_ptr)->m_key_len = key_len;
+        reinterpret_cast< var_obj_record* >(rec_ptr)->m_key_len = key_len;
     }
     void set_nth_value_len(uint8_t* rec_ptr, uint32_t value_len) override {
-        r_cast< var_obj_record* >(rec_ptr)->m_value_len = value_len;
+        reinterpret_cast< var_obj_record* >(rec_ptr)->m_value_len = value_len;
     }
 
 private:

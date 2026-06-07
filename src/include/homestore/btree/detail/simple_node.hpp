@@ -118,7 +118,7 @@ public:
     }
 
     uint32_t move_out_to_right_by_entries(const BtreeConfig& cfg, BtreeNode& o, uint32_t nentries) override {
-        auto& other_node = s_cast< SimpleNode< K, V >& >(o);
+        auto& other_node = static_cast< SimpleNode< K, V >& >(o);
 
         // Minimum of whats to be moved out and how many slots available in other node
         nentries = std::min({nentries, this->total_entries(), other_node.get_available_entries()});
@@ -157,13 +157,13 @@ public:
     }
 
     uint32_t copy_by_size(const BtreeConfig& cfg, const BtreeNode& o, uint32_t start_idx, uint32_t size) override {
-        auto& other = s_cast< const SimpleNode< K, V >& >(o);
+        auto& other = static_cast< const SimpleNode< K, V >& >(o);
         return copy_by_entries(cfg, o, start_idx, other.num_entries_by_size(start_idx, size));
     }
 
     uint32_t copy_by_entries(const BtreeConfig& cfg, const BtreeNode& o, uint32_t start_idx,
                              uint32_t nentries) override {
-        auto& other = s_cast< const SimpleNode< K, V >& >(o);
+        auto& other = static_cast< const SimpleNode< K, V >& >(o);
 
         nentries = std::min(nentries, other.total_entries() - start_idx);
         nentries = std::min(nentries, this->get_available_entries());
@@ -397,7 +397,7 @@ public:
             RELEASE_ASSERT_EQ(this->is_leaf(), false, "setting value outside bounds on leaf node");
             DEBUG_ASSERT_EQ(b.size(), sizeof(BtreeLinkInfo::bnode_link_info),
                             "Invalid value size being set for non-leaf node");
-            this->set_edge_info(*r_cast< BtreeLinkInfo::bnode_link_info const* >(b.cbytes()));
+            this->set_edge_info(*reinterpret_cast< BtreeLinkInfo::bnode_link_info const* >(b.cbytes()));
         } else {
             uint8_t* entry = this->node_data_area() + (get_nth_obj_size(ind) * ind) + get_nth_key_size(ind);
             std::memcpy(entry, b.cbytes(), b.size());

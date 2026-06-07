@@ -386,7 +386,7 @@ shared< nuraft_mesg::mesg_state_mgr > RaftReplService::create_state_mgr(int32_t 
 }
 
 async_result< shared< repl_dev > > RaftReplService::create_repl_dev(group_id_t group_id,
-                                                                      std::set< replica_id_t > const& members) {
+                                                                    std::set< replica_id_t > const& members) {
     if (is_stopping()) return make_async_error< shared< repl_dev > >(ReplServiceError::STOPPING);
     init_req_counter counter(pending_request_num);
     // TODO: All operations are made sync here for convenience to caller. However, we should attempt to make this async
@@ -516,9 +516,9 @@ void RaftReplService::load_repl_dev(sisl::byte_view const& buf, meta_blk* meta_c
 // a background reaper thread helps periodically check the member_in replication status, after in_member has caught up,
 // will trigger replDev complete_replace_member.
 async_status RaftReplService::replace_member(group_id_t group_id, std::string& task_id,
-                                                  const replica_member_info& member_out,
-                                                  const replica_member_info& member_in, uint32_t commit_quorum,
-                                                  uint64_t trace_id) const {
+                                             const replica_member_info& member_out,
+                                             const replica_member_info& member_in, uint32_t commit_quorum,
+                                             uint64_t trace_id) const {
     if (is_stopping()) co_return std::unexpected(ReplServiceError::STOPPING);
     init_req_counter counter(pending_request_num);
     auto rdev_result = get_repl_dev(group_id);
@@ -530,9 +530,8 @@ async_status RaftReplService::replace_member(group_id_t group_id, std::string& t
     co_return status{std::monostate{}};
 }
 
-async_status RaftReplService::flip_learner_flag(group_id_t group_id, const replica_member_info& member,
-                                                     bool target, uint32_t commit_quorum, bool wait_and_verify,
-                                                     uint64_t trace_id) const {
+async_status RaftReplService::flip_learner_flag(group_id_t group_id, const replica_member_info& member, bool target,
+                                                uint32_t commit_quorum, bool wait_and_verify, uint64_t trace_id) const {
     if (is_stopping()) co_return std::unexpected(ReplServiceError::STOPPING);
     init_req_counter counter(pending_request_num);
     auto rdev_result = get_repl_dev(group_id);
@@ -543,9 +542,8 @@ async_status RaftReplService::flip_learner_flag(group_id_t group_id, const repli
     co_return status{std::monostate{}};
 }
 
-async_status RaftReplService::remove_member(group_id_t group_id, const replica_id_t& member,
-                                                 uint32_t commit_quorum, bool wait_and_verify,
-                                                 uint64_t trace_id) const {
+async_status RaftReplService::remove_member(group_id_t group_id, const replica_id_t& member, uint32_t commit_quorum,
+                                            bool wait_and_verify, uint64_t trace_id) const {
     if (is_stopping()) co_return std::unexpected(ReplServiceError::STOPPING);
     init_req_counter counter(pending_request_num);
     auto rdev_result = get_repl_dev(group_id);
@@ -557,7 +555,7 @@ async_status RaftReplService::remove_member(group_id_t group_id, const replica_i
 }
 
 async_status RaftReplService::clean_replace_member_task(group_id_t group_id, const std::string& task_id,
-                                                             uint32_t commit_quorum, uint64_t trace_id) const {
+                                                        uint32_t commit_quorum, uint64_t trace_id) const {
     if (is_stopping()) co_return std::unexpected(ReplServiceError::STOPPING);
     init_req_counter counter(pending_request_num);
     auto rdev_result = get_repl_dev(group_id);
@@ -632,7 +630,10 @@ void RaftReplService::start_repl_service_timers() {
                        HS_DYNAMIC_CONFIG(generic.repl_dev_cleanup_interval_sec));
             m_rdev_gc_timer_hdl = iomanager.schedule_thread_timer(
                 HS_DYNAMIC_CONFIG(generic.repl_dev_cleanup_interval_sec) * 1000 * 1000 * 1000, true /* recurring */,
-                nullptr, [this](void*) {
+                nullptr, [this](void*, uint64_t exp_count) {
+                    if (exp_count > 1) {
+                        LOGINFOMOD(replication, "Reaper Thread: GC timer expired {} times, running once", exp_count);
+                    }
                     LOGDEBUGMOD(replication, "Reaper Thread: Doing GC");
                     gc_repl_reqs();
                     gc_repl_devs();
@@ -641,18 +642,34 @@ void RaftReplService::start_repl_service_timers() {
             // Check for queued fetches at the minimum every second
             uint64_t interval_ns =
                 std::min(HS_DYNAMIC_CONFIG(consensus.wait_data_write_timer_ms) * 1000 * 1000, 1ul * 1000 * 1000 * 1000);
-            m_rdev_fetch_timer_hdl = iomanager.schedule_thread_timer(interval_ns, true /* recurring */, nullptr,
-                                                                     [this](void*) { fetch_pending_data(); });
+            m_rdev_fetch_timer_hdl = iomanager.schedule_thread_timer(
+                interval_ns, true /* recurring */, nullptr, [this](void*, uint64_t exp_count) {
+                    if (exp_count > 1) {
+                        LOGINFOMOD(replication, "fetch pending data timer expired {} times, running once", exp_count);
+                    }
+                    fetch_pending_data();
+                });
 
             // Flush durable commit lsns to superblock
             // FIXUP: what is the best value for flush_durable_commit_interval_ms?
             m_flush_durable_commit_timer_hdl = iomanager.schedule_thread_timer(
                 HS_DYNAMIC_CONFIG(consensus.flush_durable_commit_interval_ms) * 1000 * 1000, true /* recurring */,
-                nullptr, [this](void*) { flush_durable_commit_lsn(); });
+                nullptr, [this](void*, uint64_t exp_count) {
+                    if (exp_count > 1) {
+                        LOGINFOMOD(replication, "flush durable commit timer expired {} times, running once", exp_count);
+                    }
+                    flush_durable_commit_lsn();
+                });
 
             m_replace_member_sync_check_timer_hdl = iomanager.schedule_thread_timer(
                 HS_DYNAMIC_CONFIG(consensus.replace_member_sync_check_interval_ms) * 1000 * 1000, true /* recurring */,
-                nullptr, [this](void*) { monitor_replace_member_replication_status(); });
+                nullptr, [this](void*, uint64_t exp_count) {
+                    if (exp_count > 1) {
+                        LOGINFOMOD(replication, "replace member sync check timer expired {} times, running once",
+                                   exp_count);
+                    }
+                    monitor_replace_member_replication_status();
+                });
             latch.count_down();
         }
     });

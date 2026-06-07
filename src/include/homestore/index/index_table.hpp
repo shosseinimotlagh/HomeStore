@@ -23,7 +23,6 @@
 #include <homestore/index_service.hpp>
 #include <homestore/fault_cmt_service.hpp>
 #include <homestore/checkpoint/cp_mgr.hpp>
-#include "common/coro_helpers.hpp" // detail::sync_get (block on the forced CP flush; transitional path)
 #include <homestore/index/wb_cache_base.hpp>
 #include <homestore/btree/detail/btree_internal.hpp>
 #include <iomgr/iomgr_flip.hpp>
@@ -133,8 +132,8 @@ public:
         return true;
     }
 
-    btree_status_t destroy() override {
-        if (is_stopping()) return btree_status_t::stopping;
+    sisl::async::task< btree_status_t > destroy() override {
+        if (is_stopping()) co_return btree_status_t::stopping;
         incr_pending_request_num();
         auto chunk_selector{hs()->index_service().get_chunk_selector()};
         if (!chunk_selector) {
@@ -147,11 +146,15 @@ public:
         // If the process crashes after this point, recovery will not replay the
         // old journal (CP is complete), so repair_index_node will never be called
         // for an ordinal whose superblock no longer exists.
-        detail::sync_get(cp_mgr().trigger_cp_flush(true /* force */));
+        //
+        // co_await (rather than blocking sync_wait): the flush's per-consumer IO runs on the iomgr worker
+        // reactors, so if destroy() is invoked on a worker reactor, suspending here yields that reactor back
+        // to its iomgr loop to service the flush -- a blocking wait would deadlock (parked reactor can't flush).
+        std::ignore = co_await cp_mgr().trigger_cp_flush(true /* force */);
         m_sb.destroy();
         m_sb_buffer->m_valid = false;
         decr_pending_request_num();
-        return btree_status_t::success;
+        co_return btree_status_t::success;
     }
 
     uuid_t uuid() const override { return m_sb->uuid; }
@@ -302,7 +305,7 @@ protected:
     }
 
     btree_status_t write_node_impl(const BtreeNodePtr& node, void* context) override {
-        auto cp_ctx = r_cast< CPContext* >(context);
+        auto cp_ctx = reinterpret_cast< CPContext* >(context);
         auto idx_node = static_cast< IndexBtreeNode* >(node.get());
 
         node->set_checksum();
@@ -332,12 +335,12 @@ protected:
     btree_status_t transact_nodes(const BtreeNodeList& new_nodes, const BtreeNodeList& freed_nodes,
                                   const BtreeNodePtr& left_child_node, const BtreeNodePtr& parent_node,
                                   void* context) override {
-        CPContext* cp_ctx = r_cast< CPContext* >(context);
+        CPContext* cp_ctx = reinterpret_cast< CPContext* >(context);
 
         IndexBufferPtrList new_node_bufs;
         for (const auto& right_child_node : new_nodes) {
             write_node_impl(right_child_node, context);
-            new_node_bufs.push_back(s_cast< IndexBtreeNode* >(right_child_node.get())->m_idx_buf);
+            new_node_bufs.push_back(static_cast< IndexBtreeNode* >(right_child_node.get())->m_idx_buf);
         }
         write_node_impl(left_child_node, context);
         // during recovery it is possible that there is no parent_node
@@ -345,13 +348,13 @@ protected:
 
         IndexBufferPtrList freed_node_bufs;
         for (const auto& freed_node : freed_nodes) {
-            freed_node_bufs.push_back(s_cast< IndexBtreeNode* >(freed_node.get())->m_idx_buf);
+            freed_node_bufs.push_back(static_cast< IndexBtreeNode* >(freed_node.get())->m_idx_buf);
             this->free_node(freed_node, locktype_t::WRITE, context);
         }
 
         wb_cache().transact_bufs(
-            ordinal(), parent_node.get() ? s_cast< IndexBtreeNode* >(parent_node.get())->m_idx_buf : nullptr,
-            s_cast< IndexBtreeNode* >(left_child_node.get())->m_idx_buf, new_node_bufs, freed_node_bufs, cp_ctx);
+            ordinal(), parent_node.get() ? static_cast< IndexBtreeNode* >(parent_node.get())->m_idx_buf : nullptr,
+            static_cast< IndexBtreeNode* >(left_child_node.get())->m_idx_buf, new_node_bufs, freed_node_bufs, cp_ctx);
         return btree_status_t::success;
     }
 
@@ -370,14 +373,14 @@ protected:
 
     btree_status_t refresh_node(const BtreeNodePtr& node, bool for_read_modify_write, void* context) const override {
         if (context == nullptr || !for_read_modify_write) { return btree_status_t::success; }
-        return wb_cache().get_writable_buf(node, r_cast< CPContext* >(context)) ? btree_status_t::success
-                                                                                : btree_status_t::cp_mismatch;
+        return wb_cache().get_writable_buf(node, reinterpret_cast< CPContext* >(context)) ? btree_status_t::success
+                                                                                          : btree_status_t::cp_mismatch;
     }
 
     void free_node_impl(const BtreeNodePtr& node, void* context) override {
         auto n = static_cast< IndexBtreeNode* >(node.get());
         n->m_idx_buf->m_node_level = node->level();
-        wb_cache().free_buf(n->m_idx_buf, r_cast< CPContext* >(context));
+        wb_cache().free_buf(n->m_idx_buf, reinterpret_cast< CPContext* >(context));
     }
 
     btree_status_t on_root_changed(BtreeNodePtr const& new_root, void* context) override {
@@ -391,13 +394,13 @@ protected:
         m_sb->total_leaf_nodes = this->m_total_leaf_nodes;
         std::tie(m_sb->total_interior_nodes, m_sb->total_leaf_nodes) = this->get_num_nodes();
 
-        if (!wb_cache().refresh_meta_buf(m_sb_buffer, r_cast< CPContext* >(context))) {
+        if (!wb_cache().refresh_meta_buf(m_sb_buffer, reinterpret_cast< CPContext* >(context))) {
             LOGTRACEMOD(wbcache, "CP mismatch error - discard transact for meta node");
             return btree_status_t::cp_mismatch;
         }
 
         auto& root_buf = static_cast< IndexBtreeNode* >(new_root.get())->m_idx_buf;
-        wb_cache().transact_bufs(ordinal(), m_sb_buffer, root_buf, {}, {}, r_cast< CPContext* >(context));
+        wb_cache().transact_bufs(ordinal(), m_sb_buffer, root_buf, {}, {}, reinterpret_cast< CPContext* >(context));
         return btree_status_t::success;
     }
 

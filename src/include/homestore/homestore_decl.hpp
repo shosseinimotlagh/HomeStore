@@ -64,15 +64,17 @@ constexpr uint32_t BLK_NUM_BITS{32};
 constexpr uint32_t NBLKS_BITS{8};
 constexpr uint32_t CHUNK_NUM_BITS{8};
 constexpr uint32_t BLKID_SIZE_BITS{BLK_NUM_BITS + NBLKS_BITS + CHUNK_NUM_BITS};
-constexpr uint64_t MAX_CHUNK_ID{((uint64_cast(1) << CHUNK_NUM_BITS) - 2)}; // one less to indicate invalid chunks
+constexpr uint64_t MAX_CHUNK_ID{
+    ((static_cast< uint64_t >(1) << CHUNK_NUM_BITS) - 2)}; // one less to indicate invalid chunks
 constexpr uint64_t BLKID_SIZE{(BLKID_SIZE_BITS / 8) + (((BLKID_SIZE_BITS % 8) != 0) ? 1 : 0)};
 constexpr uint32_t BLKS_PER_PORTION{1024};
 constexpr uint32_t TOTAL_SEGMENTS{8};
-constexpr uint64_t MAX_BLK_NUM_BITS_PER_CHUNK{((uint64_cast(1) << BLK_NUM_BITS) - 1)};
+constexpr uint64_t MAX_BLK_NUM_BITS_PER_CHUNK{((static_cast< uint64_t >(1) << BLK_NUM_BITS) - 1)};
 
 inline uint64_t MIN_DATA_CHUNK_SIZE(uint32_t blk_size) { return blk_size * BLKS_PER_PORTION * TOTAL_SEGMENTS; }
 inline uint64_t MAX_DATA_CHUNK_SIZE(uint32_t blk_size) {
-    return uint64_cast(sisl::round_down((MAX_BLK_NUM_BITS_PER_CHUNK * blk_size), MIN_DATA_CHUNK_SIZE(blk_size)));
+    return static_cast< uint64_t >(
+        sisl::round_down((MAX_BLK_NUM_BITS_PER_CHUNK * blk_size), MIN_DATA_CHUNK_SIZE(blk_size)));
 } // 16 TB
 
 constexpr uint32_t MAX_CHUNKS{128};

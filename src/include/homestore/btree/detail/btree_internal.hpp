@@ -276,7 +276,7 @@ public:
         m_suggested_min_size = (uint32_t)(m_node_data_size * m_suggested_min_pct) / 100;
     }
 
-    uint32_t split_size(uint32_t filled_size) const { return uint32_cast(filled_size * m_split_pct) / 100; }
+    uint32_t split_size(uint32_t filled_size) const { return static_cast< uint32_t >(filled_size * m_split_pct) / 100; }
     uint32_t ideal_fill_size() const { return m_ideal_fill_size; }
     uint32_t suggested_min_size() const { return m_suggested_min_size; }
     uint32_t node_data_size() const { return m_node_data_size; }

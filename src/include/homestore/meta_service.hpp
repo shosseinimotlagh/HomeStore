@@ -80,14 +80,14 @@ struct meta_vdev_context;
 class meta_blk_service {
 private:
     static bool s_self_recover;
-    std::shared_ptr< VirtualDev > m_sb_vdev; // super block vdev
-    std::mutex m_meta_mtx;                   // mutex to access to meta_map;
-    std::mutex m_shutdown_mtx;               // protects concurrent operations between recover and shutdown;
-    meta_blk_map_t m_meta_blks;              // subsystem type to meta blk map;
-    ovf_hdr_map_t m_ovf_blk_hdrs;            // ovf blk map;
-    client_info_map_t m_sub_info;            // map of callbacks
+    std::shared_ptr< VirtualDev > m_sb_vdev;  // super block vdev
+    std::mutex m_meta_mtx;                    // mutex to access to meta_map;
+    std::mutex m_shutdown_mtx;                // protects concurrent operations between recover and shutdown;
+    meta_blk_map_t m_meta_blks;               // subsystem type to meta blk map;
+    ovf_hdr_map_t m_ovf_blk_hdrs;             // ovf blk map;
+    client_info_map_t m_sub_info;             // map of callbacks
     std::unique_ptr< blk_id > m_last_mblk_id; // last meta blk;
-    meta_blk_sb* m_ssb{nullptr};             // meta super super blk;
+    meta_blk_sb* m_ssb{nullptr};              // meta super super blk;
     sisl::blob m_compress_info;
     MetablkMetrics m_metrics;
     bool m_inited{false};

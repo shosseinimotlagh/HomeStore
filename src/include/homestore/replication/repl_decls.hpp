@@ -62,9 +62,7 @@ ENUM(ReplaceMemberStatus, int32_t,
 class repl_error_category : public std::error_category {
 public:
     const char* name() const noexcept override { return "homestore.replication"; }
-    std::string message(int ev) const override {
-        return std::string{enum_name(static_cast< ReplServiceError >(ev))};
-    }
+    std::string message(int ev) const override { return std::string{enum_name(static_cast< ReplServiceError >(ev))}; }
 };
 inline std::error_category const& repl_error_category_inst() noexcept {
     static repl_error_category inst;

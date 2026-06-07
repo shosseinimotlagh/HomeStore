@@ -69,14 +69,15 @@ public:
         m_meta_blk = mblk;
         m_raw_buf = meta_service().is_aligned_buf_needed(buf.size()) ? buf.extract(meta_service().align_size())
                                                                      : buf.extract(0);
-        m_sb = r_cast< T* >(m_raw_buf->bytes());
+        m_sb = reinterpret_cast< T* >(m_raw_buf->bytes());
         return m_sb;
     }
 
     T* create(uint32_t size = sizeof(T)) {
         if (meta_service().is_aligned_buf_needed(size)) {
             auto al_sz = meta_service().align_size();
-            m_raw_buf = sisl::make_byte_array(uint32_cast(sisl::round_up(size, al_sz)), al_sz, sisl::buftag::metablk);
+            m_raw_buf = sisl::make_byte_array(static_cast< uint32_t >(sisl::round_up(size, al_sz)), al_sz,
+                                              sisl::buftag::metablk);
         } else {
             m_raw_buf = sisl::make_byte_array(size, 0, sisl::buftag::metablk);
         }
@@ -87,7 +88,7 @@ public:
     T* resize(uint32_t size) {
         if (meta_service().is_aligned_buf_needed(size)) {
             auto al_sz = meta_service().align_size();
-            m_raw_buf->buf_realloc(uint32_cast(sisl::round_up(size, al_sz)), al_sz, sisl::buftag::metablk);
+            m_raw_buf->buf_realloc(static_cast< uint32_t >(sisl::round_up(size, al_sz)), al_sz, sisl::buftag::metablk);
         } else {
             m_raw_buf->buf_realloc(size, 0, sisl::buftag::metablk);
         }
@@ -155,7 +156,7 @@ public:
 
     nlohmann::json& load(const sisl::byte_view& buf, struct meta_blk* mblk) {
         m_meta_blk = mblk;
-        std::string_view const b{c_charptr_cast(buf.bytes()), buf.size()};
+        std::string_view const b{reinterpret_cast< char const* >(buf.bytes()), buf.size()};
 
         try {
             m_json_sb = nlohmann::json::from_msgpack(b);
@@ -194,7 +195,7 @@ public:
             std::memcpy(buffer.bytes(), packed_data.data(), size);
             do_write(buffer);
         } else {
-            do_write(sisl::blob{r_cast< uint8_t const* >(packed_data.data()), uint32_cast(size)});
+            do_write(sisl::blob{reinterpret_cast< uint8_t const* >(packed_data.data()), static_cast< uint32_t >(size)});
         }
     }
 

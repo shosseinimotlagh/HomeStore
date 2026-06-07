@@ -160,7 +160,7 @@ struct repl_req_ctx : public boost::intrusive_ref_counter< repl_req_ctx, boost::
     friend class SoloReplDev;
 
 public:
-    repl_req_ctx() { m_start_time = Clock::now(); }
+    repl_req_ctx() { m_start_time = sisl::Clock::now(); }
     virtual ~repl_req_ctx();
     ReplServiceError init(repl_key rkey, journal_type_t op_code, bool is_proposer, sisl::blob const& user_header,
                           sisl::blob const& key, uint32_t data_size, cshared< repl_dev_listener >& listener);
@@ -191,10 +191,10 @@ public:
     const char* data() const {
         DEBUG_ASSERT(m_data != nullptr,
                      "m_data is nullptr, use before save_pushed/fetched_data or after release_data()");
-        return r_cast< const char* >(m_data);
+        return reinterpret_cast< const char* >(m_data);
     }
     repl_req_state_t state() const { return repl_req_state_t(m_state.load()); }
-    bool has_state(repl_req_state_t s) const { return m_state.load() & uint32_cast(s); }
+    bool has_state(repl_req_state_t s) const { return m_state.load() & static_cast< uint32_t >(s); }
     repl_journal_entry const* journal_entry() const { return m_journal_entry; }
     uint32_t journal_entry_size() const;
     uint32_t blkids_serialized_size() const;
@@ -207,8 +207,8 @@ public:
     std::string to_string() const;
     std::string to_compact_string() const;
     std::string blkids_to_string() const;
-    Clock::time_point created_time() const { return m_start_time; }
-    void set_created_time() { m_start_time = Clock::now(); }
+    sisl::Clock::time_point created_time() const { return m_start_time; }
+    void set_created_time() { m_start_time = sisl::Clock::now(); }
     bool is_expired() const;
 
     /////////////////////// All Modifiers methods //////////////////
@@ -281,7 +281,7 @@ private:
     sisl::blob m_key;                                          // User supplied key for this req
     int64_t m_lsn{-1};                                         // Lsn for this replication req
     bool m_is_proposer{false};                                 // Is the repl_req proposed by this node
-    Clock::time_point m_start_time;                            // Start time of the request
+    sisl::Clock::time_point m_start_time;                      // Start time of the request
     journal_type_t m_op_code{journal_type_t::HS_DATA_INLINED}; // Operation code for this request
     std::atomic< bool > m_is_volatile{true};                   // Is the log still in memory and not flushed to disk yet
 
@@ -289,7 +289,7 @@ private:
     static inline multi_blk_id dummy_blkid;
     std::vector< multi_blk_id > m_local_blkids; // Local blk_id for the data
     remote_blk_id m_remote_blkid;               // Corresponding remote blkid for the data
-    uint8_t const* m_data;                    // Raw data pointer containing the actual data
+    uint8_t const* m_data;                      // Raw data pointer containing the actual data
 
     /////////////// Journal/Buf related section /////////////////
     std::variant< std::unique_ptr< uint8_t[] >, raft_buf_ptr_t > m_journal_buf; // Buf for the journal entry
@@ -298,7 +298,8 @@ private:
     nuraft::ptr< nuraft::log_entry > m_lentry;
 
     /////////////// Replication state related section /////////////////
-    std::atomic< uint32_t > m_state{uint32_cast(repl_req_state_t::INIT)}; // State of the replication request
+    std::atomic< uint32_t > m_state{
+        static_cast< uint32_t >(repl_req_state_t::INIT)}; // State of the replication request
 
     /////////////// Communication packet/builder section /////////////////
     flatbuffers::FlatBufferBuilder m_fb_builder;
@@ -557,8 +558,9 @@ public:
     /// into that batch (the token submits on destruction).
     /// @return A Future with std::error_code to notify if it has successfully read the data or any error code in case
     /// of failure
-    virtual sisl::async::task< iomgr::io_result > async_read(multi_blk_id const& blkid, sisl::sg_list& sgs, uint32_t size,
-                                                             io_batch* batch = nullptr, trace_id_t tid = 0) = 0;
+    virtual sisl::async::task< iomgr::io_result > async_read(multi_blk_id const& blkid, sisl::sg_list& sgs,
+                                                             uint32_t size, io_batch* batch = nullptr,
+                                                             trace_id_t tid = 0) = 0;
 
     /// @brief After data is replicated and on_commit to the listener is called. the blkids can be freed.
     ///

@@ -51,13 +51,14 @@ void Btree< K, V >::set_root_node_info(const BtreeLinkInfo& info) {
 }
 
 template < typename K, typename V >
-uint16_t Btree< K, V >::get_btree_depth() const {return m_btree_depth;}
-
-template < typename K, typename V >
-std::pair<uint64_t,uint64_t> Btree< K, V >::get_num_nodes() const {
-    return {m_total_interior_nodes, m_total_leaf_nodes};
+uint16_t Btree< K, V >::get_btree_depth() const {
+    return m_btree_depth;
 }
 
+template < typename K, typename V >
+std::pair< uint64_t, uint64_t > Btree< K, V >::get_num_nodes() const {
+    return {m_total_interior_nodes, m_total_leaf_nodes};
+}
 
 template < typename K, typename V >
 std::pair< btree_status_t, uint64_t > Btree< K, V >::destroy_btree(void* context) {

@@ -90,7 +90,7 @@ struct CP {
     std::array< std::unique_ptr< CPContext >, (size_t)cp_consumer_t::SENTINEL > m_contexts;
     // Broadcast completion for everyone who triggered this CP (assigned in CPManager::do_trigger_cp_flush).
     std::shared_ptr< sisl::async::shared_awaitable< bool > > m_comp;
-    Clock::time_point m_cp_start_time;
+    sisl::Clock::time_point m_cp_start_time;
 #ifdef _PRERELEASE
     std::atomic< bool > m_abrupt_cp{false};
 #endif
