@@ -4,11 +4,11 @@
 [![CodeCov](https://codecov.io/gh/eBay/homestore/branch/master/graph/badge.svg)](https://codecov.io/gh/eBay/homestore)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
-> A modern storage engine for Linux - crash-consistent storage services over a C++23 coroutine, run-to-completion I/O stack.
+> A modern storage engine for Linux - crash-consistent storage services over a C++23 coroutine, non-blocking-reactor I/O stack.
 
 HomeStore is a generic **storage engine** on which different storage solutions - Block, K/V, Object, or
 Database - are built. It hands an application a small set of composable, crash-resilient **services**
-(metadata, index, data, log, replication) and runs them with **run-to-completion** async I/O on
+(metadata, index, data, log, replication) and runs them with **non-blocking** async I/O on
 [IOManager](https://github.com/eBay/IOManager) reactors, so a storage solution never hands work off to a
 separate thread pool. A reference Object solution is [HomeObject](https://github.com/eBay/HomeObject).
 
@@ -19,8 +19,10 @@ composed on the sisl `async` substrate over [NVIDIA stdexec](https://github.com/
 
 - **Composable services** - bring up only what a solution needs: `with_index_service`,
   `with_log_service`, `with_data_service`, `with_repl_data_service`, `with_fault_containment`.
-- **Run-to-completion I/O** - the device layer drives `io_uring` through IOManager reactors; devices on
-  the same reactor interact without locks, with no executor queue or thread hop.
+- **Non-blocking, reactor-local I/O** - the device layer drives `io_uring` through IOManager reactors;
+  the reactor never blocks, and devices on the same reactor interact without locks — no executor queue or
+  thread hop. (A `co_await` is still a suspension point: state is stable across a synchronous segment, not
+  across an await.)
 - **Coroutine data path** - `BlkDataService` / `ReplDev` reads and writes are awaitables; `co_await`
   yields an `iomgr::io_result` (`std::expected<size_t, std::error_condition>`).
 - **Replication** - replicated devices over Raft via [nuraft_mesg](https://github.com/eBay/nuraft_mesg),
@@ -116,7 +118,7 @@ HomeStore/
    ├─ CPManager ── consistent checkpoints across services
         │   data/replication paths: co_await → iomgr::io_result
         ▼
-   IOManager v13 reactors ── io_uring drive backend (run-to-completion)
+   IOManager v13 reactors ── io_uring drive backend (non-blocking)
         ▼
    block devices / files
 ```
@@ -240,7 +242,7 @@ conan build -s:h build_type=Debug --build missing .
 
 ### Core
 
-- **[IOManager](https://github.com/eBay/IOManager)** (v13+) - run-to-completion reactors and the
+- **[IOManager](https://github.com/eBay/IOManager)** (v13+) - non-blocking reactors and the
   `io_uring` coroutine drive path (`iomgr::io_result`).
 - **[sisl](https://github.com/eBay/sisl)** (v14+) - logging, options, metrics, the `async` coroutine
   substrate, and FDS containers.
