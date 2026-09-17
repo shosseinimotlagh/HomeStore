@@ -23,6 +23,7 @@
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <shared_mutex>
 #include <sstream>
 #include <string>
 #include <type_traits>
@@ -221,6 +222,7 @@ public:
      *  2. Whenever cache state is changed.
      */
     std::mutex m_mtx;
+    mutable std::shared_mutex m_mem_mtx; // protects m_mem lifetime: shared for readers, exclusive for set_memvec
     cache_buf_state m_state;
 
 #ifndef NDEBUG
@@ -302,14 +304,15 @@ public:
     uint32_t get_data_offset() const { return m_data_offset; }
 
     bool update_missing_piece(const uint32_t offset, const uint32_t size, uint8_t* const ptr) {
-        const bool inserted{get_memvec().update_missing_piece(m_data_offset + offset, size, ptr, [this]() { init(); })};
+        auto mvec{get_memvec_intrusive()};
+        const bool inserted{mvec->update_missing_piece(m_data_offset + offset, size, ptr, [this]() { init(); })};
         return inserted;
     }
 
     uint32_t insert_missing_pieces(const uint32_t offset, const uint32_t size_to_read,
                                    std::vector< std::pair< uint32_t, uint32_t > >& missing_mp) {
-        const uint32_t inserted_size{
-            get_memvec().insert_missing_pieces(m_data_offset + offset, size_to_read, missing_mp)};
+        auto mvec{get_memvec_intrusive()};
+        const uint32_t inserted_size{mvec->insert_missing_pieces(m_data_offset + offset, size_to_read, missing_mp)};
         /* it should return a relative offset */
         for (auto& missing_mp : missing_mp) {
             assert(missing_mp.first >= m_data_offset);
@@ -325,6 +328,7 @@ public:
 
     void set_memvec(boost::intrusive_ptr< homeds::MemVector > vec, const uint32_t offset, const uint32_t size) {
         HS_DBG_ASSERT_LE(size, UINT16_MAX);
+        std::unique_lock< std::shared_mutex > lk{m_mem_mtx};
         m_mem = std::move(vec);
         m_data_offset = offset;
         m_cache_size = size;
@@ -348,15 +352,17 @@ public:
     }
 
     boost::intrusive_ptr< homeds::MemVector > get_memvec_intrusive() const {
+        std::shared_lock< std::shared_mutex > lk{m_mem_mtx};
         assert(m_mem != nullptr);
-        return m_mem;
+        return m_mem; // refcount bumped while lock held — safe against concurrent set_memvec
     }
 
     sisl::blob at_offset(const uint32_t offset) const {
+        auto mvec{get_memvec_intrusive()};
         sisl::blob b;
         b.bytes = nullptr;
         b.size = 0;
-        get_memvec().get(&b, m_data_offset + offset);
+        mvec->get(&b, m_data_offset + offset);
         return b;
     }
 
