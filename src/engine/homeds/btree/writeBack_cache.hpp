@@ -369,7 +369,8 @@ public:
         auto mem{hs_utils::iobuf_alloc(bn->get_cache_size(), sisl::buftag::btree_node,
                                        m_blkstore->get_vdev()->get_align_size())};
         sisl::blob outb;
-        (bn->get_memvec()).get(&outb);
+        auto mvec_snap{bn->get_memvec_intrusive()};
+        mvec_snap->get(&outb);
         std::memcpy(static_cast< void* >(mem), static_cast< const void* >(outb.bytes), outb.size);
 
         // create a new mem vec
