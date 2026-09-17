@@ -23,7 +23,7 @@
 #include <limits>
 #include <memory>
 #include <mutex>
-#include <shared_mutex>
+#include <folly/SharedMutex.h>
 #include <sstream>
 #include <string>
 #include <type_traits>
@@ -222,7 +222,7 @@ public:
      *  2. Whenever cache state is changed.
      */
     std::mutex m_mtx;
-    mutable std::shared_mutex m_mem_mtx; // protects m_mem lifetime: shared for readers, exclusive for set_memvec
+    mutable folly::SharedMutexReadPriority m_mem_mtx; // protects m_mem lifetime: shared for readers, exclusive for set_memvec
     cache_buf_state m_state;
 
 #ifndef NDEBUG
@@ -328,7 +328,7 @@ public:
 
     void set_memvec(boost::intrusive_ptr< homeds::MemVector > vec, const uint32_t offset, const uint32_t size) {
         HS_DBG_ASSERT_LE(size, UINT16_MAX);
-        std::unique_lock< std::shared_mutex > lk{m_mem_mtx};
+        std::unique_lock< folly::SharedMutexReadPriority > lk{m_mem_mtx};
         m_mem = std::move(vec);
         m_data_offset = offset;
         m_cache_size = size;
@@ -352,7 +352,7 @@ public:
     }
 
     boost::intrusive_ptr< homeds::MemVector > get_memvec_intrusive() const {
-        std::shared_lock< std::shared_mutex > lk{m_mem_mtx};
+        std::shared_lock< folly::SharedMutexReadPriority > lk{m_mem_mtx};
         assert(m_mem != nullptr);
         return m_mem; // refcount bumped while lock held — safe against concurrent set_memvec
     }
