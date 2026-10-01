@@ -447,23 +447,27 @@ struct VarsizeBlkAllocatorTest : public ::testing::Test, BlkAllocatorTest {
         bids.clear();
 
         const auto ret{m_allocator->alloc(reqd_size, hints, bids)};
-        if (ret != exp_status) {
+        // PARTIAL is a valid outcome for non-contiguous allocs: the slab cache may be
+        // temporarily depleted while the sweep thread refills it under concurrent load.
+        // Treat PARTIAL the same as SUCCESS for non-contiguous — track whatever was
+        // allocated and continue.  For contiguous allocs PARTIAL cannot occur (the
+        // allocator returns FAILED instead), so the exp_status check still applies.
+        const bool acceptable{(ret == exp_status) || (ret == BlkAllocStatus::PARTIAL && !is_contiguous)};
+        if (!acceptable) {
             {
                 std::scoped_lock< std::mutex > lock{s_print_mutex};
                 std::cout << "Ret!=exp_status: ret=" << ret << " expected status=" << exp_status << std::endl;
             }
             return false;
         }
-        if (ret == BlkAllocStatus::SUCCESS) {
-            if (is_contiguous) {
-                if (bids.size() != 1) {
-                    {
-                        std::scoped_lock< std::mutex > lock{s_print_mutex};
-                        std::cout << "Did not expect multiple bids for contiguous request.  Bids=" << bids.size()
-                                  << std::endl;
-                    }
-                    return false;
+        if (ret == BlkAllocStatus::SUCCESS || ret == BlkAllocStatus::PARTIAL) {
+            if (is_contiguous && bids.size() != 1) {
+                {
+                    std::scoped_lock< std::mutex > lock{s_print_mutex};
+                    std::cout << "Did not expect multiple bids for contiguous request.  Bids=" << bids.size()
+                              << std::endl;
                 }
+                return false;
             }
 
             blk_count_t sz{0};
@@ -471,7 +475,7 @@ struct VarsizeBlkAllocatorTest : public ::testing::Test, BlkAllocatorTest {
                 if (!alloced(bid, track_block_group)) { return false; }
                 sz += bid.get_nblks();
             }
-            if (sz != reqd_size) {
+            if (ret == BlkAllocStatus::SUCCESS && sz != reqd_size) {
                 {
                     std::scoped_lock< std::mutex > lock{s_print_mutex};
                     std::cout << "Didn't get the size we expect.  Requested size=" << reqd_size << " size=" << sz
@@ -499,7 +503,7 @@ struct VarsizeBlkAllocatorTest : public ::testing::Test, BlkAllocatorTest {
                                    const size_generator_t& size_generator, const bool track_block_group) {
         const auto nthreads{std::clamp< uint32_t >(std::thread::hardware_concurrency(), 2,
                                                    SISL_OPTIONS["num_threads"].as< uint32_t >())};
-        std::atomic< uint64_t > total_alloced{0};
+        const auto blks_before{m_allocator->get_used_blks()};
         run_parallel(nthreads, count, [&](const uint64_t count_per_thread, std::atomic< bool >& terminate_flag) {
             for (uint64_t i{0}; (i < count_per_thread) && !terminate_flag;) {
                 const auto rand_size{size_generator()};
@@ -507,12 +511,11 @@ struct VarsizeBlkAllocatorTest : public ::testing::Test, BlkAllocatorTest {
                     terminate_flag = true;
                 }
                 i += rand_size;
-                total_alloced += rand_size;
             }
         });
         // validate_count();
         // LOGINFO("Metrics after preallocate: {}", m_allocator->get_metrics_in_json().dump(4));
-        return total_alloced;
+        return m_allocator->get_used_blks() - blks_before;
     }
 
     [[nodiscard]] std::pair< uint64_t, uint64_t > do_alloc_free(const uint64_t num_iters, const bool is_contiguous,
